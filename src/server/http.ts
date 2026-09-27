@@ -44,6 +44,8 @@ export async function buildHttp() {
     return { ok: true, events: n, connectors: CONNECTORS.length, at: new Date().toISOString() };
   });
   app.get("/icon.png", async (_r, reply) => reply.type("image/png").send(Buffer.from(ICON_PNG_B64, "base64")));
+  // Glama ownership challenge (https://glama.ai) — token is account-bound, contains no secrets; overridable via env.
+  app.get("/.well-known/glama.json", async () => ({ $schema: "https://glama.ai/mcp/schemas/connector.json", claim: process.env.GLAMA_CLAIM ?? "glama_claim__jjuT9diA1oBYRDhpNvBl7A9aD4RRMbR" }));
   app.get("/llms.txt", async (_r, reply) => reply.type("text/plain").send(
     `# Degenscan Intel\n> Cross-asset event intelligence for trading agents: SEC, Fed, Federal Register, USGS, NHC, Nasdaq halts, DefiLlama, Polymarket and 30+ more primary sources normalized into one event schema and scored against an exposure graph into per-asset impacts.\n\n## Endpoints\n- MCP (streamable HTTP): POST ${PUBLIC_URL}/mcp\n- REST: ${PUBLIC_URL}/v1/events?since=4h&universe=NVDA,BTC · /v1/impact/{asset} · /v1/graph/{asset} · /v1/regime · /v1/explain/{event_id} · /v1/universe (free) · /v1/sources (free)\n\n## Pricing\n${TOOL_DOCS.map(t => `- ${t.tool}: $${t.price_usd} per call`).join("\n")}\n- 100 free calls/day per IP, then HTTP 402 with x402 v2 payment requirements (USDC on Base, eip155:8453). Or subscribe: ${PUBLIC_URL}/v1/plans (X-API-KEY header).\n\n## Schema\nEvent { id, ts_event, kind, title, summary, entities[], severity, novelty, impacts[{asset_id, direction:-1|0|1, confidence, horizon, path[], rationale}], tradable_now[], next_open[], source{tier}, corroboration }\n`));
 
