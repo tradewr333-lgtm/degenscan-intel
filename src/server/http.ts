@@ -5,12 +5,16 @@ import { PRICES } from "./pricing.js";
 import { EventsSinceArgs, ImpactForArgs, ExposureGraphArgs, eventsSince, impactFor, exposureGraph, universe, sources, regimeSnapshot, explain, TOOL_DOCS } from "./tools.js";
 import { CONNECTORS } from "../ingest/registry.js";
 import { getDb, recordCall, weeklyMetrics } from "../store/db.js";
-import { decideAccess, toolForRequest, type Access } from "./access.js";
+import { decideAccess, toolForRequest, FREE_MODE, type Access } from "./access.js";
+import { PACKS, createPackKey, activatePackKey, dropPendingKey, keyStatus, type Pack } from "./keys.js";
 import { installX402 } from "./x402v2.js";
 import { FastifyAdapter } from "@x402/fastify";
 import { installStripe } from "./stripe.js";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 
-declare module "fastify" { interface FastifyRequest { intelAccess?: Access } }
+declare module "fastify" { interface FastifyRequest { intelAccess?: Access; pendingKeyId?: string; purchasedPack?: Pack } }
 
 const OPERATOR = "Marbella Collins LLC (Florida, USA) — contact@degenscan.io";
 const DISCLAIMER = "Information and analytics only — not investment advice. Impact scores are deterministic heuristics over public events, with no guarantee of accuracy or timeliness. You are solely responsible for your trading decisions.";
@@ -26,6 +30,7 @@ export async function buildHttp() {
   //    POST /mcp is decided later, once the JSON-RPC body is parsed (see the /mcp handler).
   app.addHook("onRequest", async (req) => {
     if (req.url.startsWith("/mcp")) { (req.headers as any)["x-intel-access"] = "mcp"; return; }
+    if (req.method === "POST" && req.url.startsWith("/v1/keys/x402")) { (req.headers as any)["x-intel-access"] = FREE_MODE ? "free" : "pay"; return; }  // always paid, never quota/key
     const a = decideAccess(req);
     req.intelAccess = a ?? undefined;
     (req.headers as any)["x-intel-access"] = a ? a.method : "pay";
@@ -34,6 +39,14 @@ export async function buildHttp() {
   const x402 = await installX402(app);
   // 3) Billing log after the response.
   app.addHook("onResponse", async (req, reply) => {
+    if (req.pendingKeyId) {
+      // Prepaid key: activate only if the facilitator settled (PAYMENT-RESPONSE present and 2xx); otherwise drop it.
+      let tx: string | null = null; let ok = reply.statusCode < 400;
+      try { const h = reply.getHeader("payment-response"); if (h) { const r = JSON.parse(Buffer.from(String(h), "base64").toString("utf8")); tx = r?.transaction ?? null; ok = ok && r?.success !== false; } else if (!FREE_MODE) ok = false; } catch { ok = false; }
+      if (ok) { activatePackKey(req.pendingKeyId, tx); const pack = req.purchasedPack ?? "pack_1k"; recordCall("key_purchase", `x402:${(req.x402Context?.paymentPayload as any)?.payload?.authorization?.from ?? "unknown"}`, PACKS[pack]?.usd ?? 0, true, tx); }
+      else dropPendingKey(req.pendingKeyId);
+      return;
+    }
     const tool = toolForRequest(req); if (!tool || reply.statusCode >= 400) return;
     if (req.x402Context) {
       let tx: string | null = null;
@@ -45,9 +58,9 @@ export async function buildHttp() {
   const billing = (req: any, tool: string) => req.x402Context ? { tool, price_usd: PRICES[tool] ?? 0.005, method: "x402" } : { tool, price_usd: req.intelAccess?.price ?? 0, method: req.intelAccess?.method ?? "free" };
 
   app.get("/", async () => ({
-    name: "degenscan-intel", version: "0.2.1",
+    name: "degenscan-intel", version: "0.3.0",
     description: "Cross-asset event intelligence for autonomous agents. Pay per call with USDC (x402 v2, Base) or subscribe with an API key.",
-    mcp: `${PUBLIC_URL}/mcp`, rest: `${PUBLIC_URL}/v1`, pricing: TOOL_DOCS, plans: `${PUBLIC_URL}/v1/plans`, metrics: `${PUBLIC_URL}/v1/metrics`, docs: "https://github.com/tradewr333-lgtm/degenscan-intel", contact: "contact@degenscan.io",
+    mcp: `${PUBLIC_URL}/mcp`, rest: `${PUBLIC_URL}/v1`, pricing: TOOL_DOCS, skill: `${PUBLIC_URL}/skill.md`, plans: `${PUBLIC_URL}/v1/plans`, prepaid_keys: `${PUBLIC_URL}/v1/keys/packs`, metrics: `${PUBLIC_URL}/v1/metrics`, docs: "https://github.com/tradewr333-lgtm/degenscan-intel", contact: "contact@degenscan.io",
     operator: OPERATOR, disclaimer: DISCLAIMER, license: "MIT",
   }));
 
@@ -64,11 +77,15 @@ export async function buildHttp() {
     const n = (getDb().prepare("SELECT COUNT(*) AS n FROM events").get() as unknown as { n: number }).n;
     return { ok: true, events: n, connectors: CONNECTORS.length, at: new Date().toISOString() };
   });
+  // Agent skill (Claude/Cursor "skills" format): when to call which tool, loop, payment.
+  const SKILL = (() => { try { return readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../skills/degenscan-intel/SKILL.md"), "utf8"); } catch { return "# Degenscan Intel\nSee /llms.txt"; } })();
+  app.get("/skill.md", async (_r, reply) => reply.type("text/markdown; charset=utf-8").send(SKILL));
+  app.get("/.well-known/skills/degenscan-intel/SKILL.md", async (_r, reply) => reply.type("text/markdown; charset=utf-8").send(SKILL));
   app.get("/icon.png", async (_r, reply) => reply.type("image/png").send(Buffer.from(ICON_PNG_B64, "base64")));
   // Glama ownership challenge (https://glama.ai) — token is account-bound, contains no secrets; overridable via env.
   app.get("/.well-known/glama.json", async () => ({ $schema: "https://glama.ai/mcp/schemas/connector.json", claim: process.env.GLAMA_CLAIM ?? "glama_claim__jjuT9diA1oBYRDhpNvBl7A9aD4RRMbR" }));
   app.get("/llms.txt", async (_r, reply) => reply.type("text/plain").send(
-    `# Degenscan Intel\n> Cross-asset event intelligence for trading agents: SEC, Fed, Federal Register, USGS, NHC, Nasdaq halts, DefiLlama, Polymarket and 30+ more primary sources normalized into one event schema and scored against an exposure graph into per-asset impacts.\n\n## Endpoints\n- MCP (streamable HTTP): POST ${PUBLIC_URL}/mcp\n- REST: ${PUBLIC_URL}/v1/events?since=4h&universe=NVDA,BTC · /v1/impact/{asset} · /v1/graph/{asset} · /v1/regime · /v1/explain/{event_id} · /v1/universe (free) · /v1/sources (free)\n\n## Pricing\n${TOOL_DOCS.map(t => `- ${t.tool}: $${t.price_usd} per call`).join("\n")}\n- 100 free calls/day per IP, then HTTP 402 with x402 v2 payment requirements (USDC on Base, eip155:8453). Or subscribe: ${PUBLIC_URL}/v1/plans (X-API-KEY header).\n\n## Operator\n${OPERATOR}. Public usage metrics: ${PUBLIC_URL}/v1/metrics (JSON) · ${PUBLIC_URL}/v1/metrics.csv\n\n## Disclaimer\n${DISCLAIMER}\n\n## Schema\nEvent { id, ts_event, kind, title, summary, entities[], severity, novelty, impacts[{asset_id, direction:-1|0|1, confidence, horizon, path[], rationale}], tradable_now[], next_open[], source{tier}, corroboration }\n`));
+    `# Degenscan Intel\n> Cross-asset event intelligence for trading agents: SEC, Fed, Federal Register, USGS, NHC, Nasdaq halts, DefiLlama, Polymarket and 30+ more primary sources normalized into one event schema and scored against an exposure graph into per-asset impacts.\n\n## Endpoints\n- MCP (streamable HTTP): POST ${PUBLIC_URL}/mcp\n- REST: ${PUBLIC_URL}/v1/events?since=4h&universe=NVDA,BTC · /v1/impact/{asset} · /v1/graph/{asset} · /v1/regime · /v1/explain/{event_id} · /v1/universe (free) · /v1/sources (free)\n\n## Pricing\n${TOOL_DOCS.map(t => `- ${t.tool}: $${t.price_usd} per call`).join("\n")}\n- 100 free calls/day per IP, then HTTP 402 with x402 v2 payment requirements (USDC on Base, eip155:8453). Or buy a prepaid key with USDC, no human needed: POST ${PUBLIC_URL}/v1/keys/x402/pack_1k → $5 for 1,000 calls (pack_10k $40, pack_100k $300), lifetime budget, check balance at /v1/keys/me. Or subscribe with a card: ${PUBLIC_URL}/v1/plans. Both give an X-API-KEY header.\n\n## Agent skill\n${PUBLIC_URL}/skill.md — when to call which tool, recommended loop, how to pay.\n\n## Operator\n${OPERATOR}. Public usage metrics: ${PUBLIC_URL}/v1/metrics (JSON) · ${PUBLIC_URL}/v1/metrics.csv\n\n## Disclaimer\n${DISCLAIMER}\n\n## Schema\nEvent { id, ts_event, kind, title, summary, entities[], severity, novelty, impacts[{asset_id, direction:-1|0|1, confidence, horizon, path[], rationale}], tradable_now[], next_open[], source{tier}, corroboration }\n`));
 
   // ---- REST
   const coerce = (q: any) => ({ ...q, universe: typeof q.universe === "string" ? q.universe.split(",") : q.universe, kinds: typeof q.kinds === "string" ? q.kinds.split(",") : q.kinds,
@@ -84,6 +101,26 @@ export async function buildHttp() {
   app.get("/v1/explain/:event_id", wrap("explain", req => explain(req.params.event_id)));
   app.get("/v1/universe", async () => universe());
   app.get("/v1/sources", async () => sources());
+
+  // ---- Prepaid API keys for autonomous agents (x402, USDC). The payment middleware has already verified the payment
+  //      when this handler runs; the key is returned now and activated in onResponse once settlement succeeds.
+  const buyPack = (pack: Pack) => async (req: any, reply: any) => {
+    if (FREE_MODE) return reply.code(503).send({ error: "x402 not configured on this deployment", packs: PACKS });
+    const wallet = (req.x402Context?.paymentPayload as any)?.payload?.authorization?.from ?? null;
+    const { id, key } = createPackKey(pack, wallet);
+    req.pendingKeyId = id; req.purchasedPack = pack;
+    return { api_key: key, key_id: id, pack, calls: PACKS[pack].calls, paid_usd: PACKS[pack].usd, payer: wallet,
+      usage: "send header  X-API-KEY: <api_key>  on /v1/* or POST /mcp", check: `${PUBLIC_URL}/v1/keys/me`, note: "Shown once. Store it now. Budget is lifetime (no expiry)." };
+  };
+  for (const pack of Object.keys(PACKS) as Pack[]) app.post(`/v1/keys/x402/${pack}`, buyPack(pack));
+  app.post("/v1/keys/x402", async (_r, reply) => reply.code(400).send({ error: "choose a pack in the URL", endpoints: Object.keys(PACKS).map(p => `POST ${PUBLIC_URL}/v1/keys/x402/${p}`), packs: PACKS }));
+  app.get("/v1/keys/packs", async () => ({ how: `POST ${PUBLIC_URL}/v1/keys/x402/<pack> (empty body); answer the 402 with an x402 payment (USDC on Base). No account, no card, no human.`, endpoints: Object.keys(PACKS).map(p => `POST ${PUBLIC_URL}/v1/keys/x402/${p}`), packs: PACKS, network: "eip155:8453 (Base)", asset: "USDC" }));
+  app.get("/v1/keys/me", async (req: any, reply) => {
+    const raw = (req.headers["x-api-key"] as string | undefined)?.trim();
+    if (!raw) return reply.code(400).send({ error: "send X-API-KEY header" });
+    const st = keyStatus(raw); if (!st) return reply.code(404).send({ error: "unknown key" });
+    return st;
+  });
 
   installStripe(app);
 

@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import Stripe from "stripe";
-import { createKey, findBySession, revokeBySubscription, PLANS, type Plan } from "./keys.js";
+import { createKey, findBySession, revokeBySubscription, PLANS, PACKS, type Plan } from "./keys.js";
 
 /**
  * Fiat subscriptions for agents/operators without a crypto wallet.
@@ -18,6 +18,7 @@ export function installStripe(app: FastifyInstance) {
 
   app.get("/v1/plans", async () => ({
     plans: Object.entries(PLANS).filter(([k]) => k !== "enterprise").map(([id, p]) => ({ id, ...p, checkout: secret && PRICE[id as Plan] ? `${PUBLIC_URL}/v1/keys/checkout?plan=${id}` : null })),
+    prepaid_packs: { how: `POST ${PUBLIC_URL}/v1/keys/x402/<pack> and pay the 402 with USDC (x402) — no human, no card`, endpoints: Object.keys(PACKS).map(p => `${PUBLIC_URL}/v1/keys/x402/${p}`), packs: PACKS },
     pay_per_call: "x402 (USDC on Base) — call any priced endpoint without a key to receive payment requirements",
     stripe_enabled: !!secret,
   }));

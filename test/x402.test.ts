@@ -90,4 +90,37 @@ describe("x402 v2 paid mode", () => {
     await new Promise(r => setTimeout(r, 300));
     expect(settled.length).toBe(before + 1);
   });
+
+  it("prepaid pack: 402 priced per pack in the URL → pay → key returned & activated after settlement → key works and budget decrements", async () => {
+    const { buildHttp } = await import("../src/server/http.js");
+    const app = await buildHttp();
+    const noPack = await app.inject({ method: "POST", url: "/v1/keys/x402", payload: {} });
+    expect(noPack.statusCode).toBe(400);
+    // API key / quota must never bypass the purchase
+    const r1 = await app.inject({ method: "POST", url: "/v1/keys/x402/pack_1k", headers: { "x-api-key": "test-key-123", "content-type": "application/json" }, payload: {} });
+    expect(r1.statusCode).toBe(402);
+    const req = JSON.parse(Buffer.from(r1.headers["payment-required"] as string, "base64").toString("utf8"));
+    expect(req.accepts[0].amount).toBe("5000000"); // $5 USDC
+    const r10k = await app.inject({ method: "POST", url: "/v1/keys/x402/pack_10k", payload: {} });
+    expect(JSON.parse(Buffer.from(r10k.headers["payment-required"] as string, "base64").toString("utf8")).accepts[0].amount).toBe("40000000");
+    const before = settled.length;
+    const paid = await app.inject({ method: "POST", url: "/v1/keys/x402/pack_1k", headers: { "payment-signature": fakePayment(req), "content-type": "application/json" }, payload: {} });
+    expect(paid.statusCode).toBe(200);
+    const body = paid.json();
+    expect(body.api_key).toMatch(/^dsi_pack_1k_/);
+    expect(body.calls).toBe(1000);
+    expect(body.payer.toLowerCase()).toBe("0x5344722b8d037827a9a5b7cd6312481d215d33bf");
+    expect(settled.length).toBe(before + 1);
+    await new Promise(r => setTimeout(r, 50));
+    const me = await app.inject({ method: "GET", url: "/v1/keys/me", headers: { "x-api-key": body.api_key } });
+    expect(me.json()).toMatchObject({ status: "active", budget: 1000, used: 0, remaining: 1000, period: "lifetime" });
+    const call = await app.inject({ method: "GET", url: "/v1/regime", headers: { "x-api-key": body.api_key } });
+    expect(call.statusCode).toBe(200);
+    expect(call.json()._billing.method).toBe("api_key");
+    const me2 = await app.inject({ method: "GET", url: "/v1/keys/me", headers: { "x-api-key": body.api_key } });
+    expect(me2.json().remaining).toBe(999);
+    // purchase shows up in public metrics as a paid x402 call (owner wallet → excluded column, since 0x5344 is the test wallet)
+    const m = (await app.inject({ method: "GET", url: "/v1/metrics" })).json();
+    expect(m.weeks.at(-1).excluded_owner_wallets.usdc).toBeGreaterThanOrEqual(5);
+  });
 });

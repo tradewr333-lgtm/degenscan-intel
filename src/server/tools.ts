@@ -25,10 +25,10 @@ export const EventsSinceArgs = z.object({
   until: z.string().optional().describe("Window end (ISO-8601). Default now."),
   universe: z.array(z.string()).optional().describe("Asset ids to filter impacts by, e.g. [\"NVDA\",\"BTC\",\"CL\"]. Omit for all."),
   kinds: z.array(z.string()).optional().describe('Event kinds or prefixes: ["reg.", "corp.8k", "nat.quake"].'),
-  min_severity: z.number().min(0).max(1).optional(),
-  min_confidence: z.number().min(0).max(1).optional().describe("Min impact confidence (only with universe)."),
-  q: z.string().optional().describe("Full-text query over title/summary (FTS5 syntax)."),
-  limit: z.number().int().min(1).max(200).default(50),
+  min_severity: z.number().min(0).max(1).optional().describe("Drop events below this severity (0..1). 0.5 keeps market-moving events only."),
+  min_confidence: z.number().min(0).max(1).optional().describe("Min impact confidence (0..1) for the universe filter. 0.4 is a sensible threshold for acting."),
+  q: z.string().optional().describe('Full-text query over title/summary (FTS5 syntax), e.g. "tariff OR sanction".'),
+  limit: z.number().int().min(1).max(200).default(50).describe("Max events returned (1..200)."),
 });
 export type EventsSinceArgs = z.infer<typeof EventsSinceArgs>;
 
@@ -39,9 +39,9 @@ export function eventsSince(a: EventsSinceArgs) {
 }
 
 export const ImpactForArgs = z.object({
-  asset_id: z.string().describe("Universe asset id, e.g. NVDA, BTC, CL, US10Y, SPX"),
-  since: z.string().default("24h"),
-  limit: z.number().int().min(1).max(200).default(50),
+  asset_id: z.string().describe("Universe asset id (case-insensitive), e.g. NVDA, BTC, CL, US10Y, SPX. Call `universe` to list ids."),
+  since: z.string().default("24h").describe('Lookback window: "1h", "24h", "7d" or ISO-8601. Default 24h.'),
+  limit: z.number().int().min(1).max(200).default(50).describe("Max source events returned with the aggregate."),
 });
 export function impactFor(a: z.infer<typeof ImpactForArgs>) {
   const asset = loadUniverse().assets.find(x => x.id === a.asset_id.toUpperCase());
@@ -49,7 +49,10 @@ export function impactFor(a: z.infer<typeof ImpactForArgs>) {
   return { asset, ...impactsForAsset(asset.id, parseSince(a.since), a.limit) };
 }
 
-export const ExposureGraphArgs = z.object({ asset_id: z.string(), depth: z.number().int().min(1).max(3).default(2) });
+export const ExposureGraphArgs = z.object({
+  asset_id: z.string().describe("Universe asset id, e.g. NVDA, TSM, MSTR, GC. Call `universe` to list ids."),
+  depth: z.number().int().min(1).max(3).default(2).describe("Hops from the asset: 1 = direct suppliers/customers/regulators, 2 = second order (default), 3 = wide."),
+});
 export function exposureGraph(a: z.infer<typeof ExposureGraphArgs>) {
   const asset = loadUniverse().assets.find(x => x.id === a.asset_id.toUpperCase());
   if (!asset) throw new Error(`unknown asset_id ${a.asset_id}`);

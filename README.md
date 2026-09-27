@@ -50,6 +50,16 @@ MCP (streamable HTTP, stateless): `POST http://host:8787/mcp`. Stdio for local a
 
 Free quota: 100 calls/day/IP without payment. Then `402` with x402 requirements, or `X-API-KEY`.
 
+**Three ways to pay**
+
+| Who | How | Endpoint |
+|---|---|---|
+| Autonomous agent, per call | x402 v2 — answer the `402` with USDC on Base; any x402 client does it automatically | any priced endpoint |
+| Autonomous agent, prepaid key (no human, no card) | one USDC payment → `{ api_key }` with a lifetime budget: `pack_1k` $5 / 1,000 calls · `pack_10k` $40 / 10,000 · `pack_100k` $300 / 100,000 | `POST /v1/keys/x402/<pack>` → then header `X-API-KEY`; balance at `GET /v1/keys/me` |
+| Human operator, card | Stripe subscription Starter $29 (10k/mo) · Pro $199 (200k/mo) → key shown once | `GET /v1/plans` → checkout → `/v1/keys/claim` |
+
+**Agent skill:** [`skills/degenscan-intel/SKILL.md`](skills/degenscan-intel/SKILL.md) (also served at [`/skill.md`](https://degenscan-intel.onrender.com/skill.md)) — when to call which tool, the recommended loop, how to read confidence, how to pay. Drop it into a Claude/Cursor skills folder or point the agent at the URL.
+
 **Public usage metrics:** [`/v1/metrics`](https://degenscan-intel.onrender.com/v1/metrics) (JSON) · [`/v1/metrics.csv`](https://degenscan-intel.onrender.com/v1/metrics.csv) — one row per week since 2026-09-27: free/API-key/paid calls, unique paying wallets, USDC revenue with on-chain tx hashes, active Stripe subscriptions. Owner and test wallets are listed explicitly and excluded from customers and revenue.
 
 ## Configuration

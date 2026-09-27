@@ -5,6 +5,7 @@ import { HTTPFacilitatorClient } from "@x402/core/server";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { declareDiscoveryExtension, bazaarResourceServerExtension } from "@x402/extensions/bazaar";
 import { PRICES } from "./pricing.js";
+import { PACKS } from "./keys.js";
 import { FREE_MODE } from "./access.js";
 
 /**
@@ -56,6 +57,15 @@ export function buildRoutes(): RoutesConfig {
       accepts: accept("explain"), description: "Human-readable rationale for one event's impacts.", mimeType: "application/json", ...common,
       extensions: declareDiscoveryExtension({ output: { example: { explanation: "…" } } }),
     },
+    // Prepaid API keys for autonomous agents: one USDC payment → key with a lifetime call budget. One route per pack so the
+    // price is static (the payment middleware runs before the body is parsed, so it must never depend on the body).
+    ...Object.fromEntries(Object.entries(PACKS).map(([pack, p]) => [`POST /v1/keys/x402/${pack}`, {
+      accepts: { scheme: "exact", price: usd(p.usd), network: NETWORK, payTo: PAY_TO, maxTimeoutSeconds: 60 },
+      description: `Buy a prepaid API key (${p.calls.toLocaleString()} calls, lifetime, $${p.usd}) with USDC — no account, no card, no human. Then send X-API-KEY on /v1/* or POST /mcp. Other packs: ${Object.entries(PACKS).filter(([k]) => k !== pack).map(([k, v]) => `${k} $${v.usd}`).join(", ")}.`,
+      mimeType: "application/json", ...common,
+      extensions: declareDiscoveryExtension({ bodyType: "json", input: {}, inputSchema: { properties: {} },
+        output: { example: { api_key: `dsi_${pack}_…`, key_id: "k_…", pack, calls: p.calls, paid_usd: p.usd, usage: "send header X-API-KEY on /v1/* or POST /mcp", check: `${PUBLIC_URL}/v1/keys/me` } } }),
+    } as RouteConfig])),
     "POST /mcp": {
       // MCP: price depends on the tool being called; handshake/tools/list are granted for free by the access hook.
       accepts: { scheme: "exact", network: NETWORK, payTo: PAY_TO, maxTimeoutSeconds: 60,

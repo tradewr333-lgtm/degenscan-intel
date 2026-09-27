@@ -70,3 +70,16 @@ function parseSse(body: string) {
   const line = body.split("\n").find(l => l.startsWith("data:"));
   return JSON.parse(line ? line.slice(5) : body);
 }
+
+describe("agent-facing docs", () => {
+  it("serves the skill and advertises prepaid packs", async () => {
+    const app = await buildHttp();
+    const sk = await app.inject({ method: "GET", url: "/skill.md" });
+    expect(sk.statusCode).toBe(200); expect(sk.body).toContain("name: degenscan-intel"); expect(sk.body).toContain("pack_1k");
+    const packs = await app.inject({ method: "GET", url: "/v1/keys/packs" });
+    expect(packs.json().packs.pack_1k).toMatchObject({ usd: 5, calls: 1000 });
+    const root = await app.inject({ method: "GET", url: "/" });
+    expect(root.json().skill).toContain("/skill.md");
+    expect(root.json().version).toBe("0.3.0");
+  });
+});
