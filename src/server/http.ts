@@ -2,12 +2,12 @@ import Fastify from "fastify";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { buildMcpServer } from "./mcp.js";
 import { PRICES } from "./pricing.js";
-import { EventsSinceArgs, ImpactForArgs, ExposureGraphArgs, eventsSince, impactFor, exposureGraph, universe, sources, regimeSnapshot, explain, TOOL_DOCS } from "./tools.js";
+import { EventsSinceArgs, ImpactForArgs, ExposureGraphArgs, PolymarketContextArgs, eventsSince, impactFor, exposureGraph, universe, sources, regimeSnapshot, explain, polymarketContext, TOOL_DOCS } from "./tools.js";
 import { CONNECTORS } from "../ingest/registry.js";
 import { getDb, recordCall, weeklyMetrics } from "../store/db.js";
 import { decideAccess, toolForRequest, FREE_MODE, type Access } from "./access.js";
 import { PACKS, createPackKey, activatePackKey, dropPendingKey, keyStatus, type Pack } from "./keys.js";
-import { installX402 } from "./x402v2.js";
+import { installX402, PAY_TO_SOLANA, SOLANA_NETWORK } from "./x402v2.js";
 import { FastifyAdapter } from "@x402/fastify";
 import { installStripe } from "./stripe.js";
 import { readFileSync } from "node:fs";
@@ -22,10 +22,10 @@ const METRICS_SINCE = process.env.METRICS_SINCE ?? "2026-09-27T00:00:00Z";
 /** Owner/test wallets: never counted as customers or revenue in public metrics. */
 const EXCLUDED_WALLETS = (process.env.EXCLUDED_WALLETS ?? "0x5344722b8D037827A9a5b7cD6312481D215d33BF,0x21f4A2DA07bccE60878cAb223358D11aD8F11a94").split(",").map(s => s.trim()).filter(Boolean);
 
-const REST_FOR: Record<string, string> = { events_since: "/v1/events?since=4h&universe=NVDA,BTC", impact_for: "/v1/impact/{asset_id}?since=24h", exposure_graph: "/v1/graph/{asset_id}?depth=2", regime_snapshot: "/v1/regime", explain: "/v1/explain/{event_id}" };
+const REST_FOR: Record<string, string> = { events_since: "/v1/events?since=4h&universe=NVDA,BTC", impact_for: "/v1/impact/{asset_id}?since=24h", exposure_graph: "/v1/graph/{asset_id}?depth=2", regime_snapshot: "/v1/regime", explain: "/v1/explain/{event_id}", polymarket_context: "/v1/polymarket/{market}?since=48h" };
 const OPENAPI = (base: string) => ({
   openapi: "3.1.0",
-  info: { title: "Degenscan Intel", version: "0.3.1", description: "Cross-asset market event intelligence for AI trading agents. Priced routes return HTTP 402 with x402 v2 payment requirements (USDC on Base) unless X-API-KEY is sent or the free daily quota applies. Information and analytics only — not investment advice.", contact: { name: "Marbella Collins LLC", email: "contact@degenscan.io" }, license: { name: "MIT" } },
+  info: { title: "Degenscan Intel", version: "0.4.0", description: "Cross-asset market event intelligence for AI trading agents. Priced routes return HTTP 402 with x402 v2 payment requirements (USDC on Base) unless X-API-KEY is sent or the free daily quota applies. Information and analytics only — not investment advice.", contact: { name: "Marbella Collins LLC", email: "contact@degenscan.io" }, license: { name: "MIT" } },
   servers: [{ url: base }],
   components: { securitySchemes: { apiKey: { type: "apiKey", in: "header", name: "X-API-KEY" }, x402: { type: "apiKey", in: "header", name: "PAYMENT-SIGNATURE", description: "x402 v2 payment payload (base64). Obtain requirements from the 402 response header PAYMENT-REQUIRED." } } },
   paths: {
@@ -37,6 +37,7 @@ const OPENAPI = (base: string) => ({
     "/v1/graph/{asset_id}": { get: { summary: "Exposure sub-graph around an asset", "x-price-usd": PRICES.exposure_graph, parameters: [{ name: "asset_id", in: "path", required: true, schema: { type: "string" } }, { name: "depth", in: "query", schema: { type: "integer", default: 2, minimum: 1, maximum: 3 } }], responses: { "200": { description: "nodes, edges, facilities" }, "402": { description: "payment required" } } } },
     "/v1/regime": { get: { summary: "Venues open, 24h pressure ranking, top events, prediction markets", "x-price-usd": PRICES.regime_snapshot, responses: { "200": { description: "snapshot" }, "402": { description: "payment required" } } } },
     "/v1/explain/{event_id}": { get: { summary: "Rationale for one event's impacts", "x-price-usd": PRICES.explain, parameters: [{ name: "event_id", in: "path", required: true, schema: { type: "string" } }], responses: { "200": { description: "explanation" }, "402": { description: "payment required" } } } },
+    "/v1/polymarket/{market}": { get: { summary: "Evidence pack for one Polymarket market: current odds + primary-source events in our feed that bear on the question", "x-price-usd": PRICES.polymarket_context, parameters: [{ name: "market", in: "path", required: true, schema: { type: "string" }, description: "market id, slug, or question text" }, { name: "since", in: "query", schema: { type: "string", default: "48h" } }, { name: "limit", in: "query", schema: { type: "integer", default: 15 } }], responses: { "200": { description: "market, query_terms, related[]" }, "402": { description: "payment required" } } } },
     "/v1/universe": { get: { summary: "Asset universe (free)", responses: { "200": { description: "assets[]" } } } },
     "/v1/sources": { get: { summary: "Connector health (free)", responses: { "200": { description: "sources[]" } } } },
     "/v1/metrics": { get: { summary: "Public weekly usage metrics (free)", responses: { "200": { description: "weeks[]" } } } },
@@ -83,7 +84,7 @@ export async function buildHttp() {
   const billing = (req: any, tool: string) => req.x402Context ? { tool, price_usd: PRICES[tool] ?? 0.005, method: "x402" } : { tool, price_usd: req.intelAccess?.price ?? 0, method: req.intelAccess?.method ?? "free" };
 
   app.get("/", async () => ({
-    name: "degenscan-intel", version: "0.3.1",
+    name: "degenscan-intel", version: "0.4.0",
     description: "Cross-asset event intelligence for autonomous agents. Pay per call with USDC (x402 v2, Base) or subscribe with an API key.",
     mcp: `${PUBLIC_URL}/mcp`, rest: `${PUBLIC_URL}/v1`, pricing: TOOL_DOCS, skill: `${PUBLIC_URL}/skill.md`, openapi: `${PUBLIC_URL}/openapi.json`, x402: `${PUBLIC_URL}/.well-known/x402`, plans: `${PUBLIC_URL}/v1/plans`, prepaid_keys: `${PUBLIC_URL}/v1/keys/packs`, metrics: `${PUBLIC_URL}/v1/metrics`, docs: "https://github.com/tradewr333-lgtm/degenscan-intel", contact: "contact@degenscan.io",
     operator: OPERATOR, disclaimer: DISCLAIMER, license: "MIT",
@@ -110,7 +111,8 @@ export async function buildHttp() {
   const PAY_TO = process.env.X402_PAY_TO ?? null;
   app.get("/.well-known/x402", async () => ({
     x402Version: 2, name: "Degenscan Intel", description: "Cross-asset market event intelligence for AI trading agents: ~40 primary sources scored into per-asset impacts.",
-    operator: OPERATOR, url: PUBLIC_URL, network: "eip155:8453", asset: "USDC", payTo: PAY_TO, facilitator: process.env.X402_FACILITATOR_URL ?? "https://facilitator.payai.network",
+    operator: OPERATOR, url: PUBLIC_URL, network: "eip155:8453", asset: "USDC", payTo: PAY_TO,
+    networks: [{ network: "eip155:8453", name: "Base", asset: "USDC", payTo: PAY_TO }, ...(PAY_TO_SOLANA ? [{ network: SOLANA_NETWORK, name: "Solana", asset: "USDC", payTo: PAY_TO_SOLANA }] : [])], facilitator: process.env.X402_FACILITATOR_URL ?? "https://facilitator.payai.network",
     resources: [
       ...TOOL_DOCS.filter(t => t.price_usd > 0 && t.tool !== "health").map(t => ({ tool: t.tool, price_usd: t.price_usd, http: REST_FOR[t.tool] ? `GET ${PUBLIC_URL}${REST_FOR[t.tool]}` : undefined, mcp: `POST ${PUBLIC_URL}/mcp tools/call ${t.tool}` })),
       ...Object.entries(PACKS).map(([k, v]) => ({ tool: `prepaid_key:${k}`, price_usd: v.usd, http: `POST ${PUBLIC_URL}/v1/keys/x402/${k}`, calls: v.calls })),
@@ -119,13 +121,13 @@ export async function buildHttp() {
     docs: { llms: `${PUBLIC_URL}/llms.txt`, skill: `${PUBLIC_URL}/skill.md`, openapi: `${PUBLIC_URL}/openapi.json`, owned_wallets: `${PUBLIC_URL}/wallets.json`, metrics: `${PUBLIC_URL}/v1/metrics` },
   }));
   // Owner/test wallets, published so explorers and buyers can verify our usage metrics exclude self-payments.
-  app.get("/wallets.json", async () => ({ operator: OPERATOR, pay_to: PAY_TO, owned_or_test_wallets: EXCLUDED_WALLETS, note: "Payments from these addresses are the operator's own tests; they are excluded from customers and revenue in /v1/metrics." }));
+  app.get("/wallets.json", async () => ({ operator: OPERATOR, pay_to: PAY_TO, pay_to_solana: PAY_TO_SOLANA, owned_or_test_wallets: EXCLUDED_WALLETS, note: "Payments from these addresses are the operator's own tests; they are excluded from customers and revenue in /v1/metrics." }));
   app.get("/openapi.json", async () => OPENAPI(PUBLIC_URL));
   app.get("/icon.png", async (_r, reply) => reply.type("image/png").send(Buffer.from(ICON_PNG_B64, "base64")));
   // Glama ownership challenge (https://glama.ai) — token is account-bound, contains no secrets; overridable via env.
   app.get("/.well-known/glama.json", async () => ({ $schema: "https://glama.ai/mcp/schemas/connector.json", claim: process.env.GLAMA_CLAIM ?? "glama_claim__jjuT9diA1oBYRDhpNvBl7A9aD4RRMbR" }));
   app.get("/llms.txt", async (_r, reply) => reply.type("text/plain").send(
-    `# Degenscan Intel\n> Cross-asset event intelligence for trading agents: SEC, Fed, Federal Register, USGS, NHC, Nasdaq halts, DefiLlama, Polymarket and 30+ more primary sources normalized into one event schema and scored against an exposure graph into per-asset impacts.\n\n## Endpoints\n- MCP (streamable HTTP): POST ${PUBLIC_URL}/mcp\n- REST: ${PUBLIC_URL}/v1/events?since=4h&universe=NVDA,BTC · /v1/impact/{asset} · /v1/graph/{asset} · /v1/regime · /v1/explain/{event_id} · /v1/universe (free) · /v1/sources (free)\n\n## Pricing\n${TOOL_DOCS.map(t => `- ${t.tool}: $${t.price_usd} per call`).join("\n")}\n- 100 free calls/day per IP, then HTTP 402 with x402 v2 payment requirements (USDC on Base, eip155:8453). Or buy a prepaid key with USDC, no human needed: POST ${PUBLIC_URL}/v1/keys/x402/pack_1k → $5 for 1,000 calls (pack_10k $40, pack_100k $300), lifetime budget, check balance at /v1/keys/me. Or subscribe with a card: ${PUBLIC_URL}/v1/plans. Both give an X-API-KEY header.\n\n## Agent skill\n${PUBLIC_URL}/skill.md — when to call which tool, recommended loop, how to pay.\n\n## Operator\n${OPERATOR}. Public usage metrics: ${PUBLIC_URL}/v1/metrics (JSON) · ${PUBLIC_URL}/v1/metrics.csv\n\n## Disclaimer\n${DISCLAIMER}\n\n## Schema\nEvent { id, ts_event, kind, title, summary, entities[], severity, novelty, impacts[{asset_id, direction:-1|0|1, confidence, horizon, path[], rationale}], tradable_now[], next_open[], source{tier}, corroboration }\n`));
+    `# Degenscan Intel\n> Cross-asset event intelligence for trading agents: SEC, Fed, Federal Register, USGS, NHC, Nasdaq halts, DefiLlama, Polymarket and 30+ more primary sources normalized into one event schema and scored against an exposure graph into per-asset impacts.\n\n## Endpoints\n- MCP (streamable HTTP): POST ${PUBLIC_URL}/mcp\n- REST: ${PUBLIC_URL}/v1/events?since=4h&universe=NVDA,BTC · /v1/impact/{asset} · /v1/graph/{asset} · /v1/regime · /v1/explain/{event_id} · /v1/polymarket/{market}?since=48h · /v1/universe (free) · /v1/sources (free)\n\n## Pricing\n${TOOL_DOCS.map(t => `- ${t.tool}: $${t.price_usd} per call`).join("\n")}\n- 100 free calls/day per IP, then HTTP 402 with x402 v2 payment requirements (USDC on Base, eip155:8453). Or buy a prepaid key with USDC, no human needed: POST ${PUBLIC_URL}/v1/keys/x402/pack_1k → $5 for 1,000 calls (pack_10k $40, pack_100k $300), lifetime budget, check balance at /v1/keys/me. Or subscribe with a card: ${PUBLIC_URL}/v1/plans. Both give an X-API-KEY header.\n\n## Agent skill\n${PUBLIC_URL}/skill.md — when to call which tool, recommended loop, how to pay.\n\n## Operator\n${OPERATOR}. Public usage metrics: ${PUBLIC_URL}/v1/metrics (JSON) · ${PUBLIC_URL}/v1/metrics.csv\n\n## Disclaimer\n${DISCLAIMER}\n\n## Schema\nEvent { id, ts_event, kind, title, summary, entities[], severity, novelty, impacts[{asset_id, direction:-1|0|1, confidence, horizon, path[], rationale}], tradable_now[], next_open[], source{tier}, corroboration }\n`));
 
   // ---- REST
   const coerce = (q: any) => ({ ...q, universe: typeof q.universe === "string" ? q.universe.split(",") : q.universe, kinds: typeof q.kinds === "string" ? q.kinds.split(",") : q.kinds,
@@ -139,6 +141,10 @@ export async function buildHttp() {
   app.get("/v1/graph/:asset_id", wrap("exposure_graph", req => exposureGraph(ExposureGraphArgs.parse({ ...coerce(req.query), asset_id: req.params.asset_id }))));
   app.get("/v1/regime", wrap("regime_snapshot", () => regimeSnapshot()));
   app.get("/v1/explain/:event_id", wrap("explain", req => explain(req.params.event_id)));
+  app.get("/v1/polymarket/:market", async (req: any, reply: any) => {
+    try { return { ...(await polymarketContext(PolymarketContextArgs.parse({ ...coerce(req.query), market: decodeURIComponent(req.params.market) }))), _billing: billing(req, "polymarket_context") }; }
+    catch (e) { reply.code(400); return { error: (e as Error).message }; }
+  });
   app.get("/v1/universe", async () => universe());
   app.get("/v1/sources", async () => sources());
 

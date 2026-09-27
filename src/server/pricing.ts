@@ -5,6 +5,7 @@ export const PRICES: Record<string, number> = {
   exposure_graph: 0.002,
   regime_snapshot: 0.01,
   explain: 0.02,
+  polymarket_context: 0.01,
   universe: 0,
   sources_status: 0,
   health: 0,

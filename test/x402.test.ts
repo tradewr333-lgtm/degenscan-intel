@@ -10,7 +10,7 @@ const settled: any[] = [];
 
 beforeAll(async () => {
   facilitator = Fastify();
-  facilitator.get("/supported", async () => ({ kinds: [{ x402Version: 2, scheme: "exact", network: "eip155:8453" }, { x402Version: 1, scheme: "exact", network: "base" }], extensions: ["bazaar"], signers: { "eip155:*": ["0x000000000000000000000000000000000000f00d"] } }));
+  facilitator.get("/supported", async () => ({ kinds: [{ x402Version: 2, scheme: "exact", network: "eip155:8453" }, { x402Version: 1, scheme: "exact", network: "base" }, { x402Version: 2, scheme: "exact", network: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp", extra: { feePayer: "7aJwHqz3s9qhfZvtvpLS9xH9pYJ9uT9gWvE8xN2yQ1Kc" } }], extensions: ["bazaar"], signers: { "eip155:*": ["0x000000000000000000000000000000000000f00d"] } }));
   facilitator.post("/verify", async (req: any) => ({ isValid: true, payer: req.body?.paymentPayload?.payload?.authorization?.from ?? "0xpayer" }));
   facilitator.post("/settle", async (req: any) => { settled.push(req.body); return { success: true, transaction: "0x" + "ab".repeat(32), network: "eip155:8453", payer: "0xpayer" }; });
   await facilitator.listen({ port: 0, host: "127.0.0.1" });
@@ -21,6 +21,7 @@ beforeAll(async () => {
   process.env.X402_FACILITATOR_URL = `http://127.0.0.1:${addr.port}`;
   process.env.API_KEYS = "test-key-123";
   process.env.FREE_DAILY_CALLS = "1";
+  process.env.X402_PAY_TO_SOLANA = "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin";
 });
 afterAll(async () => { await facilitator.close(); });
 
@@ -53,6 +54,11 @@ describe("x402 v2 paid mode", () => {
     expect(req.accepts[0].amount).toBe("10000"); // $0.01 in USDC atomic
     expect(req.accepts[0].payTo.toLowerCase()).toBe(process.env.X402_PAY_TO!.toLowerCase());
     expect(req.accepts[0].asset.toLowerCase()).toBe("0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"); // USDC on Base
+    // second rail: Solana mainnet USDC to the configured Solana address
+    const sol = req.accepts.find((a: any) => String(a.network).startsWith("solana:"));
+    expect(sol).toBeTruthy();
+    expect(sol.payTo).toBe(process.env.X402_PAY_TO_SOLANA);
+    expect(sol.amount).toBe("10000");
 
     const paid = await app.inject({ method: "GET", url: "/v1/regime", headers: { "payment-signature": fakePayment(req) } });
     expect(paid.statusCode).toBe(200);

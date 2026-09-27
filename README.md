@@ -46,9 +46,12 @@ MCP (streamable HTTP, stateless): `POST http://host:8787/mcp`. Stdio for local a
 | `exposure_graph` | $0.002 | who/what an asset is exposed to |
 | `regime_snapshot` | $0.01 | venues open, 24h pressure ranking, high-severity events, prediction markets |
 | `explain` | $0.02 | rationale for one event |
+| `polymarket_context` | $0.01 | evidence pack for one prediction market: current odds + primary-source events in the feed that bear on the question |
 | `universe`, `sources_status` | free | discovery & transparency |
 
 Free quota: 100 calls/day/IP without payment. Then `402` with x402 requirements, or `X-API-KEY`.
+
+**Networks:** USDC on **Base** (eip155:8453) and, when configured, **Solana** mainnet — both offered in the same `402`, gasless via PayAI.
 
 **Three ways to pay**
 

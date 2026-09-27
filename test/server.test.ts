@@ -58,7 +58,7 @@ describe("http + mcp", () => {
     expect(init.statusCode).toBe(200);
     const list = await app.inject({ method: "POST", url: "/mcp", headers: hdr, payload: { jsonrpc: "2.0", id: 2, method: "tools/list" } });
     const names = parseSse(list.body).result.tools.map((t: any) => t.name);
-    expect(names).toEqual(expect.arrayContaining(["events_since", "impact_for", "exposure_graph", "regime_snapshot", "universe", "sources_status", "explain"]));
+    expect(names).toEqual(expect.arrayContaining(["events_since", "impact_for", "exposure_graph", "regime_snapshot", "universe", "sources_status", "explain", "polymarket_context"]));
     const call = await app.inject({ method: "POST", url: "/mcp", headers: hdr, payload: { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "impact_for", arguments: { asset_id: "coin", since: "24h" } } } });
     const res = parseSse(call.body).result;
     expect(res.structuredContent.asset.id).toBe("COIN");
@@ -80,9 +80,25 @@ describe("agent-facing docs", () => {
     expect(packs.json().packs.pack_1k).toMatchObject({ usd: 5, calls: 1000 });
     const root = await app.inject({ method: "GET", url: "/" });
     expect(root.json().skill).toContain("/skill.md");
-    expect(root.json().version).toBe("0.3.1");
+    expect(root.json().version).toBe("0.4.0");
     const wk = await app.inject({ method: "GET", url: "/.well-known/x402" }); expect(wk.json().resources.length).toBeGreaterThan(5);
     const oa = await app.inject({ method: "GET", url: "/openapi.json" }); expect(oa.json().openapi).toBe("3.1.0");
     const wl = await app.inject({ method: "GET", url: "/wallets.json" }); expect(wl.json().owned_or_test_wallets.length).toBe(2);
+  });
+});
+
+describe("polymarket_context", () => {
+  it("falls back to feed search when Gamma is unreachable and returns related primary events", async () => {
+    const { questionTerms, polymarketContext } = await import("../src/server/tools.js");
+    expect(questionTerms("Will the SEC charge Coinbase over staking by year end?")).toEqual(expect.arrayContaining(["sec", "coinbase", "staking"]));
+    const r = await polymarketContext({ market: "Will the SEC charge Coinbase over staking?", since: "24h", limit: 10 });
+    expect(r.n_related).toBeGreaterThanOrEqual(1);
+    expect(r.related[0].title).toContain("Coinbase");
+    expect(r.related[0].tier).toBe("primary");
+    expect(r.related[0].impacts.find((i: any) => i.asset_id === "COIN")?.direction).toBe(-1);
+    const app = await buildHttp();
+    const rest = await app.inject({ method: "GET", url: "/v1/polymarket/" + encodeURIComponent("SEC Coinbase staking") + "?since=24h" });
+    expect(rest.statusCode).toBe(200);
+    expect(rest.json()._billing.tool).toBe("polymarket_context");
   });
 });

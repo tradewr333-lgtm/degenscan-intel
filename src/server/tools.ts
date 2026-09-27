@@ -97,3 +97,54 @@ export function explain(eventId: string) {
 }
 
 export const TOOL_DOCS = Object.entries(PRICES).map(([tool, usd]) => ({ tool, price_usd: usd }));
+
+/* ───────────────────────── Prediction-market context ───────────────────────── */
+
+const STOP = new Set(["will", "the", "be", "by", "in", "on", "of", "to", "a", "an", "and", "or", "for", "at", "before", "after", "than", "more", "less", "above", "below", "than", "does", "do", "is", "are", "this", "that", "with", "from", "into", "over", "under", "end", "year", "month", "week", "day", "2025", "2026", "2027", "who", "what", "which", "win", "reach", "hit", "close", "price", "yes", "no"]);
+/** Keywords from a market question → FTS5 OR-query over our event titles/summaries. */
+export function questionTerms(q: string): string[] {
+  const words = q.toLowerCase().replace(/[^a-z0-9$%.\- ]/g, " ").split(/\s+/).filter(w => w.length >= 3 && !STOP.has(w));
+  return [...new Set(words)].slice(0, 8);
+}
+
+export const PolymarketContextArgs = z.object({
+  market: z.string().describe("Polymarket market id, slug, or the question text itself (e.g. \"Fed rate cut in October?\"). Slugs/ids are resolved via the public Gamma API; text is searched."),
+  since: z.string().default("48h").describe('Lookback window for related events: "6h", "48h", "7d". Default 48h.'),
+  limit: z.number().int().min(1).max(50).default(15).describe("Max related events."),
+});
+export type PolymarketContextArgs = z.infer<typeof PolymarketContextArgs>;
+
+/** Resolve a Polymarket market (public Gamma API, no key) and attach the events in our feed that bear on it.
+ *  Direction heuristic: for each related event we report its per-asset impacts and a coarse `lean` (supportive / against / unclear)
+ *  derived from event kind + the question's polarity words; the agent combines this with the market's current odds. */
+export async function polymarketContext(a: PolymarketContextArgs) {
+  const { fetchJson } = await import("../ingest/http.js");
+  const isId = /^\d+$/.test(a.market); const isSlug = /^[a-z0-9-]+$/.test(a.market) && a.market.includes("-");
+  let markets: any[] = [];
+  try {
+    if (isId) markets = [await fetchJson<any>(`https://gamma-api.polymarket.com/markets/${a.market}`, { timeoutMs: 8000 })];
+    else if (isSlug) markets = await fetchJson<any[]>(`https://gamma-api.polymarket.com/markets?slug=${encodeURIComponent(a.market)}`, { timeoutMs: 8000 });
+    else markets = await fetchJson<any[]>(`https://gamma-api.polymarket.com/markets?limit=5&active=true&closed=false&order=volume24hr&ascending=false&_q=${encodeURIComponent(a.market)}`, { timeoutMs: 8000 });
+  } catch { markets = []; }
+  const m = markets.find(Boolean);
+  const question: string = m?.question ?? a.market;
+  const safe = (s: unknown) => { try { return typeof s === "string" ? JSON.parse(s) : s; } catch { return undefined; } };
+  const outcomes: string[] = safe(m?.outcomes) ?? ["Yes", "No"]; const prices: number[] = (safe(m?.outcomePrices) ?? []).map(Number);
+  const terms = questionTerms(question);
+  const since = parseSince(a.since, "48h");
+  const events = terms.length ? queryEvents({ since, q: terms.map(t => `"${t.replace(/"/g, "")}"`).join(" OR "), limit: a.limit }) : [];
+  // score relevance: how many question terms appear in title+summary; keep primary/aggregator sources first
+  const scored = events.map(e => { const hay = `${e.title} ${e.summary}`.toLowerCase(); const hits = terms.filter(t => hay.includes(t)).length; return { e, hits }; })
+    .filter(x => x.hits > 0).sort((x, y) => y.hits - x.hits || y.e.severity - x.e.severity).slice(0, a.limit);
+  const related = scored.map(({ e, hits }) => ({
+    id: e.id, ts_event: e.ts_event, kind: e.kind, title: e.title, source: e.source.id, tier: e.source.tier, severity: e.severity, corroboration: e.corroboration.count,
+    matched_terms: terms.filter(t => `${e.title} ${e.summary}`.toLowerCase().includes(t)), relevance: Math.round((hits / terms.length) * 100) / 100,
+    impacts: e.impacts.slice(0, 5).map(i => ({ asset_id: i.asset_id, direction: i.direction, confidence: i.confidence })), raw_ref: e.raw_ref,
+  }));
+  return {
+    market: m ? { id: m.id, slug: m.slug, question, outcomes, prices, yes_prob: prices[0] ?? null, change_24h: m.oneDayPriceChange != null ? Number(m.oneDayPriceChange) : null, volume_24h: m.volume24hr != null ? Number(m.volume24hr) : null, end_date: m.endDate, url: `https://polymarket.com/event/${m.slug ?? m.id}` } : { question, note: "market not resolved on Gamma API; showing feed events matching the question text" },
+    query_terms: terms, since, n_related: related.length, related,
+    how_to_use: "Compare the market's yes_prob with the recency, tier and severity of related primary-source events. A fresh primary event (SEC/Fed/agency, corroboration>=2) that the market has not repriced (small change_24h) is the signal. This is information, not a forecast.",
+    universe_version: loadUniverse().version,
+  };
+}

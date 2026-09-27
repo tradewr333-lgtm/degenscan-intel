@@ -28,6 +28,8 @@ services:
         value: https://degenscan-intel.onrender.com
       - key: X402_PAY_TO
         sync: false
+      - key: X402_PAY_TO_SOLANA
+        sync: false
       - key: API_KEYS
         sync: false
       - key: STRIPE_SECRET_KEY

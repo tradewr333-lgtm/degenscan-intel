@@ -21,6 +21,7 @@ One normalized feed of price-moving events from ~40 primary sources (SEC, Federa
 | Net pressure on one asset + its drivers ("why is MSTR down?") | `impact_for(asset_id, since)` | $0.003 |
 | Second-order exposure (suppliers, countries, commodities, regulators, indices) | `exposure_graph(asset_id, depth)` | $0.002 |
 | The reasoning behind one surprising impact | `explain(event_id)` | $0.02 |
+| Evidence pack for a Polymarket/Kalshi-style question (odds + primary events that bear on it) | `polymarket_context(market, since)` | $0.01 |
 | Map tickers → asset ids; list what is covered | `universe` | free |
 | Is the feed fresh? which sources are best-effort? | `sources_status` | free |
 
@@ -32,6 +33,10 @@ One normalized feed of price-moving events from ~40 primary sources (SEC, Federa
 4. For each asset with |bias| meaningful: `impact_for(asset_id, since="24h")`.
 5. Check `tradable_now` / `next_open` on the event before sending an order; if the venue is closed, queue for `next_open`.
 6. If an impact looks wrong, `explain(event_id)` before acting; log the rationale.
+
+## Prediction markets
+
+`polymarket_context("Fed rate cut in October?")` (or a slug/id) → current `yes_prob`, `change_24h`, and the primary-source events in the last 48h that match the question, with `tier`, `corroboration`, `relevance`. The signal is a fresh primary event the market has not repriced. Combine with `explain(event_id)` when the direction matters.
 
 ## Reading the output
 

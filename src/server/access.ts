@@ -32,6 +32,7 @@ export function toolForRequest(req: FastifyRequest): string | null {
   if (url.startsWith("/v1/graph/")) return "exposure_graph";
   if (url === "/v1/regime") return "regime_snapshot";
   if (url.startsWith("/v1/explain/")) return "explain";
+  if (url.startsWith("/v1/polymarket/")) return "polymarket_context";
   return null;
 }
 
