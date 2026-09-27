@@ -11,26 +11,25 @@ if errorlevel 1 (
   set "PATH=%PATH%;%ProgramFiles%\Git\cmd"
 )
 
-echo.
-echo === Preparando repositorio local ===
-if exist .git rmdir /s /q .git
-git init -b main >nul
+if not exist .git (
+  git init -b main >nul
+  git remote add origin %REPO%
+)
 git config user.name "Renato"
 git config user.email "tradewr333@gmail.com"
 git add -A
-git commit -q -m "degenscan-intel v0.1.4: cross-asset event feed for agents (40 connectors validated live, exposure graph, MCP+REST, x402 gate)"
-git remote add origin %REPO%
-
+set MSG=%~2
+if "%MSG%"=="" set MSG=update %date% %time%
+git commit -q -m "%MSG%"
 echo.
 echo === Enviando para %REPO% ===
-echo (se pedir login, use sua conta GitHub tradewr333-lgtm no navegador)
-git push -u origin main --force
+git push -u origin main
 if errorlevel 1 (
   echo.
-  echo Push falhou. Verifique se o repositorio existe em %REPO% e se voce esta logado.
+  echo Push falhou. Verifique login/GitHub. Se o remoto tiver historico diferente, rode: push.cmd "" "" force
+  if "%~3"=="force" git push -u origin main --force
 ) else (
   echo.
-  echo Pronto! Repositorio publicado em %REPO%
-  echo Proximo passo: Claude configura o Render.
+  echo Pronto! Render vai fazer o auto-deploy em ~3 min.
 )
 pause

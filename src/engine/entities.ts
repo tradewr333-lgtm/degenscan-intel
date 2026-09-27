@@ -92,7 +92,11 @@ function buildDict(): Dict[] {
   const u = loadUniverse();
   for (const a of u.assets) {
     if (a.class === "equity") {
-      d.push({ node: `company:${a.id}`, type: "company", name: a.name, re: new RegExp(`(^|[^A-Za-z0-9])\\$?${esc(a.id)}(?=$|[^A-Za-z0-9.])`) }); // case-sensitive ticker
+      // Case-sensitive ticker. Short tickers (T, V, C, F, GE, GM…) collide with ordinary words/abbreviations, so they only match with a $ prefix.
+      const tickerRe = a.id.length <= 2
+        ? new RegExp(`\\$${esc(a.id)}(?=$|[^A-Za-z0-9.])`)
+        : new RegExp(`(^|[^A-Za-z0-9])\\$?${esc(a.id)}(?=$|[^A-Za-z0-9.])`);
+      d.push({ node: `company:${a.id}`, type: "company", name: a.name, re: tickerRe });
       const base = a.name.replace(/\s*\((ADR|MicroStrategy)\)\s*/i, "").replace(/\s+(Inc|Corp|Holdings|Platforms|Technologies|Entertainment|US|B|A)\.?$/i, "");
       if (base.length >= 4) d.push({ node: `company:${a.id}`, type: "company", name: a.name, re: wordRe(base) });
     }
