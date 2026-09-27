@@ -10,7 +10,7 @@ import { recordCall } from "../store/db.js";
  *
  * Config (env):
  *   X402_PAY_TO           receiving address (Base). Required for paid mode.
- *   X402_FACILITATOR_URL  default https://x402.org/facilitator (Coinbase-hosted; Base mainnet needs CDP keys — see README)
+ *   X402_FACILITATOR_URL  default https://facilitator.payai.network (Base mainnet, no key; x402.org is testnet-only)
  *   X402_NETWORK          base | base-sepolia (default base)
  *   API_KEYS              comma-separated keys accepted as an alternative to x402 (Stripe subscribers)
  *   INTEL_FREE=1          dev mode: everything free
@@ -21,7 +21,7 @@ const USDC: Record<string, string> = {
   "base-sepolia": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
 };
 const PAY_TO = process.env.X402_PAY_TO;
-const FACILITATOR = process.env.X402_FACILITATOR_URL ?? "https://x402.org/facilitator";
+const FACILITATOR = process.env.X402_FACILITATOR_URL ?? "https://facilitator.payai.network";
 const API_KEYS = new Set((process.env.API_KEYS ?? "").split(",").map(s => s.trim()).filter(Boolean));
 const FREE_MODE = process.env.INTEL_FREE === "1" || !PAY_TO;
 

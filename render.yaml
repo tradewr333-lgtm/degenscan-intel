@@ -17,7 +17,13 @@ services:
       - key: UNIVERSE_PATH
         value: /data/universe.json
       - key: INTEL_FREE
-        value: "1"
+        value: "0"
+      - key: X402_NETWORK
+        value: base
+      - key: X402_FACILITATOR_URL
+        value: https://facilitator.payai.network
+      - key: FREE_DAILY_CALLS
+        value: "100"
       - key: X402_PAY_TO
         sync: false
       - key: API_KEYS
