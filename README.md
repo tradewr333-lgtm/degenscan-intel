@@ -74,4 +74,4 @@ See SPEC §8. Next: deploy + live probe → real x402 settlement → registries 
 
 Event-source ideas and the supplier-overlay concept trace to [OSIRIS](https://github.com/simplifaisoul/osiris) by simplifaisoul (MIT). This project shares no code with it and no UI; it is the data/agent layer OSIRIS never had.
 
-License: MIT — © 2026 Edutech Wise FZCO / degenscan.io
+License: MIT — © 2026 Marbella Collins LLC / degenscan.io

@@ -2,16 +2,24 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.tradewr333-lgtm/degenscan-intel",
   "title": "Degenscan Intel",
-  "description": "Cross-asset event intelligence for trading agents: SEC, Fed, Federal Register, USGS, NHC, Nasdaq halts, DefiLlama, Polymarket and 30+ primary sources normalized into one event schema and scored against an exposure graph into per-asset impacts (stocks, ETFs, crypto, commodities, rates). Pay per call in USDC via x402 or with an API key.",
+  "description": "Cross-asset market event intelligence for AI trading agents. Pay per call (USDC/x402) or API key.",
   "version": "0.2.0",
   "websiteUrl": "https://degenscan-intel.onrender.com",
-  "repository": { "url": "https://github.com/tradewr333-lgtm/degenscan-intel", "source": "github" },
+  "repository": {
+    "url": "https://github.com/tradewr333-lgtm/degenscan-intel",
+    "source": "github"
+  },
   "remotes": [
     {
       "type": "streamable-http",
       "url": "https://degenscan-intel.onrender.com/mcp",
       "headers": [
-        { "name": "X-API-KEY", "description": "Optional subscription key (see /v1/plans). Without it: 100 free calls/day, then x402 (USDC on Base) per call.", "isRequired": false, "isSecret": true }
+        {
+          "name": "X-API-KEY",
+          "description": "Optional subscription key (see /v1/plans). Without it: 100 free calls/day, then x402 (USDC on Base) per call.",
+          "isRequired": false,
+          "isSecret": true
+        }
       ]
     }
   ]

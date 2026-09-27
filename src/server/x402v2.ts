@@ -61,7 +61,10 @@ export function buildRoutes(): RoutesConfig {
       accepts: { scheme: "exact", network: NETWORK, payTo: PAY_TO, maxTimeoutSeconds: 60,
         price: (ctx) => { const b: any = ctx.adapter.getBody?.(); const t = String(b?.params?.name ?? ""); return usd(PRICES[t] ?? 0.005); } },
       description: "MCP server (streamable HTTP). Tools: events_since, impact_for, exposure_graph, regime_snapshot, explain, universe, sources_status.", mimeType: "application/json", ...common,
-      extensions: declareDiscoveryExtension({ toolName: "events_since", description: "What happened since <since> that affects my assets", inputSchema: { type: "object", properties: { since: { type: "string" }, universe: { type: "array", items: { type: "string" } } } }, output: { example: { count: 1, events: [EVENT_EXAMPLE] } } }),
+      extensions: declareDiscoveryExtension({ bodyType: "json",
+        input: { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "events_since", arguments: { since: "4h", universe: ["NVDA", "BTC"] } } },
+        inputSchema: { properties: { jsonrpc: { type: "string" }, id: { type: "number" }, method: { type: "string", description: "tools/call (initialize and tools/list are free)" }, params: { type: "object", properties: { name: { type: "string", description: "events_since | impact_for | exposure_graph | regime_snapshot | explain | universe | sources_status" }, arguments: { type: "object" } } } }, required: ["jsonrpc", "method"] },
+        output: { example: { jsonrpc: "2.0", id: 1, result: { structuredContent: { count: 1, events: [EVENT_EXAMPLE] } } } } }),
     },
   };
   return routes;

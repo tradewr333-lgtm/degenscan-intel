@@ -220,7 +220,7 @@ Isso mantém latência < 200 ms por evento e custo ~zero por chamada.
 - **Store:** SQLite (better-sqlite3) em v0 → Postgres+Timescale quando > 5M eventos.
 - **Deploy:** Render (mesma conta do degenscan) — 1 worker + 1 web. Custo ~$25/mês.
 - **Observabilidade:** `sources_status` público (transparência = confiança).
-- **Jurídico:** só eventos e dados públicos de emissores estatais; cotações de ações apenas com 15 min de atraso e para contexto interno (sem redistribuição real-time → sem licença de bolsa). ToS: Reddit/Yahoo/Nasdaq API são não-oficiais → isolar em conectores "best-effort", nunca no caminho crítico. Termos de uso do produto: "informational, not investment advice" (Edutech Wise FZCO).
+- **Jurídico:** só eventos e dados públicos de emissores estatais; cotações de ações apenas com 15 min de atraso e para contexto interno (sem redistribuição real-time → sem licença de bolsa). ToS: Reddit/Yahoo/Nasdaq API são não-oficiais → isolar em conectores "best-effort", nunca no caminho crítico. Termos de uso do produto: "informational, not investment advice" (Marbella Collins LLC).
 
 ---
 
