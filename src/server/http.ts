@@ -22,6 +22,31 @@ const METRICS_SINCE = process.env.METRICS_SINCE ?? "2026-09-27T00:00:00Z";
 /** Owner/test wallets: never counted as customers or revenue in public metrics. */
 const EXCLUDED_WALLETS = (process.env.EXCLUDED_WALLETS ?? "0x5344722b8D037827A9a5b7cD6312481D215d33BF,0x21f4A2DA07bccE60878cAb223358D11aD8F11a94").split(",").map(s => s.trim()).filter(Boolean);
 
+const REST_FOR: Record<string, string> = { events_since: "/v1/events?since=4h&universe=NVDA,BTC", impact_for: "/v1/impact/{asset_id}?since=24h", exposure_graph: "/v1/graph/{asset_id}?depth=2", regime_snapshot: "/v1/regime", explain: "/v1/explain/{event_id}" };
+const OPENAPI = (base: string) => ({
+  openapi: "3.1.0",
+  info: { title: "Degenscan Intel", version: "0.3.1", description: "Cross-asset market event intelligence for AI trading agents. Priced routes return HTTP 402 with x402 v2 payment requirements (USDC on Base) unless X-API-KEY is sent or the free daily quota applies. Information and analytics only — not investment advice.", contact: { name: "Marbella Collins LLC", email: "contact@degenscan.io" }, license: { name: "MIT" } },
+  servers: [{ url: base }],
+  components: { securitySchemes: { apiKey: { type: "apiKey", in: "header", name: "X-API-KEY" }, x402: { type: "apiKey", in: "header", name: "PAYMENT-SIGNATURE", description: "x402 v2 payment payload (base64). Obtain requirements from the 402 response header PAYMENT-REQUIRED." } } },
+  paths: {
+    "/v1/events": { get: { summary: "Events since t that touch a universe, scored into per-asset impacts", "x-price-usd": PRICES.events_since, parameters: [
+      { name: "since", in: "query", schema: { type: "string", default: "4h" }, description: "30m | 4h | 2d | ISO-8601 (past values = backtest)" }, { name: "universe", in: "query", schema: { type: "string" }, description: "comma-separated asset ids, e.g. NVDA,BTC,CL" },
+      { name: "kinds", in: "query", schema: { type: "string" } }, { name: "min_severity", in: "query", schema: { type: "number" } }, { name: "min_confidence", in: "query", schema: { type: "number" } }, { name: "q", in: "query", schema: { type: "string" } }, { name: "limit", in: "query", schema: { type: "integer", default: 50 } } ],
+      responses: { "200": { description: "events[] with impacts[]" }, "402": { description: "x402 payment required (header PAYMENT-REQUIRED)" } } } },
+    "/v1/impact/{asset_id}": { get: { summary: "Net directional pressure on one asset + source events", "x-price-usd": PRICES.impact_for, parameters: [{ name: "asset_id", in: "path", required: true, schema: { type: "string" } }, { name: "since", in: "query", schema: { type: "string", default: "24h" } }], responses: { "200": { description: "bias, n_events, drivers, events" }, "402": { description: "payment required" } } } },
+    "/v1/graph/{asset_id}": { get: { summary: "Exposure sub-graph around an asset", "x-price-usd": PRICES.exposure_graph, parameters: [{ name: "asset_id", in: "path", required: true, schema: { type: "string" } }, { name: "depth", in: "query", schema: { type: "integer", default: 2, minimum: 1, maximum: 3 } }], responses: { "200": { description: "nodes, edges, facilities" }, "402": { description: "payment required" } } } },
+    "/v1/regime": { get: { summary: "Venues open, 24h pressure ranking, top events, prediction markets", "x-price-usd": PRICES.regime_snapshot, responses: { "200": { description: "snapshot" }, "402": { description: "payment required" } } } },
+    "/v1/explain/{event_id}": { get: { summary: "Rationale for one event's impacts", "x-price-usd": PRICES.explain, parameters: [{ name: "event_id", in: "path", required: true, schema: { type: "string" } }], responses: { "200": { description: "explanation" }, "402": { description: "payment required" } } } },
+    "/v1/universe": { get: { summary: "Asset universe (free)", responses: { "200": { description: "assets[]" } } } },
+    "/v1/sources": { get: { summary: "Connector health (free)", responses: { "200": { description: "sources[]" } } } },
+    "/v1/metrics": { get: { summary: "Public weekly usage metrics (free)", responses: { "200": { description: "weeks[]" } } } },
+    "/v1/keys/x402/{pack}": { post: { summary: "Buy a prepaid API key with USDC (x402) — no human, no card", parameters: [{ name: "pack", in: "path", required: true, schema: { type: "string", enum: ["pack_1k", "pack_10k", "pack_100k"] } }], responses: { "200": { description: "{ api_key, calls }" }, "402": { description: "x402 payment required: $5 / $40 / $300" } } } },
+    "/v1/keys/me": { get: { summary: "Remaining budget for X-API-KEY (free)", security: [{ apiKey: [] }], responses: { "200": { description: "budget, used, remaining" } } } },
+    "/v1/plans": { get: { summary: "Card subscriptions for human operators (Stripe)", responses: { "200": { description: "plans[]" } } } },
+    "/mcp": { post: { summary: "MCP streamable HTTP endpoint (tools: events_since, impact_for, exposure_graph, regime_snapshot, explain, universe, sources_status)", responses: { "200": { description: "JSON-RPC / SSE" }, "402": { description: "payment required for priced tools after quota" } } } },
+  },
+});
+
 export async function buildHttp() {
   const app = Fastify({ logger: process.env.LOG_LEVEL ? { level: process.env.LOG_LEVEL } : false, trustProxy: true });
   const PUBLIC_URL = process.env.PUBLIC_URL ?? "https://degenscan-intel.onrender.com";
@@ -58,9 +83,9 @@ export async function buildHttp() {
   const billing = (req: any, tool: string) => req.x402Context ? { tool, price_usd: PRICES[tool] ?? 0.005, method: "x402" } : { tool, price_usd: req.intelAccess?.price ?? 0, method: req.intelAccess?.method ?? "free" };
 
   app.get("/", async () => ({
-    name: "degenscan-intel", version: "0.3.0",
+    name: "degenscan-intel", version: "0.3.1",
     description: "Cross-asset event intelligence for autonomous agents. Pay per call with USDC (x402 v2, Base) or subscribe with an API key.",
-    mcp: `${PUBLIC_URL}/mcp`, rest: `${PUBLIC_URL}/v1`, pricing: TOOL_DOCS, skill: `${PUBLIC_URL}/skill.md`, plans: `${PUBLIC_URL}/v1/plans`, prepaid_keys: `${PUBLIC_URL}/v1/keys/packs`, metrics: `${PUBLIC_URL}/v1/metrics`, docs: "https://github.com/tradewr333-lgtm/degenscan-intel", contact: "contact@degenscan.io",
+    mcp: `${PUBLIC_URL}/mcp`, rest: `${PUBLIC_URL}/v1`, pricing: TOOL_DOCS, skill: `${PUBLIC_URL}/skill.md`, openapi: `${PUBLIC_URL}/openapi.json`, x402: `${PUBLIC_URL}/.well-known/x402`, plans: `${PUBLIC_URL}/v1/plans`, prepaid_keys: `${PUBLIC_URL}/v1/keys/packs`, metrics: `${PUBLIC_URL}/v1/metrics`, docs: "https://github.com/tradewr333-lgtm/degenscan-intel", contact: "contact@degenscan.io",
     operator: OPERATOR, disclaimer: DISCLAIMER, license: "MIT",
   }));
 
@@ -81,6 +106,21 @@ export async function buildHttp() {
   const SKILL = (() => { try { return readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../skills/degenscan-intel/SKILL.md"), "utf8"); } catch { return "# Degenscan Intel\nSee /llms.txt"; } })();
   app.get("/skill.md", async (_r, reply) => reply.type("text/markdown; charset=utf-8").send(SKILL));
   app.get("/.well-known/skills/degenscan-intel/SKILL.md", async (_r, reply) => reply.type("text/markdown; charset=utf-8").send(SKILL));
+  // Machine-readable discovery for x402 indexers (Agent402, x402watch, x402scan) and generic agents.
+  const PAY_TO = process.env.X402_PAY_TO ?? null;
+  app.get("/.well-known/x402", async () => ({
+    x402Version: 2, name: "Degenscan Intel", description: "Cross-asset market event intelligence for AI trading agents: ~40 primary sources scored into per-asset impacts.",
+    operator: OPERATOR, url: PUBLIC_URL, network: "eip155:8453", asset: "USDC", payTo: PAY_TO, facilitator: process.env.X402_FACILITATOR_URL ?? "https://facilitator.payai.network",
+    resources: [
+      ...TOOL_DOCS.filter(t => t.price_usd > 0 && t.tool !== "health").map(t => ({ tool: t.tool, price_usd: t.price_usd, http: REST_FOR[t.tool] ? `GET ${PUBLIC_URL}${REST_FOR[t.tool]}` : undefined, mcp: `POST ${PUBLIC_URL}/mcp tools/call ${t.tool}` })),
+      ...Object.entries(PACKS).map(([k, v]) => ({ tool: `prepaid_key:${k}`, price_usd: v.usd, http: `POST ${PUBLIC_URL}/v1/keys/x402/${k}`, calls: v.calls })),
+    ],
+    free: [`GET ${PUBLIC_URL}/v1/universe`, `GET ${PUBLIC_URL}/v1/sources`, `GET ${PUBLIC_URL}/v1/metrics`, `GET ${PUBLIC_URL}/health`, "MCP initialize/tools/list", "100 priced calls/day per IP"],
+    docs: { llms: `${PUBLIC_URL}/llms.txt`, skill: `${PUBLIC_URL}/skill.md`, openapi: `${PUBLIC_URL}/openapi.json`, owned_wallets: `${PUBLIC_URL}/wallets.json`, metrics: `${PUBLIC_URL}/v1/metrics` },
+  }));
+  // Owner/test wallets, published so explorers and buyers can verify our usage metrics exclude self-payments.
+  app.get("/wallets.json", async () => ({ operator: OPERATOR, pay_to: PAY_TO, owned_or_test_wallets: EXCLUDED_WALLETS, note: "Payments from these addresses are the operator's own tests; they are excluded from customers and revenue in /v1/metrics." }));
+  app.get("/openapi.json", async () => OPENAPI(PUBLIC_URL));
   app.get("/icon.png", async (_r, reply) => reply.type("image/png").send(Buffer.from(ICON_PNG_B64, "base64")));
   // Glama ownership challenge (https://glama.ai) — token is account-bound, contains no secrets; overridable via env.
   app.get("/.well-known/glama.json", async () => ({ $schema: "https://glama.ai/mcp/schemas/connector.json", claim: process.env.GLAMA_CLAIM ?? "glama_claim__jjuT9diA1oBYRDhpNvBl7A9aD4RRMbR" }));

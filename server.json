@@ -3,7 +3,7 @@
   "name": "io.github.tradewr333-lgtm/degenscan-intel",
   "title": "Degenscan Intel",
   "description": "Cross-asset market event intelligence for AI trading agents. Pay per call (USDC/x402) or API key.",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "websiteUrl": "https://degenscan-intel.onrender.com",
   "repository": {
     "url": "https://github.com/tradewr333-lgtm/degenscan-intel",
