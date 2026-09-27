@@ -141,9 +141,12 @@ export async function polymarketContext(a: PolymarketContextArgs) {
   const since = parseSince(a.since, "48h");
   const events = terms.length ? queryEvents({ since, q: terms.map(t => `"${t.replace(/"/g, "")}"`).join(" OR "), limit: a.limit }) : [];
   // score relevance: how many question terms appear in title+summary; keep primary/aggregator sources first
-  const minHits = Math.max(1, Math.ceil(terms.length * 0.4));   // e.g. 3 terms → 2 hits; avoids one generic word pulling in noise
-  const scored = events.map(e => { const hay = `${e.title} ${e.summary}`.toLowerCase(); const hits = terms.filter(t => hay.includes(t)).length; return { e, hits }; })
-    .filter(x => x.hits >= minHits).sort((x, y) => y.hits - x.hits || y.e.severity - x.e.severity).slice(0, a.limit);
+  const WEAK = /^(\d[\d.,k%$]*|january|february|march|april|may|june|july|august|september|october|november|december|q[1-4])$/;
+  const strong = terms.filter(t => !WEAK.test(t));
+  const minHits = terms.length >= 4 ? 2 : 1;
+  // at least one strong (non-numeric, non-month) term must match, so "100k" or "december" alone never pull in noise
+  const scored = events.map(e => { const hay = `${e.title} ${e.summary}`.toLowerCase(); const hits = terms.filter(t => hay.includes(t)).length; const strongHit = strong.some(t => hay.includes(t)); return { e, hits, strongHit }; })
+    .filter(x => x.hits >= minHits && (x.strongHit || strong.length === 0)).sort((x, y) => y.hits - x.hits || y.e.severity - x.e.severity).slice(0, a.limit);
   const related = scored.map(({ e, hits }) => ({
     id: e.id, ts_event: e.ts_event, kind: e.kind, title: e.title, source: e.source.id, tier: e.source.tier, severity: e.severity, corroboration: e.corroboration.count,
     matched_terms: terms.filter(t => `${e.title} ${e.summary}`.toLowerCase().includes(t)), relevance: Math.round((hits / terms.length) * 100) / 100,
