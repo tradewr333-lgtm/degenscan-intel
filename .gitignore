@@ -1,5 +1,7 @@
 node_modules
 dist
-data/
+data/*.db*
+data/universe.json
 .env
-probe-output*.txt
+mcp-publisher*
+_to_delete/

@@ -36,7 +36,8 @@ describe("store", () => {
 });
 
 describe("http + mcp", () => {
-  const app = buildHttp();
+  let app: Awaited<ReturnType<typeof buildHttp>>;
+  beforeAll(async () => { app = await buildHttp(); });
   it("REST /v1/events returns scored events with billing info", async () => {
     const r = await app.inject({ method: "GET", url: "/v1/events?since=24h&universe=TSM,NVDA" });
     expect(r.statusCode).toBe(200);

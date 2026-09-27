@@ -19,7 +19,7 @@ async function main() {
       if (!flag("--no-ingest")) startScheduler(ev => { if (ev.severity >= 0.7) console.log(`  !! ${ev.kind} ${ev.title} → ${ev.impacts.slice(0, 3).map(i => `${i.asset_id}${i.direction > 0 ? "▲" : i.direction < 0 ? "▼" : "◆"}${i.confidence}`).join(" ")}`); });
       // nightly universe refresh at ~21:35 ET
       setInterval(async () => { const et = new Date().toLocaleTimeString("en-US", { timeZone: "America/New_York", hour12: false }); if (et.startsWith("21:35")) { await refreshUniverse(); invalidateGraph(); invalidateDict(); } }, 60_000);
-      const app = buildHttp();
+      const app = await buildHttp();
       await app.listen({ port, host: "0.0.0.0" });
       console.log(`degenscan-intel listening on :${port}  (MCP: POST /mcp, REST: /v1, universe ${loadUniverse().version}, ${CONNECTORS.length} connectors)`);
       break;

@@ -24,7 +24,17 @@ services:
         value: https://facilitator.payai.network
       - key: FREE_DAILY_CALLS
         value: "100"
+      - key: PUBLIC_URL
+        value: https://degenscan-intel.onrender.com
       - key: X402_PAY_TO
         sync: false
       - key: API_KEYS
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: STRIPE_PRICE_STARTER
+        sync: false
+      - key: STRIPE_PRICE_PRO
         sync: false

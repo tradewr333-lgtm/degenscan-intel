@@ -1,0 +1,111 @@
+=== degenscan-intel probe === 
+v24.14.0
+--- npm install --- 
+
+up to date, audited 192 packages in 875ms
+
+64 packages are looking for funding
+  run `npm fund` for details
+
+5 vulnerabilities (3 moderate, 1 high, 1 critical)
+
+To address all issues (including breaking changes), run:
+  npm audit fix --force
+
+Run `npm audit` for details.
+--- probe --- 
+
+> degenscan-intel@0.1.0 probe
+> tsx src/cli.ts probe
+
+(node:52848) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✅ binance-announcements     8 items    8 scored    257ms 
+     · crypto.listing | Binance Will List Hyperliquid (HYPE) with Seed Tag Applied → HYPE▲0.41
+     · crypto.listing | Binance Futures Will List USDⓈ-M & COIN-M Quarterly 0326 Delivery Contracts → COIN▲0.41 USDC▲0.205
+✅ boe-press                50 items   50 scored   4439ms 
+     · cb.press | Minutes of the Market Participants Group meeting – 24 September 2026 → no impacts
+     · cb.press | Foreign Currency Reserves 2026 – Market Notice 22 September 2026 → no impacts
+✅ boj-press                45 items   45 scored   1389ms 
+     · cb.press | Conduct of Funds-Supplying Operations against Pooled Collateral → USDJPY◆0.094
+     · cb.press | Japanese Government Bonds Held by the Bank of Japan → USDJPY◆0.094
+✅ businesswire              0 items    0 scored    249ms 
+✅ cftc-press               10 items   10 scored   2235ms 
+     · reg.notice | CFTC Staff Releases Updates to FAQs Concerning Registrants and Registered Entity Activitie → no impacts
+     · reg.notice | CFTC Releases Staff Advisory on Mention Markets → no impacts
+✅ cisa-kev                  5 items    5 scored    343ms 
+     · reg.notice | CISA KEV: CVE-2026-67279 — MikroTik RouterOS → no impacts
+     · reg.notice | CISA KEV: CVE-2026-65660 — Microsoft SharePoint → MSFT◆0.123
+✅ coinbase-status           1 items    1 scored    376ms 
+     · crypto.outage | Coinbase incident: Delayed Sends and Receives - EGLD (MultiversX) (minor) → COIN▼0.576 USDC▼0.288 BTC▼0.23 IBIT▼0.23
+✅ coingecko-moves           0 items    0 scored    337ms 
+✅ doj-press                18 items   18 scored   5197ms 
+     · reg.enforcement | Oahu Girls’ Wrestling Coach Charged with  Receipt and Possession of Child Pornography → GOOG▼0.265 GOOGL▼0.265 AAPL▼0.189 V▼0.189
+     · reg.enforcement | 54-Year-Old Brentwood Man Sentenced To 25 Years In Prison For Producing Child Pornography → GOOG▼0.265 GOOGL▼0.265 AAPL▼0.189 V▼0.189
+✅ ec-press                  0 items    0 scored   3957ms 
+✅ ecb-press                15 items   15 scored   8721ms 
+     · cb.press | ECB Executive Board member Isabel Schnabel to resign to take senior role at IMF → EURUSD▼0.101
+     · cb.press | Philip R. Lane: The outlook for the euro area economy → EURUSD◆0.101
+✅ eonet                     6 items    6 scored   2655ms 
+     · nat.storm | Hurricane Odalys (severeStorms) → HD▼0.073 AAL▼0.073 CCL▼0.073 NEE▼0.073
+     · nat.storm | Hurricane Polo (severeStorms) → HD▼0.092 AAL▼0.092 CCL▼0.092 NEE▼0.092
+✅ fcc-news                100 items  100 scored   5413ms 
+     · reg.notice | FM Station WSTK - Additional Documents - Federal Communications Commission (.gov) → no impacts
+     · reg.notice | Political Files - Federal Communications Commission (.gov) → no impacts
+✅ fda-press                20 items   20 scored   8414ms 
+     · reg.notice | Federal Court Enters Consent Decree Against Gold Star Distribution, Inc. Following Persist → MRNA◆0.082 LLY◆0.061 NVO◆0.061 PFE◆0.061
+     · reg.notice | FDA Updates Regulations to Advance Innovative Alternatives to Animal Testing → MRNA◆0.082 LLY◆0.061 NVO◆0.061 PFE◆0.061
+✅ fed-press                20 items   20 scored   9086ms 
+     · cb.press | Federal Reserve Board announces approval of application by Peoples Bancorp Inc. → US2Y▲0.107 US10Y▲0.071 TLT▼0.071 DXY▲0.059
+     · reg.proposed_rule | Federal Reserve Board requests public comment on two proposals related to establishing a r → USDC◆0.254 USDT◆0.254 BTC◆0.127 IBIT◆0.127
+✅ fed-speeches             15 items   15 scored   4676ms 
+     · cb.speech | Barr, A Long-Term View on the Costs of Shelter → US2Y◆0.184 US10Y◆0.122 TLT◆0.122 DXY◆0.102
+     · cb.speech | Jefferson, Discount Window Modernization and Treasury Market Functioning → US2Y◆0.184 US10Y◆0.122 TLT◆0.122 DXY◆0.102
+✅ federal-register        100 items  100 scored   4364ms 
+     · reg.proposed_rule | Proposed Rule: Information Reporting Regarding Qualified Opportunity Zones and Updated Qua → no impacts
+     · reg.rule | Rule: Notice of Policy Change and Rescission of Single-Pilot Training Exemptions for Certa → BA◆0.194
+✅ ftc-press                10 items   10 scored    845ms 
+     · reg.notice | FTC Seeks Public Comment on Whether to Update Rule on Impersonation of Government and Busi → META◆0.061 AMZN◆0.051
+     · reg.notice | FTC Approves Publication of Federal Register Notices Revising the Commission’s Rules of Pr → META▲0.061 AMZN▲0.051
+✅ gdacs                   265 items  265 scored   2338ms 
+     · nat.flood | Green flood alert in Thailand → no impacts
+     · nat.flood | Green flood alert in Mexico → no impacts
+✅ gdelt-doc                 0 items    0 scored  33465ms 
+✅ globenewswire            20 items   20 scored    304ms 
+     · corp.press | The Future of Radiotherapy is Here: Siemens Healthineers Launches Accela → no impacts
+     · corp.press | IBA Launches QUASAR® Penta-Guide Performance Phantom → no impacts
+✅ google-news             188 items  188 scored   2961ms 
+     · media.report | SK Hynix's Solidigm Eyes $150 Billion IPO, Nvidia's GPU Demand Skyrockets and Disney+ Hike → DIS◆0.053
+     · media.report | After 39 Years Working for the Same Company, He Had Accumulated 10.8 Million Shares of Sto → no impacts
+✅ llama-hacks               0 items    0 scored    127ms 
+✅ mempool                   0 items    0 scored    466ms 
+✅ nasdaq-earnings           0 items    0 scored    143ms 
+✅ nasdaq-halts             19 items   19 scored    529ms 
+     · corp.halt | Trading halt: FBGL (NASDAQ) — code T1 news pending → no impacts
+     · corp.halt | Trading halt: DCX (NASDAQ) — code T1 news pending → no impacts
+✅ nhc                       5 items    5 scored    176ms 
+     · nat.storm | TD Fay — 30 kt, moving 175° at 3 kt → no impacts
+     · nat.storm | HU Odalys — 65 kt, moving 5° at 8 kt → no impacts
+✅ nhtsa-recalls             0 items    0 scored   1313ms 
+❌ nws                       0 items    0 scored    265ms HTTP 400 https://api.weather.gov/alerts/active?status=actual&severity=extreme
+✅ ofac                      1 items    1 scored  39430ms 
+     · reg.sanction | Recent Actions - Office of Foreign Assets Control (.gov) → USDT▼0.086
+✅ polymarket                8 items    8 scored    487ms 
+     · mkt.prediction_shift | Polymarket: "US x Iran ceasefire continues through September 30?" → Yes 89% (-1 pts/24h) → no impacts
+     · mkt.prediction_shift | Polymarket: "Will Christine Lagarde win the 2027 French presidential election?" → Yes 0% ( → no impacts
+❌ prnewswire                0 items    0 scored   4324ms https://www.prnewswire.com/rss/news-releases-list.rss: HTTP 502 https://www.prnewswire.com/rss/news-releases-list.rss
+✅ sec-atom                  2 items    2 scored  17191ms 
+     · corp.insider | 4 - CrowdStrike Holdings, Inc. (0001535527) (Issuer) → CRWD◆0.24
+     · corp.insider | 4 - BERKSHIRE HATHAWAY INC (0001067983) (Reporting) → BRK.B◆0.24
+✅ sec-efts                  0 items    0 scored    445ms 
+✅ sec-press                25 items   25 scored   1320ms 
+     · reg.notice | SEC Publishes Updated Market Statistics, Highlighting Increase in IPOs and Proceeds Raised → COIN◆0.076 XRP◆0.065
+     · reg.enforcement | SEC Charges South Florida Resident and His Company for Alleged Investment Scheme Defraudin → COIN▼0.323 XRP▼0.277 ALL▼0.189 TRV▼0.189
+✅ stablecoin-supply         0 items    0 scored    143ms 
+✅ swpc                      0 items    0 scored    119ms 
+✅ treasury-auctions         0 items    0 scored    584ms 
+✅ usgs                      0 items    0 scored    235ms 
+✅ whitehouse                0 items    0 scored   3659ms 
+
+38/40 connectors reachable
+--- done --- 

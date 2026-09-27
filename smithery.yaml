@@ -1,0 +1,17 @@
+# Degenscan Intel is hosted at https://degenscan-intel.onrender.com/mcp (streamable HTTP).
+# This file lets Smithery build/run the same server from this repo if it prefers to host a copy.
+runtime: "container"
+build:
+  dockerfile: "Dockerfile"
+  dockerBuildPath: "."
+startCommand:
+  type: "http"
+  configSchema:
+    type: "object"
+    properties:
+      apiKey:
+        type: "string"
+        title: "API key (optional)"
+        description: "Subscription key from https://degenscan-intel.onrender.com/v1/plans. Leave empty to use the free daily quota or pay per call with x402."
+  exampleConfig:
+    apiKey: ""

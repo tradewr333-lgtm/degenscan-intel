@@ -1,0 +1,104 @@
+=== degenscan-intel probe === 
+v24.14.0
+--- npm install --- 
+
+added 191 packages, and audited 192 packages in 2s
+
+64 packages are looking for funding
+  run `npm fund` for details
+
+5 vulnerabilities (3 moderate, 1 high, 1 critical)
+
+To address all issues (including breaking changes), run:
+  npm audit fix --force
+
+Run `npm audit` for details.
+--- probe --- 
+
+> degenscan-intel@0.1.0 probe
+> tsx src/cli.ts probe
+
+(node:56680) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+✅ binance-announcements     8 items    8 scored    215ms 
+     · crypto.listing | Binance Will List Hyperliquid (HYPE) with Seed Tag Applied → HYPE▲0.41
+     · crypto.listing | Binance Futures Will List USDⓈ-M & COIN-M Quarterly 0326 Delivery Contracts → COIN▲0.41 USDC▲0.205
+✅ boe-press                50 items   50 scored   6307ms 
+     · cb.press | Minutes of the Market Participants Group meeting – 24 September 2026 → no impacts
+     · cb.press | Foreign Currency Reserves 2026 – Market Notice 22 September 2026 → NVDA◆0.094 TSLA◆0.094 AAPL◆0.094 MSFT◆0.094
+✅ boj-press                45 items   45 scored  12353ms 
+     · cb.press | Conduct of Funds-Supplying Operations against Pooled Collateral → USDJPY◆0.157
+     · cb.press | Japanese Government Bonds Held by the Bank of Japan → USDJPY◆0.157
+✅ businesswire              0 items    0 scored    471ms 
+✅ cftc-press               10 items   10 scored   1202ms 
+     · reg.notice | CFTC Staff Releases Updates to FAQs Concerning Registrants and Registered Entity Activitie → HYPE◆0.072 COIN◆0.072 BTC◆0.054 IBIT◆0.054
+     · reg.notice | CFTC Releases Staff Advisory on Mention Markets → HYPE◆0.072 COIN◆0.072 BTC◆0.054 IBIT◆0.054
+✅ cisa-kev                  5 items    5 scored   6525ms 
+     · reg.notice | CISA KEV: CVE-2026-67279 — MikroTik RouterOS → no impacts
+     · reg.notice | CISA KEV: CVE-2026-65660 — Microsoft SharePoint → MSFT◆0.123
+✅ coinbase-status           1 items    1 scored    362ms 
+     · crypto.outage | Coinbase incident: Delayed Sends and Receives - EGLD (MultiversX) (minor) → COIN▼0.576 USDC▼0.288 BTC▼0.23 IBIT▼0.23
+✅ coingecko-moves           0 items    0 scored    334ms 
+❌ doj-press                 0 items    0 scored  10039ms HTTP 404 https://www.justice.gov/feeds/opa/justice-news.xml
+✅ ec-press                  0 items    0 scored   6469ms 
+✅ ecb-press                15 items   15 scored   9133ms 
+     · cb.press | ECB Executive Board member Isabel Schnabel to resign to take senior role at IMF → EURUSD▼0.168
+     · cb.press | Philip R. Lane: The outlook for the euro area economy → EURUSD◆0.168
+✅ eonet                     6 items    6 scored   1134ms 
+     · nat.storm | Tropical Storm Fay (severeStorms) → HD▼0.118 AAL▼0.118 CCL▼0.118 NEE▼0.118
+     · nat.storm | Tropical Storm Gonzalo (severeStorms) → HD▼0.113 AAL▼0.113 CCL▼0.113 NEE▼0.113
+❌ fcc-news                  0 items    0 scored   1205ms HTTP 403 https://www.fcc.gov/news-events/headlines.rss
+✅ fda-press                20 items   20 scored   8320ms 
+     · reg.notice | Federal Court Enters Consent Decree Against Gold Star Distribution, Inc. Following Persist → MRNA◆0.136 GC◆0.119 GLD◆0.119 LLY◆0.102
+     · reg.notice | FDA Updates Regulations to Advance Innovative Alternatives to Animal Testing → MRNA◆0.136 LLY◆0.102 NVO◆0.102 PFE◆0.102
+✅ fed-press                20 items   20 scored   6366ms 
+     · cb.press | Federal Reserve Board announces approval of application by Peoples Bancorp Inc. → US2Y▲0.238 US10Y▲0.158 TLT▼0.158 DXY▲0.132
+     · reg.proposed_rule | Federal Reserve Board requests public comment on two proposals related to establishing a r → US2Y◆0.327 USDC◆0.254 USDT◆0.254 US10Y◆0.218
+✅ fed-speeches             15 items   15 scored   8878ms 
+     · cb.speech | Barr, A Long-Term View on the Costs of Shelter → US2Y◆0.306 US10Y◆0.204 TLT◆0.204 DXY◆0.17
+     · cb.speech | Jefferson, Discount Window Modernization and Treasury Market Functioning → US2Y◆0.306 US10Y◆0.204 TLT◆0.204 DXY◆0.17
+✅ federal-register        100 items  100 scored  10421ms 
+     · reg.proposed_rule | Proposed Rule: Information Reporting Regarding Qualified Opportunity Zones and Updated Qua → no impacts
+     · reg.rule | Rule: Notice of Policy Change and Rescission of Single-Pilot Training Exemptions for Certa → BA◆0.324
+✅ ftc-press                10 items   10 scored  11658ms 
+     · reg.notice | FTC Seeks Public Comment on Whether to Update Rule on Impersonation of Government and Busi → META◆0.102 AMZN◆0.085 AAPL◆0.068 MSFT◆0.051
+     · reg.notice | FTC Approves Publication of Federal Register Notices Revising the Commission’s Rules of Pr → META▲0.102 AMZN▲0.085 MSFT▲0.071 AAPL▲0.071
+✅ gdacs                   265 items  265 scored   6587ms 
+     · nat.flood | Green flood alert in Thailand → no impacts
+     · nat.flood | Green flood alert in Mexico → no impacts
+✅ gdelt-doc                 0 items    0 scored  73368ms 
+❌ globenewswire             0 items    0 scored    339ms Cannot convert object to primitive value
+✅ google-news             187 items  187 scored   3640ms 
+     · media.report | SK Hynix's Solidigm Eyes $150 Billion IPO, Nvidia's GPU Demand Skyrockets and Disney+ Hike → DIS◆0.053
+     · media.report | After 39 Years Working for the Same Company, He Had Accumulated 10.8 Million Shares of Sto → no impacts
+✅ llama-hacks               0 items    0 scored    130ms 
+✅ mempool                   0 items    0 scored    186ms 
+❌ nasdaq-earnings           0 items    0 scored  20009ms The operation was aborted due to timeout
+✅ nasdaq-halts             19 items   19 scored   1082ms 
+     · corp.halt | Trading halt: FBGL (NASDAQ) — code T1 news pending → no impacts
+     · corp.halt | Trading halt: DCX (NASDAQ) — code T1 news pending → no impacts
+✅ nhc                       5 items    5 scored    291ms 
+     · nat.storm | TD Fay — 30 kt, moving 175° at 3 kt → no impacts
+     · nat.storm | HU Odalys — 65 kt, moving 5° at 8 kt → no impacts
+✅ nhtsa-recalls             0 items    0 scored    968ms 
+❌ nws                       0 items    0 scored    327ms HTTP 400 https://api.weather.gov/alerts/active?severity=Extreme&limit=50
+❌ ofac                      0 items    0 scored  15249ms HTTP 404 https://ofac.treasury.gov/recent-actions/rss
+✅ polymarket                9 items    9 scored    870ms 
+     · mkt.prediction_shift | Polymarket: "US x Iran ceasefire continues through September 30?" → Yes 90% (-1 pts/24h) → CL◆0.05 USO◆0.05
+     · mkt.prediction_shift | Polymarket: "Will the Iranian regime fall by September 30?" → Yes 0% (+0 pts/24h) → no impacts
+✅ prnewswire               20 items   20 scored    904ms 
+     · corp.lawsuit | Employment Law Attorneys, at Blumenthal Nordrehaug Bhowmik De Blouw LLP, Filed a Lawsuit A → no impacts
+     · corp.press | Fuse Oncology to Showcase S!GNAL Workflow Experience at ASTRO 2026 → GE▼0.118
+❌ sec-atom                  0 items    0 scored  15256ms Cannot convert object to primitive value
+✅ sec-efts                  0 items    0 scored   6257ms 
+✅ sec-press                25 items   25 scored   3688ms 
+     · reg.notice | SEC Publishes Updated Market Statistics, Highlighting Increase in IPOs and Proceeds Raised → COIN◆0.126 XRP◆0.108 HOOD◆0.076 NVDA◆0.076
+     · reg.enforcement | SEC Charges South Florida Resident and His Company for Alleged Investment Scheme Defraudin → COIN▼0.539 XRP▼0.462 HOOD▼0.308 ALL▼0.269
+✅ stablecoin-supply         0 items    0 scored    146ms 
+✅ swpc                      0 items    0 scored    127ms 
+✅ treasury-auctions         0 items    0 scored    793ms 
+✅ usgs                      0 items    0 scored    304ms 
+❌ whitehouse                0 items    0 scored    920ms HTTP 403 https://www.whitehouse.gov/feed/
+
+32/40 connectors reachable
+--- done --- 
