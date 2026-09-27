@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: degenscan-intel
+    runtime: docker
+    plan: starter
+    region: ohio
+    healthCheckPath: /health
+    disk:
+      name: intel-data
+      mountPath: /data
+      sizeGB: 5
+    envVars:
+      - key: INTEL_UA
+        value: "Degenscan Intel/0.1 (+https://degenscan.io; contact@degenscan.io)"
+      - key: DB_PATH
+        value: /data/intel.db
+      - key: UNIVERSE_PATH
+        value: /data/universe.json
+      - key: INTEL_FREE
+        value: "1"
+      - key: X402_PAY_TO
+        sync: false
+      - key: API_KEYS
+        sync: false

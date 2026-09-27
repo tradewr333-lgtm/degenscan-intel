@@ -1,0 +1,33 @@
+{
+  "name": "degenscan-intel",
+  "version": "0.1.0",
+  "description": "Cross-asset event intelligence feed for autonomous agents — MCP + REST, paid per call via x402",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "dev": "tsx src/cli.ts serve",
+    "serve": "tsx src/cli.ts serve",
+    "ingest": "tsx src/cli.ts ingest",
+    "ingest:once": "tsx src/cli.ts ingest --once",
+    "probe": "tsx src/cli.ts probe",
+    "universe:refresh": "tsx src/cli.ts universe",
+    "mcp:stdio": "tsx src/cli.ts mcp",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "fastify": "^5.2.0",
+    "rss-parser": "^3.13.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
