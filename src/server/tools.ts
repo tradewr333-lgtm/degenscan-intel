@@ -100,10 +100,10 @@ export const TOOL_DOCS = Object.entries(PRICES).map(([tool, usd]) => ({ tool, pr
 
 /* ───────────────────────── Prediction-market context ───────────────────────── */
 
-const STOP = new Set(["will", "the", "be", "by", "in", "on", "of", "to", "a", "an", "and", "or", "for", "at", "before", "after", "than", "more", "less", "above", "below", "than", "does", "do", "is", "are", "this", "that", "with", "from", "into", "over", "under", "end", "year", "month", "week", "day", "2025", "2026", "2027", "who", "what", "which", "win", "reach", "hit", "close", "price", "yes", "no"]);
+const STOP = new Set(["will", "the", "be", "by", "in", "on", "of", "to", "a", "an", "and", "or", "for", "at", "before", "after", "than", "more", "less", "above", "below", "than", "does", "do", "is", "are", "this", "that", "with", "from", "into", "over", "under", "end", "year", "month", "week", "day", "2025", "2026", "2027", "who", "what", "which", "win", "reach", "hit", "close", "price", "yes", "no", "vs", "vs.", "market", "odds", "happen", "announce", "announced"]);
 /** Keywords from a market question → FTS5 OR-query over our event titles/summaries. */
 export function questionTerms(q: string): string[] {
-  const words = q.toLowerCase().replace(/[^a-z0-9$%.\- ]/g, " ").split(/\s+/).filter(w => w.length >= 3 && !STOP.has(w));
+  const words = q.toLowerCase().replace(/[^a-z0-9$%.\- ]/g, " ").split(/\s+/).map(w => w.replace(/^[.\-]+|[.\-]+$/g, "")).filter(w => w.length >= 3 && !STOP.has(w));
   return [...new Set(words)].slice(0, 8);
 }
 
@@ -124,7 +124,14 @@ export async function polymarketContext(a: PolymarketContextArgs) {
   try {
     if (isId) markets = [await fetchJson<any>(`https://gamma-api.polymarket.com/markets/${a.market}`, { timeoutMs: 8000 })];
     else if (isSlug) markets = await fetchJson<any[]>(`https://gamma-api.polymarket.com/markets?slug=${encodeURIComponent(a.market)}`, { timeoutMs: 8000 });
-    else markets = await fetchJson<any[]>(`https://gamma-api.polymarket.com/markets?limit=5&active=true&closed=false&order=volume24hr&ascending=false&_q=${encodeURIComponent(a.market)}`, { timeoutMs: 8000 });
+    else {
+      // Real text search: public-search returns events → markets. Pick the open market whose question overlaps the query most.
+      const r = await fetchJson<any>(`https://gamma-api.polymarket.com/public-search?q=${encodeURIComponent(a.market)}&limit_per_type=5`, { timeoutMs: 8000 });
+      const qt = new Set(questionTerms(a.market));
+      const cands: any[] = (r?.events ?? []).flatMap((ev: any) => (ev.markets ?? []).filter((m: any) => m.active !== false && m.closed !== true));
+      const score = (m: any) => questionTerms(m.question ?? "").filter(t => qt.has(t)).length;
+      markets = cands.map(m => ({ m, s: score(m) })).filter(x => x.s > 0).sort((x, y) => y.s - x.s || Number(y.m.volume ?? 0) - Number(x.m.volume ?? 0)).map(x => x.m);
+    }
   } catch { markets = []; }
   const m = markets.find(Boolean);
   const question: string = m?.question ?? a.market;
@@ -134,8 +141,9 @@ export async function polymarketContext(a: PolymarketContextArgs) {
   const since = parseSince(a.since, "48h");
   const events = terms.length ? queryEvents({ since, q: terms.map(t => `"${t.replace(/"/g, "")}"`).join(" OR "), limit: a.limit }) : [];
   // score relevance: how many question terms appear in title+summary; keep primary/aggregator sources first
+  const minHits = Math.max(1, Math.ceil(terms.length * 0.4));   // e.g. 3 terms → 2 hits; avoids one generic word pulling in noise
   const scored = events.map(e => { const hay = `${e.title} ${e.summary}`.toLowerCase(); const hits = terms.filter(t => hay.includes(t)).length; return { e, hits }; })
-    .filter(x => x.hits > 0).sort((x, y) => y.hits - x.hits || y.e.severity - x.e.severity).slice(0, a.limit);
+    .filter(x => x.hits >= minHits).sort((x, y) => y.hits - x.hits || y.e.severity - x.e.severity).slice(0, a.limit);
   const related = scored.map(({ e, hits }) => ({
     id: e.id, ts_event: e.ts_event, kind: e.kind, title: e.title, source: e.source.id, tier: e.source.tier, severity: e.severity, corroboration: e.corroboration.count,
     matched_terms: terms.filter(t => `${e.title} ${e.summary}`.toLowerCase().includes(t)), relevance: Math.round((hits / terms.length) * 100) / 100,
