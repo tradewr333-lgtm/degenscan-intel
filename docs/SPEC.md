@@ -20,7 +20,7 @@ Analisado o fork `simplifaisoul/osiris` (MIT, Next.js 16, TypeScript, MapLibre, 
 
 **Descartar:** globo 3D, ~700 webcams, satélites/TLE, rádio/ADS-B, painel de notícias-TV, Telegram OSINT de guerra, RECON toolkit (port scanner, WHOIS). Custo de manutenção alto, valor zero pra precificação de ativos.
 
-**Alerta de marca:** vários forks virais do Osiris trazem endereço de token pump.fun no título. Citar sempre o autor original (simplifaisoul) e manter o `LICENSE` MIT. Nome do produto: **Degenscan Intel** (não "Palantir").
+**Alerta de marca:** vários forks virais do Osiris trazem endereço de token pump.fun no título. Citar sempre o autor original (simplifaisoul) e manter o `LICENSE` MIT. Nome do produto: **Degenscan Intel** — nunca usar marcas de terceiros na comunicação pública.
 
 ---
 
@@ -65,7 +65,7 @@ Legenda de status: ✅ validado hoje via fetch real · 🔑 chave gratuita · �
 | **SEC EDGAR full-text (EFTS)** | `efts.sec.gov/LATEST/search-index?q=…&forms=8-K` | 1 min | ✅ | 8-K por item: 1.01 (contrato material), 1.03 (falência), 2.02 (resultado), 2.05 (reestruturação), 5.02 (CEO/CFO sai), 7.01, 8.01; Form 4 (insiders), 13D/G (ativistas), S-1, 424B (ofertas) |
 | SEC EDGAR recent (Atom) | `sec.gov/cgi-bin/browse-edgar?action=getcurrent&output=atom` | 1 min | ⏳ (exige User-Agent) | stream bruto de filings |
 | SEC press/enforcement | `sec.gov/news/pressreleases.rss` | 5 min | ⏳ | processos contra emissores |
-| **Federal Reserve press** | `federalreserve.gov/feeds/press_all.xml` | 1 min | ✅ | FOMC statements, enforcement, GENIUS Act stablecoin rules (visto hoje!) |
+| **Federal Reserve press** | `federalreserve.gov/feeds/press_all.xml` | 1 min | ✅ | FOMC statements, enforcement, GENIUS Act stablecoin rules (observado no probe) |
 | Fed speeches | `federalreserve.gov/feeds/speeches.xml` | 5 min | ⏳ | tom hawk/dove |
 | **Federal Register API** | `federalregister.gov/api/v1/documents.json` | 15 min | ✅ | **toda norma federal** publicada (rules, proposed rules, executive orders, notices) com agência e data |
 | Treasury yields XML | `home.treasury.gov/.../xml?data=daily_treasury_yield_curve` | diário | ⏳ | curva |
@@ -230,7 +230,7 @@ Isso mantém latência < 200 ms por evento e custo ~zero por chamada.
 - **D1:** deploy no Render; `probe` real das 70 fontes; ajustar headers/UA (SEC exige `User-Agent` com e-mail).
 - **D2:** x402 real (facilitator Coinbase, USDC Base); API keys + Stripe; publicar em 3 registries MCP.
 - **D3–D5:** grafo → 1.500 arestas (extração de 10-K via LLM + revisão); conectores com chave (FRED, BLS, EIA, FIRMS).
-- **D6–D7:** webhook/stream; integração nos bots do Degenscan (TradeMind consome `impact_for`); vídeo de lançamento no canal ("construí um Palantir pra agentes de IA e ele cobra em USDC").
+- **D6–D7:** webhook/stream; integração nos bots do Degenscan (TradeMind consome `impact_for`); vídeo de lançamento no canal ("construí um feed de inteligência de mercado pra agentes de IA e ele cobra em USDC").
 - **Semana 2+:** painel humano (Osiris despido, só camadas de mercado) como isca; white-label; dados pagos (AIS, Whale Alert); backtests públicos como marketing ("o feed avisou X min antes do movimento").
 
 ---

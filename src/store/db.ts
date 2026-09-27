@@ -53,6 +53,7 @@ export function getDb(): DatabaseSync {
     );
     CREATE VIRTUAL TABLE IF NOT EXISTS events_fts USING fts5(id UNINDEXED, title, summary);
   `);
+  try { db.exec("ALTER TABLE calls ADD COLUMN tx TEXT"); } catch { /* column exists */ }
   return db;
 }
 
@@ -143,8 +144,37 @@ export function sourcesStatus() {
     FROM source_runs s GROUP BY source_id ORDER BY source_id`).all();
 }
 
-export function recordCall(tool: string, payer: string | null, price: number, ok: boolean) {
-  getDb().prepare("INSERT INTO calls (ts, tool, payer, price_usd, ok) VALUES (?,?,?,?,?)").run(new Date().toISOString(), tool, payer, price, ok ? 1 : 0);
+export function recordCall(tool: string, payer: string | null, price: number, ok: boolean, tx?: string | null) {
+  getDb().prepare("INSERT INTO calls (ts, tool, payer, price_usd, ok, tx) VALUES (?,?,?,?,?,?)").run(new Date().toISOString(), tool, payer, price, ok ? 1 : 0, tx ?? null);
+}
+
+/** Public usage metrics, one row per week since `since` (ISO date). Wallets in `exclude` (owner/test wallets) are
+ *  reported separately and never counted as customers. payer format: "x402:<wallet>" | "key:<id>" | "<ip>" (quota). */
+export function weeklyMetrics(since: string, exclude: string[]) {
+  const ex = new Set(exclude.map(a => a.toLowerCase()));
+  const rows = getDb().prepare("SELECT ts, payer, price_usd, ok, tx FROM calls WHERE ts >= ? AND ok = 1 ORDER BY ts").all(since) as unknown as { ts: string; payer: string | null; price_usd: number; ok: number; tx: string | null }[];
+  const start = new Date(since).getTime(); const W = 7 * 86_400_000;
+  const weeks = new Map<number, { week_start: string; week_end: string; calls_free: number; calls_api_key: number; calls_x402: number; calls_x402_excluded: number; wallets: Set<string>; wallets_excluded: Set<string>; usdc_revenue: number; usdc_excluded: number; txs: string[]; txs_excluded: string[] }>();
+  const bucket = (ts: string) => { const i = Math.max(0, Math.floor((new Date(ts).getTime() - start) / W)); if (!weeks.has(i)) { const ws = new Date(start + i * W); const we = new Date(start + (i + 1) * W - 1); weeks.set(i, { week_start: ws.toISOString().slice(0, 10), week_end: we.toISOString().slice(0, 10), calls_free: 0, calls_api_key: 0, calls_x402: 0, calls_x402_excluded: 0, wallets: new Set(), wallets_excluded: new Set(), usdc_revenue: 0, usdc_excluded: 0, txs: [], txs_excluded: [] }); } return weeks.get(i)!; };
+  for (const r of rows) {
+    const w = bucket(r.ts); const p = r.payer ?? "";
+    if (p.startsWith("x402:")) {
+      const wallet = p.slice(5).toLowerCase();
+      if (ex.has(wallet)) { w.calls_x402_excluded++; w.wallets_excluded.add(wallet); w.usdc_excluded += r.price_usd; if (r.tx) w.txs_excluded.push(r.tx); }
+      else { w.calls_x402++; w.wallets.add(wallet); w.usdc_revenue += r.price_usd; if (r.tx) w.txs.push(r.tx); }
+    } else if (p.startsWith("key:")) w.calls_api_key++;
+    else w.calls_free++;
+  }
+  // make sure every week from `since` to now exists, even with zero calls
+  for (let i = 0; i <= Math.floor((Date.now() - start) / W); i++) bucket(new Date(start + i * W).toISOString());
+  let active = 0;
+  try { active = (getDb().prepare("SELECT COUNT(*) AS n FROM api_keys WHERE status = 'active' AND stripe_subscription IS NOT NULL AND stripe_subscription != ''").get() as unknown as { n: number }).n; } catch { /* no keys table yet */ }
+  return [...weeks.entries()].sort((a, b) => a[0] - b[0]).map(([, w]) => ({
+    week_start: w.week_start, week_end: w.week_end, calls_free: w.calls_free, calls_api_key: w.calls_api_key, calls_paid_x402: w.calls_x402,
+    unique_paying_wallets: w.wallets.size, usdc_revenue: Math.round(w.usdc_revenue * 1e6) / 1e6, tx_hashes: w.txs,
+    stripe_active_subscriptions: active,
+    excluded_owner_wallets: { calls: w.calls_x402_excluded, wallets: [...w.wallets_excluded], usdc: Math.round(w.usdc_excluded * 1e6) / 1e6, tx_hashes: w.txs_excluded },
+  }));
 }
 
 export function getEvent(id: string): Event | undefined {

@@ -4,13 +4,19 @@ import { buildMcpServer } from "./mcp.js";
 import { PRICES } from "./pricing.js";
 import { EventsSinceArgs, ImpactForArgs, ExposureGraphArgs, eventsSince, impactFor, exposureGraph, universe, sources, regimeSnapshot, explain, TOOL_DOCS } from "./tools.js";
 import { CONNECTORS } from "../ingest/registry.js";
-import { getDb, recordCall } from "../store/db.js";
+import { getDb, recordCall, weeklyMetrics } from "../store/db.js";
 import { decideAccess, toolForRequest, type Access } from "./access.js";
 import { installX402 } from "./x402v2.js";
 import { FastifyAdapter } from "@x402/fastify";
 import { installStripe } from "./stripe.js";
 
 declare module "fastify" { interface FastifyRequest { intelAccess?: Access } }
+
+const OPERATOR = "Marbella Collins LLC (Florida, USA) — contact@degenscan.io";
+const DISCLAIMER = "Information and analytics only — not investment advice. Impact scores are deterministic heuristics over public events, with no guarantee of accuracy or timeliness. You are solely responsible for your trading decisions.";
+const METRICS_SINCE = process.env.METRICS_SINCE ?? "2026-09-27T00:00:00Z";
+/** Owner/test wallets: never counted as customers or revenue in public metrics. */
+const EXCLUDED_WALLETS = (process.env.EXCLUDED_WALLETS ?? "0x5344722b8D037827A9a5b7cD6312481D215d33BF,0x21f4A2DA07bccE60878cAb223358D11aD8F11a94").split(",").map(s => s.trim()).filter(Boolean);
 
 export async function buildHttp() {
   const app = Fastify({ logger: process.env.LOG_LEVEL ? { level: process.env.LOG_LEVEL } : false, trustProxy: true });
@@ -29,16 +35,31 @@ export async function buildHttp() {
   // 3) Billing log after the response.
   app.addHook("onResponse", async (req, reply) => {
     const tool = toolForRequest(req); if (!tool || reply.statusCode >= 400) return;
-    if (req.x402Context) recordCall(tool, `x402:${(req.x402Context.paymentPayload as any)?.payload?.authorization?.from ?? "unknown"}`, PRICES[tool] ?? 0.005, true);
+    if (req.x402Context) {
+      let tx: string | null = null;
+      try { const h = reply.getHeader("payment-response"); if (h) tx = JSON.parse(Buffer.from(String(h), "base64").toString("utf8"))?.transaction ?? null; } catch { /* ignore */ }
+      recordCall(tool, `x402:${(req.x402Context.paymentPayload as any)?.payload?.authorization?.from ?? "unknown"}`, PRICES[tool] ?? 0.005, true, tx);
+    }
     else if (req.intelAccess && req.intelAccess.method !== "free") recordCall(tool, req.intelAccess.payer, req.intelAccess.price, true);
   });
   const billing = (req: any, tool: string) => req.x402Context ? { tool, price_usd: PRICES[tool] ?? 0.005, method: "x402" } : { tool, price_usd: req.intelAccess?.price ?? 0, method: req.intelAccess?.method ?? "free" };
 
   app.get("/", async () => ({
-    name: "degenscan-intel", version: "0.2.0",
+    name: "degenscan-intel", version: "0.2.1",
     description: "Cross-asset event intelligence for autonomous agents. Pay per call with USDC (x402 v2, Base) or subscribe with an API key.",
-    mcp: `${PUBLIC_URL}/mcp`, rest: `${PUBLIC_URL}/v1`, pricing: TOOL_DOCS, plans: `${PUBLIC_URL}/v1/plans`, docs: "https://github.com/tradewr333-lgtm/degenscan-intel", contact: "contact@degenscan.io",
+    mcp: `${PUBLIC_URL}/mcp`, rest: `${PUBLIC_URL}/v1`, pricing: TOOL_DOCS, plans: `${PUBLIC_URL}/v1/plans`, metrics: `${PUBLIC_URL}/v1/metrics`, docs: "https://github.com/tradewr333-lgtm/degenscan-intel", contact: "contact@degenscan.io",
+    operator: OPERATOR, disclaimer: DISCLAIMER, license: "MIT",
   }));
+
+  // Public usage metrics (free): one row per week since launch; owner/test wallets listed separately, never counted as customers.
+  const metrics = () => ({ since: METRICS_SINCE, excluded_owner_wallets: EXCLUDED_WALLETS, note: "Paid calls = settled x402 payments (USDC on Base, tx hashes verifiable on basescan.org). Free calls = daily quota. Owner/test wallets are excluded from customers and revenue.", weeks: weeklyMetrics(METRICS_SINCE, EXCLUDED_WALLETS) });
+  app.get("/v1/metrics", async () => metrics());
+  app.get("/v1/metrics.csv", async (_r, reply) => {
+    const m = metrics();
+    const head = "week_start,week_end,calls_free,calls_api_key,calls_paid_x402,unique_paying_wallets,usdc_revenue,stripe_active_subscriptions,tx_hashes,excluded_owner_calls,excluded_owner_usdc,excluded_owner_tx_hashes";
+    const lines = m.weeks.map(w => [w.week_start, w.week_end, w.calls_free, w.calls_api_key, w.calls_paid_x402, w.unique_paying_wallets, w.usdc_revenue, w.stripe_active_subscriptions, `"${w.tx_hashes.join(" ")}"`, w.excluded_owner_wallets.calls, w.excluded_owner_wallets.usdc, `"${w.excluded_owner_wallets.tx_hashes.join(" ")}"`].join(","));
+    return reply.type("text/csv").header("content-disposition", "inline; filename=degenscan-intel-metrics.csv").send([head, ...lines].join("\n") + "\n");
+  });
   app.get("/health", async () => {
     const n = (getDb().prepare("SELECT COUNT(*) AS n FROM events").get() as unknown as { n: number }).n;
     return { ok: true, events: n, connectors: CONNECTORS.length, at: new Date().toISOString() };
@@ -47,7 +68,7 @@ export async function buildHttp() {
   // Glama ownership challenge (https://glama.ai) — token is account-bound, contains no secrets; overridable via env.
   app.get("/.well-known/glama.json", async () => ({ $schema: "https://glama.ai/mcp/schemas/connector.json", claim: process.env.GLAMA_CLAIM ?? "glama_claim__jjuT9diA1oBYRDhpNvBl7A9aD4RRMbR" }));
   app.get("/llms.txt", async (_r, reply) => reply.type("text/plain").send(
-    `# Degenscan Intel\n> Cross-asset event intelligence for trading agents: SEC, Fed, Federal Register, USGS, NHC, Nasdaq halts, DefiLlama, Polymarket and 30+ more primary sources normalized into one event schema and scored against an exposure graph into per-asset impacts.\n\n## Endpoints\n- MCP (streamable HTTP): POST ${PUBLIC_URL}/mcp\n- REST: ${PUBLIC_URL}/v1/events?since=4h&universe=NVDA,BTC · /v1/impact/{asset} · /v1/graph/{asset} · /v1/regime · /v1/explain/{event_id} · /v1/universe (free) · /v1/sources (free)\n\n## Pricing\n${TOOL_DOCS.map(t => `- ${t.tool}: $${t.price_usd} per call`).join("\n")}\n- 100 free calls/day per IP, then HTTP 402 with x402 v2 payment requirements (USDC on Base, eip155:8453). Or subscribe: ${PUBLIC_URL}/v1/plans (X-API-KEY header).\n\n## Schema\nEvent { id, ts_event, kind, title, summary, entities[], severity, novelty, impacts[{asset_id, direction:-1|0|1, confidence, horizon, path[], rationale}], tradable_now[], next_open[], source{tier}, corroboration }\n`));
+    `# Degenscan Intel\n> Cross-asset event intelligence for trading agents: SEC, Fed, Federal Register, USGS, NHC, Nasdaq halts, DefiLlama, Polymarket and 30+ more primary sources normalized into one event schema and scored against an exposure graph into per-asset impacts.\n\n## Endpoints\n- MCP (streamable HTTP): POST ${PUBLIC_URL}/mcp\n- REST: ${PUBLIC_URL}/v1/events?since=4h&universe=NVDA,BTC · /v1/impact/{asset} · /v1/graph/{asset} · /v1/regime · /v1/explain/{event_id} · /v1/universe (free) · /v1/sources (free)\n\n## Pricing\n${TOOL_DOCS.map(t => `- ${t.tool}: $${t.price_usd} per call`).join("\n")}\n- 100 free calls/day per IP, then HTTP 402 with x402 v2 payment requirements (USDC on Base, eip155:8453). Or subscribe: ${PUBLIC_URL}/v1/plans (X-API-KEY header).\n\n## Operator\n${OPERATOR}. Public usage metrics: ${PUBLIC_URL}/v1/metrics (JSON) · ${PUBLIC_URL}/v1/metrics.csv\n\n## Disclaimer\n${DISCLAIMER}\n\n## Schema\nEvent { id, ts_event, kind, title, summary, entities[], severity, novelty, impacts[{asset_id, direction:-1|0|1, confidence, horizon, path[], rationale}], tradable_now[], next_open[], source{tier}, corroboration }\n`));
 
   // ---- REST
   const coerce = (q: any) => ({ ...q, universe: typeof q.universe === "string" ? q.universe.split(",") : q.universe, kinds: typeof q.kinds === "string" ? q.kinds.split(",") : q.kinds,
@@ -92,7 +113,7 @@ export async function buildHttp() {
       reply.raw.on("finish", () => {
         if (done) return; done = true;
         x402.processSettlement(v.paymentPayload, v.paymentRequirements, v.declaredExtensions, undefined, undefined, v.beforeHandlerSettlement)
-          .then(s => { const tool = toolForRequest(req) ?? "mcp"; recordCall(tool, `x402:${(v.paymentPayload as any)?.payload?.authorization?.from ?? "unknown"}`, PRICES[tool] ?? 0.005, s.success); if (!s.success) console.warn("[x402/mcp] settle failed:", s.errorReason); })
+          .then(s => { const tool = toolForRequest(req) ?? "mcp"; recordCall(tool, `x402:${(v.paymentPayload as any)?.payload?.authorization?.from ?? "unknown"}`, PRICES[tool] ?? 0.005, s.success, s.success ? (s as any).transaction ?? null : null); if (!s.success) console.warn("[x402/mcp] settle failed:", s.errorReason); })
           .catch(e => console.warn("[x402/mcp] settle error:", (e as Error).message));
       });
     }

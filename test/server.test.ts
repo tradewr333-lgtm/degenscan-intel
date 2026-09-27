@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeAll } from "vitest";
 process.env.DB_PATH = ":memory:";
 process.env.INTEL_FREE = "1";
-import { buildHttp } from "../src/server/http.js";
-import { scoreEvent } from "../src/engine/impact.js";
-import { upsertEvent, queryEvents, impactsForAsset } from "../src/store/db.js";
+const { buildHttp } = await import("../src/server/http.js");
+const { scoreEvent } = await import("../src/engine/impact.js");
+const { upsertEvent, queryEvents, impactsForAsset } = await import("../src/store/db.js");
 
 const SRC = { id: "test", name: "Test", tier: "primary" as const };
 

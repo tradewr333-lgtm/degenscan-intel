@@ -50,6 +50,8 @@ MCP (streamable HTTP, stateless): `POST http://host:8787/mcp`. Stdio for local a
 
 Free quota: 100 calls/day/IP without payment. Then `402` with x402 requirements, or `X-API-KEY`.
 
+**Public usage metrics:** [`/v1/metrics`](https://degenscan-intel.onrender.com/v1/metrics) (JSON) · [`/v1/metrics.csv`](https://degenscan-intel.onrender.com/v1/metrics.csv) — one row per week since 2026-09-27: free/API-key/paid calls, unique paying wallets, USDC revenue with on-chain tx hashes, active Stripe subscriptions. Owner and test wallets are listed explicitly and excluded from customers and revenue.
+
 ## Configuration
 
 See `.env.example`. Nothing is required to run. For paid mode set `X402_PAY_TO` (Base address) and, for Base mainnet, a facilitator that supports it (Coinbase CDP or self-hosted). `INTEL_UA` **must** include a contact e-mail — SEC blocks anonymous clients.
@@ -68,7 +70,15 @@ See `.env.example`. Nothing is required to run. For paid mode set `X402_PAY_TO` 
 
 ## Roadmap
 
-See SPEC §8. Next: deploy + live probe → real x402 settlement → registries (Smithery, Glama, x402 Bazaar) → 10-K-driven graph expansion → webhooks → Degenscan bot integration.
+See SPEC §8. Next: deploy + live probe → real x402 settlement ✅ → registries (MCP Registry, Smithery, Glama, x402 Bazaar) ✅ → 10-K-driven graph expansion → webhooks → Degenscan bot integration.
+
+## Operator, disclaimer & data licensing
+
+**Operated by Marbella Collins LLC** (Florida, USA) · contact@degenscan.io. Built and operated by Renato Pereira Chagas, who specified the product, made the design and commercial decisions and operates the service; the code was written with AI assistance (Claude).
+
+**Not investment advice.** Degenscan Intel is an information and analytics service. Impact scores are deterministic heuristics over public events; they are not recommendations to buy or sell any asset and carry no guarantee of accuracy or timeliness. You are solely responsible for your trading decisions.
+
+**Data licensing.** All connectors read public, keyless sources; the service redistributes normalized event metadata (titles, timestamps, links) and its own derived scores, never bulk source content or real-time quotes. Government and issuer sources (SEC, Fed, Federal Register, USGS, NOAA, agency press) are public domain or freely redistributable. Sources marked *best-effort* in `sources_status` use unofficial or terms-limited endpoints (Nasdaq halts/earnings pages, Yahoo screener fallback, CoinGecko public API) and are subject to those providers' terms; they are isolated so the service degrades gracefully if any is removed.
 
 ## Credits
 
