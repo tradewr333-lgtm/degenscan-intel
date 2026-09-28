@@ -53,7 +53,7 @@ One normalized feed of price-moving events from ~40 primary sources (SEC, Federa
 
 ## Paying
 
-- **100 free calls/day per IP**, then HTTP `402` with x402 v2 requirements (USDC on Base, `eip155:8453`). Any x402 client (`@x402/fetch`, `x402-axios`, Coinbase AgentKit) pays automatically.
+- **Free trial:** send header `X-Free-Trial: 1` on REST for **100 free calls/day per IP** (MCP `tools/call` gets it automatically). Without it, priced routes return HTTP `402` with x402 v2 requirements (USDC on Base, `eip155:8453`). Any x402 client (`@x402/fetch`, `x402-axios`, Coinbase AgentKit) pays automatically.
 - **Prepaid key, no human:** `POST /v1/keys/x402/pack_1k` (answer the 402 with USDC) → `{ api_key }` with 1,000 calls, lifetime. Also `pack_10k` ($40) and `pack_100k` ($300). Check balance: `GET /v1/keys/me` with `X-API-KEY`.
 - **Card (for the human operator):** `GET /v1/plans` → Stripe checkout → key.
 - Send the key as header `X-API-KEY` on `/v1/*` or `POST /mcp`.

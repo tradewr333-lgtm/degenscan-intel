@@ -8,13 +8,13 @@ const fail = (e: unknown) => ({ content: [{ type: "text" as const, text: `error:
 
 /** Build the MCP server. One instance per stateless HTTP request is fine (cheap). */
 export function buildMcpServer() {
-  const s = new McpServer({ name: "degenscan-intel", version: "0.5.0" }, {
+  const s = new McpServer({ name: "degenscan-intel", version: "0.5.1" }, {
     instructions: [
       "Degenscan Intel: cross-asset event feed for trading agents. Events are normalized from ~40 primary sources (SEC, Fed, Federal Register, USGS, NHC, Nasdaq halts, DefiLlama, Polymarket…) and scored against an exposure graph into per-asset impacts.",
       "Cheapest probe: pulse ($0.001). One-call briefing per asset: brief ($0.10). Typical loop: regime_snapshot → events_since(since='4h', universe=[your book]) → impact_for(asset_id) for anything with confidence ≥ 0.4 → check tradable_now / next_open before acting. For prediction markets: polymarket_context(market) → compare yes_prob with fresh primary-source events.",
       `Pricing per call (USDC via x402, or API key): ${Object.entries(PRICES).map(([k, v]) => `${k}=$${v}`).join(", ")}. universe and sources_status are free.`,
       "Direction: 1 supportive, -1 negative, 0 unclear. Confidence is a 0..1 product of source tier, event severity/novelty and graph path weight — not a probability.",
-      "Access: initialize/tools/list/universe/sources_status are free. Priced tools: 100 free calls/day per IP, then pay per call with x402 (USDC on Base) or send X-API-KEY. Autonomous agents can buy a prepaid key with USDC (no human): POST /v1/keys/x402/pack_1k ($5 = 1,000 calls). Details: /llms.txt.",
+      "Access: initialize/tools/list/universe/sources_status are free. Priced tools: 100 free calls/day per IP over MCP (REST needs header X-Free-Trial: 1), then pay per call with x402 (USDC on Base) or send X-API-KEY. Autonomous agents can buy a prepaid key with USDC (no human): POST /v1/keys/x402/pack_1k ($5 = 1,000 calls). Details: /llms.txt.",
       "Information and analytics only — not investment advice.",
     ].join("\n"),
   });

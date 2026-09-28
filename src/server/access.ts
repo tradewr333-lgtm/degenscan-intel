@@ -52,6 +52,9 @@ export function decideAccess(req: FastifyRequest): Access | null {
     if (v && v.remaining > 0) return { method: "api_key", payer: `key:${v.id}`, price };
     // invalid or exhausted key → fall through to x402 (agent may still pay per call)
   }
-  if (!req.headers["payment-signature"] && !req.headers["x-payment"] && underFreeQuota(req.ip)) return { method: "quota", payer: req.ip, price: 0 };
+  // Free daily quota is opt-in (header X-Free-Trial: 1) so that unauthenticated probes from indexers see a real 402.
+  // MCP tools/call keeps the automatic quota (MCP clients can't easily add headers; registries probe initialize/tools/list only).
+  const wantsTrial = String(req.headers["x-free-trial"] ?? "").trim() === "1" || (req.url.split("?")[0] === "/mcp");
+  if (wantsTrial && !req.headers["payment-signature"] && !req.headers["x-payment"] && underFreeQuota(req.ip)) return { method: "quota", payer: req.ip, price: 0 };
   return null;
 }

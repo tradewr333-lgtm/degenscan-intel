@@ -54,7 +54,7 @@ MCP (streamable HTTP, stateless): `POST http://host:8787/mcp`. Stdio for local a
 | `polymarket_context` | $0.01 | evidence pack for one prediction market: current odds + primary-source events in the feed that bear on the question |
 | `universe`, `sources_status` | free | discovery & transparency |
 
-Free quota: 100 calls/day/IP without payment. Then `402` with x402 requirements, or `X-API-KEY`.
+Free trial: header `X-Free-Trial: 1` → 100 calls/day/IP without payment (MCP `tools/call` gets it automatically). Otherwise priced routes answer `402` with x402 requirements, or accept `X-API-KEY`.
 
 **Networks:** USDC on **Base** (eip155:8453) and, when configured, **Solana** mainnet — both offered in the same `402`, gasless via PayAI.
 

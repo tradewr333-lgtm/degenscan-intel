@@ -40,11 +40,15 @@ describe("x402 v2 paid mode", () => {
     const { buildHttp } = await import("../src/server/http.js");
     const app = await buildHttp();
 
-    const first = await app.inject({ method: "GET", url: "/v1/regime" });
+    // no header, no payment → 402 immediately (indexer probes must see a real 402)
+    const probe = await app.inject({ method: "GET", url: "/v1/regime" });
+    expect(probe.statusCode).toBe(402);
+    // opt-in free trial header → quota (1 call in this test), then 402
+    const first = await app.inject({ method: "GET", url: "/v1/regime", headers: { "x-free-trial": "1" } });
     expect(first.statusCode).toBe(200);
     expect(first.json()._billing.method).toBe("quota");
 
-    const second = await app.inject({ method: "GET", url: "/v1/regime" });
+    const second = await app.inject({ method: "GET", url: "/v1/regime", headers: { "x-free-trial": "1" } });
     expect(second.statusCode).toBe(402);
     const hdr = second.headers["payment-required"] as string;
     expect(hdr).toBeTruthy();
