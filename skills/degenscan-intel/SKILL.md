@@ -19,6 +19,7 @@ One normalized feed of price-moving events from ~40 primary sources (SEC, Federa
 | Cheapest probe — anything new in the last hour? | `pulse` | $0.001 |
 | Everything an operator reads before trading one asset, in one call | `brief(asset_id)` | $0.10 |
 | Headlines on one asset with sentiment | `news_for(ticker, since)` | $0.002 |
+| Perp funding / open interest / premium / predicted funding by venue for one coin (Hyperliquid, no key) | `derivs_for(symbol)` | $0.003 |
 | SEC filings on one issuer (8-K, Form 4, 13D, S-1) | `filings_for(ticker, since)` | $0.002 |
 | Upcoming macro prints / FOMC / earnings / auctions | `calendar(days)` | $0.002 |
 | Situational picture right now: venues open, next opens, 24h pressure by asset, top events, prediction markets | `regime_snapshot` | $0.01 |

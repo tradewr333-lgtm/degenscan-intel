@@ -76,6 +76,10 @@ export function buildRoutes(): RoutesConfig {
       accepts: accept("news_for"), description: "Headlines touching one asset (press wires, releases, halts, hacks, media) with source tier, corroboration and a heuristic sentiment score (-1..1). Links only, no bodies.", mimeType: "application/json", ...common,
       extensions: declareDiscoveryExtension({ input: { since: "24h", limit: 25 }, inputSchema: { properties: { since: { type: "string" }, limit: { type: "number" } } }, output: { example: { asset: { id: "NVDA" }, count: 3, sentiment_avg: 0.25, sentiment_label: "positive", items: [{ title: "NVIDIA announces…", tier: "primary", sentiment: 0.5, url: "https://…" }] } } }),
     },
+    "GET /v1/derivs/*": {
+      accepts: accept("derivs_for"), description: "Perpetual-futures microstructure for one coin from Hyperliquid's public API: funding (1h, 8h-equivalent, annualized), predicted funding by venue, open interest (coins/USD, OI-to-volume), premium vs oracle, 24h volume, 24h change, flags, plus our primary-source event pressure on the same asset.", mimeType: "application/json", ...common,
+      extensions: declareDiscoveryExtension({ input: { since: "24h" }, inputSchema: { properties: { since: { type: "string" } } }, output: { example: { symbol: "BTC", funding: { rate_1h: 0.0000125, annualized_pct: 10.95 }, open_interest: { usd: 1250000000 }, price: { mark: 65000, premium_vs_oracle: 0.0002 }, flags: [], event_pressure: { bias: 0.2, n_events: 4 } } } }),
+    },
     "GET /v1/filings/*": {
       accepts: accept("filings_for"), description: "SEC EDGAR filings touching one US issuer: 8-K by item, Form 4 insider trades, 13D/G activist stakes, S-1 offerings, with impact direction and link. Public-domain source.", mimeType: "application/json", ...common,
       extensions: declareDiscoveryExtension({ input: { since: "7d" }, inputSchema: { properties: { since: { type: "string" }, forms: { type: "string" } } }, output: { example: { asset: { id: "COIN" }, count: 1, filings: [{ kind: "corp.8k", title: "COINBASE GLOBAL files 8-K — Results of operations", url: "https://www.sec.gov/…" }] } } }),

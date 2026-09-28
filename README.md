@@ -47,6 +47,7 @@ MCP (streamable HTTP, stateless): `POST http://host:8787/mcp`. Stdio for local a
 | `regime_snapshot` | $0.01 | venues open, 24h pressure ranking, high-severity events, prediction markets |
 | `explain` | $0.02 | rationale for one event |
 | `pulse` | $0.001 | cheapest probe: last-hour event counts by class, top-3 severe, venues open |
+| `derivs_for` | $0.003 | perp microstructure for one coin (Hyperliquid public API): funding, OI, premium, predicted funding by venue, flags + event pressure |
 | `news_for` | $0.002 | headlines on one asset with tier, corroboration, heuristic sentiment |
 | `filings_for` | $0.002 | SEC EDGAR filings on one issuer (8-K, Form 4, 13D/G, S-1) |
 | `calendar` | $0.002 | upcoming macro prints, FOMC, auctions, earnings (N days) |

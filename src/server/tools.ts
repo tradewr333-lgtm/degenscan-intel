@@ -281,6 +281,7 @@ export async function brief(a: z.infer<typeof BriefArgs>) {
   const graph = neighborhood(id, 1);
   const cal = calendar({ days: 7, universe: [id] } as any);
   let pm: any = null; try { pm = await polymarketContext({ market: asset.name, since: "72h", limit: 5 }); } catch { pm = null; }
+  let derivs: any = null; if (asset.class === "crypto") { try { const d = await derivsFor({ symbol: id, since: a.since }); derivs = { funding_1h: d.funding.rate_1h, funding_annualized_pct: d.funding.annualized_pct, open_interest_usd: d.open_interest.usd, premium_vs_oracle: d.price.premium_vs_oracle, volume_24h_usd: d.volume_24h_usd, flags: d.flags }; } catch { derivs = null; } }
   const venues = openVenues(new Date());
   return {
     asset: { id, name: asset.name, class: asset.class, tags: (asset as any).tags ?? [] }, generated_at: new Date().toISOString(), window: a.since,
@@ -290,7 +291,76 @@ export async function brief(a: z.infer<typeof BriefArgs>) {
     exposure: { nodes: (graph as any).nodes?.slice(0, 20) ?? [], edges: (graph as any).edges?.slice(0, 30) ?? [] },
     prediction_markets: pm && (pm as any).market?.question ? { question: (pm as any).market.question, yes_prob: (pm as any).market.yes_prob, url: (pm as any).market.url, related_events: (pm as any).n_related } : null,
     upcoming_catalysts: cal.items.slice(0, 8),
+    derivatives: derivs,
     venues_open: venues, tradable_now: Object.entries(venues).filter(([, v]) => v).map(([k]) => k),
+    disclaimer: "Information and analytics only — not investment advice.", universe_version: loadUniverse().version,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// derivs_for — perpetual-futures microstructure from Hyperliquid's public info API
+// (funding, open interest, premium vs oracle, 24h notional volume, cross-venue predicted funding),
+// joined with our event pressure on the same asset. No key required; Hyperliquid data is public.
+// ---------------------------------------------------------------------------
+export const DerivsArgs = z.object({
+  symbol: z.string().describe("Perp coin as listed on Hyperliquid, e.g. BTC, ETH, SOL, HYPE, DOGE. Case-insensitive."),
+  since: z.string().default("24h").describe("Lookback for our event pressure on the same asset (default 24h)."),
+});
+export type DerivsArgs = z.infer<typeof DerivsArgs>;
+
+const HL_INFO = process.env.HYPERLIQUID_INFO_URL ?? "https://api.hyperliquid.xyz/info";
+type HlCtx = { funding: string; openInterest: string; prevDayPx: string; dayNtlVlm: string; premium: string | null; oraclePx: string; markPx: string; midPx: string | null; impactPxs?: string[] | null; dayBaseVlm?: string };
+type HlMeta = { universe: { name: string; szDecimals: number; maxLeverage: number; isDelisted?: boolean }[] };
+let hlCache: { at: number; meta: HlMeta; ctxs: HlCtx[] } | null = null;
+let hlPredCache: { at: number; rows: [string, [string, { fundingRate: string; nextFundingTime: number; fundingIntervalHours?: number }][]][] } | null = null;
+
+async function hlPost<T>(body: unknown, timeoutMs = 8000): Promise<T> {
+  const res = await fetch(HL_INFO, { method: "POST", headers: { "content-type": "application/json", accept: "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs) });
+  if (!res.ok) throw new Error(`HTTP ${res.status} hyperliquid info`);
+  return res.json() as Promise<T>;
+}
+/** Exposed for tests: inject a fake fetcher. */
+export const _hl = { post: hlPost as <T>(body: unknown) => Promise<T>, reset() { hlCache = null; hlPredCache = null; } };
+
+async function hlMetaAndCtxs() {
+  if (hlCache && Date.now() - hlCache.at < 30_000) return hlCache;
+  const [meta, ctxs] = await _hl.post<[HlMeta, HlCtx[]]>({ type: "metaAndAssetCtxs" });
+  hlCache = { at: Date.now(), meta, ctxs }; return hlCache;
+}
+async function hlPredicted() {
+  if (hlPredCache && Date.now() - hlPredCache.at < 60_000) return hlPredCache.rows;
+  try { const rows = await _hl.post<typeof hlPredCache extends infer T ? T extends { rows: infer R } ? R : never : never>({ type: "predictedFundings" }); hlPredCache = { at: Date.now(), rows: rows as any }; return hlPredCache.rows; }
+  catch { return hlPredCache?.rows ?? []; }
+}
+const num = (v: string | number | null | undefined) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
+const r = (n: number | null, d = 6) => n == null ? null : Math.round(n * 10 ** d) / 10 ** d;
+
+/** Perp microstructure for one coin (Hyperliquid public API, ~30 s cache) + our event pressure on the same asset. */
+export async function derivsFor(a: DerivsArgs) {
+  const sym = a.symbol.toUpperCase().replace(/-PERP$|USDT?$|USDC$/i, "");
+  const { meta, ctxs } = await hlMetaAndCtxs();
+  const idx = meta.universe.findIndex(u => u.name.toUpperCase() === sym);
+  if (idx < 0) throw new Error(`unknown perp symbol ${a.symbol} on Hyperliquid (${meta.universe.length} listed; e.g. BTC, ETH, SOL, HYPE)`);
+  const u = meta.universe[idx], c = ctxs[idx];
+  const mark = num(c.markPx), oracle = num(c.oraclePx), mid = num(c.midPx), prev = num(c.prevDayPx), oi = num(c.openInterest), vol = num(c.dayNtlVlm), f1h = num(c.funding), prem = num(c.premium);
+  const pred = (await hlPredicted()).find(row => String(row[0]).toUpperCase() === sym)?.[1] ?? [];
+  const predicted_funding = pred.map(([venue, p]) => ({ venue, rate: r(num(p.fundingRate), 8), interval_h: p.fundingIntervalHours ?? (venue === "HlPerp" ? 1 : 8), next_at: p.nextFundingTime ? new Date(p.nextFundingTime).toISOString() : null }));
+  const fundingAnnual = f1h == null ? null : f1h * 24 * 365;
+  const flags: string[] = [];
+  if (f1h != null && Math.abs(f1h) >= 0.0005) flags.push(f1h > 0 ? "funding_hot_long" : "funding_hot_short"); // ≥ 0.05%/h ≈ 438%/yr
+  if (prem != null && Math.abs(prem) >= 0.002) flags.push(prem > 0 ? "premium_rich" : "premium_discount");
+  if (oi != null && mark != null && vol != null && vol > 0 && (oi * mark) / vol > 3) flags.push("oi_heavy_vs_volume");
+  let pressure: any = null;
+  if (loadUniverse().assets.some(x => x.id === sym)) { try { const imp: any = impactFor({ asset_id: sym, since: a.since, limit: 10 } as any); pressure = { bias: imp.bias, n_events: imp.n_events, drivers: (imp.events ?? []).slice(0, 5).map((e: any) => ({ id: e.id, title: e.title, direction: e.direction, confidence: e.confidence })) }; } catch { pressure = null; } }
+  return {
+    symbol: sym, venue: "hyperliquid", as_of: new Date().toISOString(), max_leverage: u.maxLeverage,
+    price: { mark, oracle, mid, prev_day: prev, change_24h_pct: mark != null && prev ? r(((mark - prev) / prev) * 100, 3) : null, premium_vs_oracle: r(prem, 6) },
+    funding: { rate_1h: r(f1h, 8), rate_8h_equiv: r(f1h == null ? null : f1h * 8, 8), annualized_pct: r(fundingAnnual == null ? null : fundingAnnual * 100, 2), predicted_by_venue: predicted_funding },
+    open_interest: { coins: r(oi, 4), usd: oi != null && mark != null ? Math.round(oi * mark) : null, oi_to_24h_volume: oi != null && mark != null && vol ? r((oi * mark) / vol, 3) : null },
+    volume_24h_usd: vol != null ? Math.round(vol) : null,
+    flags, event_pressure: pressure,
+    not_included: ["liquidations (no keyless public source with clear terms yet)", "long/short account ratio"],
+    source: { id: "hyperliquid.info", url: "https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/info-endpoint", tier: "primary" },
     disclaimer: "Information and analytics only — not investment advice.", universe_version: loadUniverse().version,
   };
 }

@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { EventsSinceArgs, ImpactForArgs, ExposureGraphArgs, PolymarketContextArgs, NewsArgs, FilingsArgs, CalendarArgs, BriefArgs, eventsSince, impactFor, exposureGraph, universe, sources, regimeSnapshot, explain, polymarketContext, pulse, newsFor, filingsFor, calendar, brief } from "./tools.js";
+import { EventsSinceArgs, ImpactForArgs, ExposureGraphArgs, PolymarketContextArgs, NewsArgs, FilingsArgs, CalendarArgs, BriefArgs, DerivsArgs, eventsSince, impactFor, exposureGraph, universe, sources, regimeSnapshot, explain, polymarketContext, pulse, newsFor, filingsFor, calendar, brief, derivsFor } from "./tools.js";
 import { PRICES } from "./pricing.js";
 
 const json = (x: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(x) }], structuredContent: x as Record<string, unknown> });
@@ -8,7 +8,7 @@ const fail = (e: unknown) => ({ content: [{ type: "text" as const, text: `error:
 
 /** Build the MCP server. One instance per stateless HTTP request is fine (cheap). */
 export function buildMcpServer() {
-  const s = new McpServer({ name: "degenscan-intel", version: "0.5.4" }, {
+  const s = new McpServer({ name: "degenscan-intel", version: "0.6.0" }, {
     instructions: [
       "Degenscan Intel: cross-asset event feed for trading agents. Events are normalized from ~40 primary sources (SEC, Fed, Federal Register, USGS, NHC, Nasdaq halts, DefiLlama, Polymarket…) and scored against an exposure graph into per-asset impacts.",
       "Cheapest probe: pulse ($0.001). One-call briefing per asset: brief ($0.10). Typical loop: regime_snapshot → events_since(since='4h', universe=[your book]) → impact_for(asset_id) for anything with confidence ≥ 0.4 → check tradable_now / next_open before acting. For prediction markets: polymarket_context(market) → compare yes_prob with fresh primary-source events.",
@@ -53,6 +53,11 @@ export function buildMcpServer() {
     title: "Pulse (1h)", description: `Cheapest first call: how many events hit the feed in the last hour by class (natural, regulatory, central-bank, corporate, crypto, media…), the 3 most severe with their top impacts, and which venues are open. Use it every hour to decide whether anything needs a deeper look, or as a health/probe call. $${PRICES.pulse}/call.`,
     inputSchema: {}, annotations: { readOnlyHint: true },
   }, async () => { try { return json(pulse()); } catch (e) { return fail(e); } });
+
+  s.registerTool("derivs_for", {
+    title: "Perp derivatives for coin", description: `Perpetual-futures microstructure for ONE coin from Hyperliquid's public API (no key): hourly funding with 8h-equivalent and annualized %, predicted next funding per venue (Hyperliquid, Binance, Bybit…), open interest in coins and USD with OI-to-24h-volume, mark/oracle/mid and premium vs oracle, 24h notional volume and change, and flags (funding_hot_long/short, premium_rich/discount, oi_heavy_vs_volume). Joined with our primary-source event pressure on the same asset when covered. Use it before sizing a perp position, to detect crowded funding, or as the market-structure leg next to events_since. Liquidations are not included. $${PRICES.derivs_for}/call.`,
+    inputSchema: DerivsArgs.shape, annotations: { readOnlyHint: true },
+  }, async (a) => { try { return json(await derivsFor(DerivsArgs.parse(a))); } catch (e) { return fail(e); } });
 
   s.registerTool("news_for", {
     title: "News for asset", description: `Headlines that touch ONE asset in the window (press wires, corporate releases, halts, hacks, media), each with source tier, corroboration count, a −1..1 heuristic sentiment score and the asset's impact direction, plus an average sentiment label. Links to the original items; no article bodies. Use it to answer "what is the news flow on X today" or to feed a sentiment gate. $${PRICES.news_for}/call.`,

@@ -8,6 +8,7 @@ export const PRICES: Record<string, number> = {
   polymarket_context: 0.01,
   pulse: 0.001,
   news_for: 0.002,
+  derivs_for: 0.003,
   filings_for: 0.002,
   calendar: 0.002,
   brief: 0.10,

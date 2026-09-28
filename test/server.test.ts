@@ -80,7 +80,7 @@ describe("agent-facing docs", () => {
     expect(packs.json().packs.pack_1k).toMatchObject({ usd: 5, calls: 1000 });
     const root = await app.inject({ method: "GET", url: "/" });
     expect(root.json().skill).toContain("/skill.md");
-    expect(root.json().version).toBe("0.5.4");
+    expect(root.json().version).toBe("0.6.0");
     const wk = await app.inject({ method: "GET", url: "/.well-known/x402" }); expect(wk.json().resources.length).toBeGreaterThan(5);
     const oa = await app.inject({ method: "GET", url: "/openapi.json" }); expect(oa.json().openapi).toBe("3.1.0");
     const wl = await app.inject({ method: "GET", url: "/wallets.json" }); expect(wl.json().owned_or_test_wallets.length).toBe(2);
@@ -119,5 +119,36 @@ describe("v0.5 endpoints", () => {
     expect(bj.pressure.bias).toBe(-1); expect(bj.headlines).toBeTruthy(); expect(bj.upcoming_catalysts).toBeInstanceOf(Array); expect(bj._billing.price_usd).toBe(0);
     const wk = await app.inject({ method: "GET", url: "/.well-known/x402" });
     expect(wk.json().resources.map((r: any) => r.tool)).toEqual(expect.arrayContaining(["pulse", "brief", "calendar", "news_for", "filings_for"]));
+  });
+});
+
+describe("derivs_for (Hyperliquid, mocked)", () => {
+  it("maps metaAndAssetCtxs + predictedFundings into funding/OI/premium with flags and billing", async () => {
+    const tools = await import("../src/server/tools.js");
+    tools._hl.reset();
+    tools._hl.post = (async (body: any) => {
+      if (body.type === "metaAndAssetCtxs") return [
+        { universe: [{ name: "BTC", szDecimals: 5, maxLeverage: 40 }, { name: "HYPE", szDecimals: 2, maxLeverage: 5 }] },
+        [{ funding: "0.0000125", openInterest: "25000", prevDayPx: "64000", dayNtlVlm: "2000000000", premium: "0.0003", oraclePx: "65000", markPx: "65010", midPx: "65005" },
+         { funding: "0.0008", openInterest: "9000000", prevDayPx: "30", dayNtlVlm: "50000000", premium: "0.004", oraclePx: "31", markPx: "31.2", midPx: "31.1" }],
+      ];
+      if (body.type === "predictedFundings") return [["BTC", [["BinPerp", { fundingRate: "0.0001", nextFundingTime: 1800000000000 }], ["HlPerp", { fundingRate: "0.0000125", nextFundingTime: 1800000000000 }]]]];
+      throw new Error("unexpected " + body.type);
+    }) as any;
+    const app = await buildHttp();
+    const b = await app.inject({ method: "GET", url: "/v1/derivs/btc" });
+    expect(b.statusCode).toBe(200); const j = b.json();
+    expect(j.symbol).toBe("BTC"); expect(j._billing.tool).toBe("derivs_for");
+    expect(j.funding.rate_1h).toBeCloseTo(0.0000125, 9); expect(j.funding.annualized_pct).toBeCloseTo(10.95, 1);
+    expect(j.open_interest.usd).toBe(Math.round(25000 * 65010)); expect(j.price.change_24h_pct).toBeCloseTo(1.578, 2);
+    expect(j.funding.predicted_by_venue.map((p: any) => p.venue)).toEqual(["BinPerp", "HlPerp"]);
+    expect(j.flags).toEqual([]);
+    const h = await app.inject({ method: "GET", url: "/v1/derivs/HYPE-PERP" });
+    expect(h.statusCode).toBe(200); expect(h.json().flags).toEqual(expect.arrayContaining(["funding_hot_long", "premium_rich", "oi_heavy_vs_volume"]));
+    const x = await app.inject({ method: "GET", url: "/v1/derivs/NOPE" });
+    expect(x.statusCode).toBe(404);
+    const wk = await app.inject({ method: "GET", url: "/.well-known/x402" });
+    expect(wk.json().resources.map((r: any) => r.tool)).toContain("derivs_for");
+    tools._hl.reset();
   });
 });
