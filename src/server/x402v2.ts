@@ -4,6 +4,7 @@ import type { RoutesConfig, RouteConfig } from "@x402/core/server";
 import { HTTPFacilitatorClient } from "@x402/core/server";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { registerExactSvmScheme } from "@x402/svm/exact/server";
+import { createFacilitatorConfig } from "@coinbase/x402";
 import { declareDiscoveryExtension, bazaarResourceServerExtension } from "@x402/extensions/bazaar";
 import { PRICES } from "./pricing.js";
 import { PACKS } from "./keys.js";
@@ -114,8 +115,12 @@ export function buildRoutes(): RoutesConfig {
 }
 
 export async function installX402(app: FastifyInstance) {
-  const facilitator = new HTTPFacilitatorClient({ url: FACILITATOR, timeoutMs: 30_000 });
-  const rs = new x402ResourceServer(facilitator).register(NETWORK, new ExactEvmScheme()).registerExtension(bazaarResourceServerExtension);
+  // Facilitators: Coinbase CDP first when credentials exist (its settlements are what the Coinbase Bazaar indexes), PayAI always
+  // (Base + Solana, gasless, no key). The resource server picks the first facilitator that supports the requested scheme/network.
+  const payai = new HTTPFacilitatorClient({ url: FACILITATOR, timeoutMs: 30_000 });
+  const cdpId = process.env.CDP_API_KEY_ID, cdpSecret = process.env.CDP_API_KEY_SECRET;
+  const clients = cdpId && cdpSecret ? [new HTTPFacilitatorClient({ ...createFacilitatorConfig(cdpId, cdpSecret), timeoutMs: 30_000 } as any), payai] : [payai];
+  const rs = new x402ResourceServer(clients).register(NETWORK, new ExactEvmScheme()).registerExtension(bazaarResourceServerExtension);
   if (PAY_TO_SOLANA) registerExactSvmScheme(rs, { networks: [SOLANA_NETWORK] });
   const http = new x402HTTPResourceServer(rs, buildRoutes());
   http.onProtectedRequest(async (ctx) => {
@@ -127,7 +132,7 @@ export async function installX402(app: FastifyInstance) {
   // syncFacilitatorOnStart=false: we initialize explicitly so a facilitator hiccup at boot doesn't crash the process.
   paymentMiddlewareFromHTTPServer(app, http, undefined, undefined, false);
   if (!FREE_MODE) {
-    try { await http.initialize(); console.log(`[x402] v2 ready — ${NETWORK} → ${PAY_TO}${PAY_TO_SOLANA ? ` + ${SOLANA_NETWORK} → ${PAY_TO_SOLANA}` : ""} via ${FACILITATOR}`); }
+    try { await http.initialize(); console.log(`[x402] v2 ready — ${NETWORK} → ${PAY_TO}${PAY_TO_SOLANA ? ` + ${SOLANA_NETWORK} → ${PAY_TO_SOLANA}` : ""} via ${cdpId && cdpSecret ? "Coinbase CDP + " : ""}${FACILITATOR}`); }
     catch (e) { console.warn("[x402] facilitator sync failed at boot (will retry on first payment):", (e as Error).message); }
   }
   return http;
