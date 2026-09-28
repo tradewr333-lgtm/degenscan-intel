@@ -61,6 +61,9 @@ One normalized feed of price-moving events from ~40 primary sources (SEC, Federa
 
 ## Examples
 
+SDKs (pay the 402 automatically or send the key): `npm i @degenscan/intel` → `new Intel({ privateKey })`, `pip install degenscan-intel` → `Intel(private_key=...)`.
+
+
 REST:
 ```bash
 curl 'https://intel.degenscan.io/v1/events?since=4h&universe=NVDA,TSM,BTC&min_confidence=0.4'

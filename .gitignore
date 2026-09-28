@@ -5,3 +5,7 @@ data/universe.json
 .env
 mcp-publisher*
 _to_delete/
+packages/js/node_modules
+packages/js/dist
+packages/py/dist
+packages/py/*.egg-info

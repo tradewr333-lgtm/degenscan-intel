@@ -1,0 +1,9 @@
+{
+  "name": "event-driven-trading-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Minimal autonomous trading agent that reads primary-source market events (SEC, Fed, regulators, disasters, halts, hacks) from Degenscan Intel, pays per call in USDC via x402, and hands signals to your execution layer.",
+  "type": "module",
+  "scripts": { "start": "node --env-file=.env agent.mjs", "once": "node --env-file=.env agent.mjs --once" },
+  "dependencies": { "@degenscan/intel": "^0.1.0" }
+}

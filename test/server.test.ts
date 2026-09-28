@@ -80,7 +80,7 @@ describe("agent-facing docs", () => {
     expect(packs.json().packs.pack_1k).toMatchObject({ usd: 5, calls: 1000 });
     const root = await app.inject({ method: "GET", url: "/" });
     expect(root.json().skill).toContain("/skill.md");
-    expect(root.json().version).toBe("0.6.1");
+    expect(root.json().version).toBe("0.7.0");
     const wk = await app.inject({ method: "GET", url: "/.well-known/x402" }); expect(wk.json().resources.length).toBeGreaterThan(5);
     const oa = await app.inject({ method: "GET", url: "/openapi.json" }); expect(oa.json().openapi).toBe("3.1.0");
     const wl = await app.inject({ method: "GET", url: "/wallets.json" }); expect(wl.json().owned_or_test_wallets.length).toBe(2);
@@ -150,5 +150,19 @@ describe("derivs_for (Hyperliquid, mocked)", () => {
     const wk = await app.inject({ method: "GET", url: "/.well-known/x402" });
     expect(wk.json().resources.map((r: any) => r.tool)).toContain("derivs_for");
     tools._hl.reset();
+  });
+});
+
+describe("docs for LLMs", () => {
+  it("serves /docs index, every page, llms-full.txt, sitemap and robots", async () => {
+    const app = await buildHttp();
+    const idx = await app.inject({ method: "GET", url: "/docs" });
+    expect(idx.statusCode).toBe(200); expect(idx.body).toContain("funding-rate-open-interest-api-without-api-key");
+    const pg = await app.inject({ method: "GET", url: "/docs/how-ai-agents-pay-per-api-call-with-usdc-x402" });
+    expect(pg.statusCode).toBe(200); expect(pg.body).toContain("PAYMENT-REQUIRED"); expect(pg.body).toContain("npm i @degenscan/intel"); expect(pg.body).toContain("FAQPage");
+    const full = await app.inject({ method: "GET", url: "/llms-full.txt" });
+    expect(full.statusCode).toBe(200); expect(full.body).toContain("derivs_for: 0.003"); expect(full.body.split("## ").length).toBeGreaterThan(9);
+    const sm = await app.inject({ method: "GET", url: "/sitemap.xml" }); expect(sm.body).toContain("/docs/pre-trade-brief-api-one-call");
+    const rb = await app.inject({ method: "GET", url: "/robots.txt" }); expect(rb.body).toContain("Sitemap:");
   });
 });

@@ -67,7 +67,7 @@ Free trial: header `X-Free-Trial: 1` → 100 calls/day/IP without payment (MCP `
 | Autonomous agent, prepaid key (no human, no card) | one USDC payment → `{ api_key }` with a lifetime budget: `pack_1k` $5 / 1,000 calls · `pack_10k` $40 / 10,000 · `pack_100k` $300 / 100,000 | `POST /v1/keys/x402/<pack>` → then header `X-API-KEY`; balance at `GET /v1/keys/me` |
 | Human operator, card | Stripe subscription Starter $29 (10k/mo) · Pro $199 (200k/mo) → key shown once | `GET /v1/plans` → checkout → `/v1/keys/claim` |
 
-**For agents & indexers:** [`/.well-known/x402`](https://intel.degenscan.io/.well-known/x402) (resources, prices, payTo) · [`/openapi.json`](https://intel.degenscan.io/openapi.json) · [`/llms.txt`](https://intel.degenscan.io/llms.txt) · [`/wallets.json`](https://intel.degenscan.io/wallets.json) (our own wallets, excluded from metrics). Install the skill: `npx skills add tradewr333-lgtm/degenscan-intel`.
+**For agents & indexers:** [`/.well-known/x402`](https://intel.degenscan.io/.well-known/x402) (resources, prices, payTo) · [`/openapi.json`](https://intel.degenscan.io/openapi.json) · [`/llms.txt`](https://intel.degenscan.io/llms.txt) · [`/wallets.json`](https://intel.degenscan.io/wallets.json) (our own wallets, excluded from metrics). Install the skill: `npx skills add tradewr333-lgtm/degenscan-intel` · SDKs: `npm i @degenscan/intel` ([packages/js](packages/js)) · `pip install degenscan-intel` ([packages/py](packages/py)).
 
 **Agent skill:** [`skills/degenscan-intel/SKILL.md`](skills/degenscan-intel/SKILL.md) (also served at [`/skill.md`](https://intel.degenscan.io/skill.md)) — when to call which tool, the recommended loop, how to read confidence, how to pay. Drop it into a Claude/Cursor skills folder or point the agent at the URL.
 
