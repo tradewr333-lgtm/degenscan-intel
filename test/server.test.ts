@@ -80,7 +80,7 @@ describe("agent-facing docs", () => {
     expect(packs.json().packs.pack_1k).toMatchObject({ usd: 5, calls: 1000 });
     const root = await app.inject({ method: "GET", url: "/" });
     expect(root.json().skill).toContain("/skill.md");
-    expect(root.json().version).toBe("0.6.0");
+    expect(root.json().version).toBe("0.6.1");
     const wk = await app.inject({ method: "GET", url: "/.well-known/x402" }); expect(wk.json().resources.length).toBeGreaterThan(5);
     const oa = await app.inject({ method: "GET", url: "/openapi.json" }); expect(oa.json().openapi).toBe("3.1.0");
     const wl = await app.inject({ method: "GET", url: "/wallets.json" }); expect(wl.json().owned_or_test_wallets.length).toBe(2);
@@ -132,7 +132,7 @@ describe("derivs_for (Hyperliquid, mocked)", () => {
         [{ funding: "0.0000125", openInterest: "25000", prevDayPx: "64000", dayNtlVlm: "2000000000", premium: "0.0003", oraclePx: "65000", markPx: "65010", midPx: "65005" },
          { funding: "0.0008", openInterest: "9000000", prevDayPx: "30", dayNtlVlm: "50000000", premium: "0.004", oraclePx: "31", markPx: "31.2", midPx: "31.1" }],
       ];
-      if (body.type === "predictedFundings") return [["BTC", [["BinPerp", { fundingRate: "0.0001", nextFundingTime: 1800000000000 }], ["HlPerp", { fundingRate: "0.0000125", nextFundingTime: 1800000000000 }]]]];
+      if (body.type === "predictedFundings") return [["BTC", [["BinPerp", { fundingRate: "0.0001", nextFundingTime: 1800000000000 }], ["HlPerp", { fundingRate: "0.0000125", nextFundingTime: 1800000000000 }], ["BybitPerp", null]]]];
       throw new Error("unexpected " + body.type);
     }) as any;
     const app = await buildHttp();

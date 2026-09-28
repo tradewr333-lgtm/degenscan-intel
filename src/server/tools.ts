@@ -344,14 +344,14 @@ export async function derivsFor(a: DerivsArgs) {
   const u = meta.universe[idx], c = ctxs[idx];
   const mark = num(c.markPx), oracle = num(c.oraclePx), mid = num(c.midPx), prev = num(c.prevDayPx), oi = num(c.openInterest), vol = num(c.dayNtlVlm), f1h = num(c.funding), prem = num(c.premium);
   const pred = (await hlPredicted()).find(row => String(row[0]).toUpperCase() === sym)?.[1] ?? [];
-  const predicted_funding = pred.map(([venue, p]) => ({ venue, rate: r(num(p.fundingRate), 8), interval_h: p.fundingIntervalHours ?? (venue === "HlPerp" ? 1 : 8), next_at: p.nextFundingTime ? new Date(p.nextFundingTime).toISOString() : null }));
+  const predicted_funding = pred.filter(([, p]) => p && typeof p === "object").map(([venue, p]) => ({ venue, rate: r(num(p.fundingRate), 8), interval_h: p.fundingIntervalHours ?? (venue === "HlPerp" ? 1 : 8), next_at: p.nextFundingTime ? new Date(p.nextFundingTime).toISOString() : null }));
   const fundingAnnual = f1h == null ? null : f1h * 24 * 365;
   const flags: string[] = [];
   if (f1h != null && Math.abs(f1h) >= 0.0005) flags.push(f1h > 0 ? "funding_hot_long" : "funding_hot_short"); // ≥ 0.05%/h ≈ 438%/yr
   if (prem != null && Math.abs(prem) >= 0.002) flags.push(prem > 0 ? "premium_rich" : "premium_discount");
   if (oi != null && mark != null && vol != null && vol > 0 && (oi * mark) / vol > 3) flags.push("oi_heavy_vs_volume");
   let pressure: any = null;
-  if (loadUniverse().assets.some(x => x.id === sym)) { try { const imp: any = impactFor({ asset_id: sym, since: a.since, limit: 10 } as any); pressure = { bias: imp.bias, n_events: imp.n_events, drivers: (imp.events ?? []).slice(0, 5).map((e: any) => ({ id: e.id, title: e.title, direction: e.direction, confidence: e.confidence })) }; } catch { pressure = null; } }
+  if (loadUniverse().assets.some(x => x.id === sym)) { try { const imp: any = impactFor({ asset_id: sym, since: a.since, limit: 10 } as any); pressure = { bias: imp.bias, n_events: imp.n_events, drivers: (imp.top ?? []).slice(0, 5).map((e: any) => ({ id: e.event_id, title: e.title, kind: e.kind, direction: e.impact?.direction ?? 0, confidence: e.impact?.confidence ?? 0 })) }; } catch { pressure = null; } }
   return {
     symbol: sym, venue: "hyperliquid", as_of: new Date().toISOString(), max_leverage: u.maxLeverage,
     price: { mark, oracle, mid, prev_day: prev, change_24h_pct: mark != null && prev ? r(((mark - prev) / prev) * 100, 3) : null, premium_vs_oracle: r(prem, 6) },
