@@ -13,7 +13,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { wrapFetchWithPaymentFromConfig, decodePaymentResponseHeader } from "@x402/fetch";
 import { ExactEvmScheme } from "@x402/evm";
 
-const BASE_URL = process.argv[2] ?? "https://degenscan-intel.onrender.com";
+const BASE_URL = process.argv[2] ?? "https://intel.degenscan.io";
 let pkRaw = (process.env.TEST_WALLET_PK ?? "").trim();
 if (pkRaw && !pkRaw.startsWith("0x")) pkRaw = "0x" + pkRaw;   // MetaMask exports without the 0x prefix
 if (!/^0x[0-9a-fA-F]{64}$/.test(pkRaw)) { console.error("Set TEST_WALLET_PK to a throwaway wallet private key (64 hex chars)."); process.exit(1); }

@@ -21,7 +21,7 @@ import { FREE_MODE } from "./access.js";
 const NETWORK = (process.env.X402_NETWORK === "base-sepolia" ? "eip155:84532" : "eip155:8453") as `eip155:${number}`;
 const PAY_TO = process.env.X402_PAY_TO ?? "0x0000000000000000000000000000000000000000";
 const FACILITATOR = process.env.X402_FACILITATOR_URL ?? "https://facilitator.payai.network";
-const PUBLIC_URL = process.env.PUBLIC_URL ?? "https://degenscan-intel.onrender.com";
+const PUBLIC_URL = process.env.PUBLIC_URL ?? "https://intel.degenscan.io";
 const usd = (n: number) => `$${n}`;
 /** Second rail: Solana mainnet (USDC, gasless via PayAI). Enabled only when a Solana receiving address is configured. */
 export const SOLANA_NETWORK = "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp" as const;

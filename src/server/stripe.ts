@@ -13,7 +13,7 @@ import { createKey, findBySession, revokeBySubscription, PLANS, PACKS, type Plan
  */
 export function installStripe(app: FastifyInstance) {
   const secret = process.env.STRIPE_SECRET_KEY;
-  const PUBLIC_URL = process.env.PUBLIC_URL ?? "https://degenscan-intel.onrender.com";
+  const PUBLIC_URL = process.env.PUBLIC_URL ?? "https://intel.degenscan.io";
   const PRICE: Partial<Record<Plan, string | undefined>> = { starter: process.env.STRIPE_PRICE_STARTER, pro: process.env.STRIPE_PRICE_PRO };
 
   app.get("/v1/plans", async () => ({

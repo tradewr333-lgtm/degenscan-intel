@@ -1,10 +1,10 @@
 {
   "name": "degenscan-intel",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Cross-asset event intelligence feed for autonomous agents — MCP + REST, paid per call via x402",
   "license": "MIT",
   "author": "Marbella Collins LLC <contact@degenscan.io>",
-  "homepage": "https://degenscan-intel.onrender.com",
+  "homepage": "https://intel.degenscan.io",
   "repository": {
     "type": "git",
     "url": "https://github.com/tradewr333-lgtm/degenscan-intel"

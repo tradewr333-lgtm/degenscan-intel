@@ -7,9 +7,9 @@ description: Cross-asset market event intelligence for trading and research agen
 
 One normalized feed of price-moving events from ~40 primary sources (SEC, Federal Reserve, Federal Register, ECB/BoE/BoJ, FTC/DOJ/FDA/CFTC/FCC, USGS, NOAA/NHC, Nasdaq halts, DefiLlama, Polymarket, press wires…), scored against an exposure graph into per-asset impacts. Deterministic, sub-200 ms, auditable (`raw_ref` links to the source document).
 
-- MCP (streamable HTTP): `POST https://degenscan-intel.onrender.com/mcp`
-- REST: `https://degenscan-intel.onrender.com/v1/...`
-- Docs for machines: `https://degenscan-intel.onrender.com/llms.txt`
+- MCP (streamable HTTP): `POST https://intel.degenscan.io/mcp`
+- REST: `https://intel.degenscan.io/v1/...`
+- Docs for machines: `https://intel.degenscan.io/llms.txt`
 - Operator: Marbella Collins LLC · contact@degenscan.io · MIT
 
 ## When to use which tool
@@ -62,10 +62,10 @@ One normalized feed of price-moving events from ~40 primary sources (SEC, Federa
 
 REST:
 ```bash
-curl 'https://degenscan-intel.onrender.com/v1/events?since=4h&universe=NVDA,TSM,BTC&min_confidence=0.4'
-curl 'https://degenscan-intel.onrender.com/v1/impact/MSTR?since=24h'
-curl 'https://degenscan-intel.onrender.com/v1/graph/NVDA?depth=2'
-curl  https://degenscan-intel.onrender.com/v1/regime
+curl 'https://intel.degenscan.io/v1/events?since=4h&universe=NVDA,TSM,BTC&min_confidence=0.4'
+curl 'https://intel.degenscan.io/v1/impact/MSTR?since=24h'
+curl 'https://intel.degenscan.io/v1/graph/NVDA?depth=2'
+curl  https://intel.degenscan.io/v1/regime
 ```
 
 MCP `tools/call`:
@@ -75,7 +75,7 @@ MCP `tools/call`:
 
 Claude Desktop / Cursor config (remote MCP):
 ```json
-{ "mcpServers": { "degenscan-intel": { "url": "https://degenscan-intel.onrender.com/mcp", "headers": { "X-API-KEY": "<optional>" } } } }
+{ "mcpServers": { "degenscan-intel": { "url": "https://intel.degenscan.io/mcp", "headers": { "X-API-KEY": "<optional>" } } } }
 ```
 
 ## Limits and honesty

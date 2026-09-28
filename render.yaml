@@ -25,7 +25,7 @@ services:
       - key: FREE_DAILY_CALLS
         value: "100"
       - key: PUBLIC_URL
-        value: https://degenscan-intel.onrender.com
+        value: https://intel.degenscan.io
       - key: X402_PAY_TO
         sync: false
       - key: X402_PAY_TO_SOLANA
