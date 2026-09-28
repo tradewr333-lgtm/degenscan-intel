@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { EventsSinceArgs, ImpactForArgs, ExposureGraphArgs, PolymarketContextArgs, eventsSince, impactFor, exposureGraph, universe, sources, regimeSnapshot, explain, polymarketContext } from "./tools.js";
+import { EventsSinceArgs, ImpactForArgs, ExposureGraphArgs, PolymarketContextArgs, NewsArgs, FilingsArgs, CalendarArgs, BriefArgs, eventsSince, impactFor, exposureGraph, universe, sources, regimeSnapshot, explain, polymarketContext, pulse, newsFor, filingsFor, calendar, brief } from "./tools.js";
 import { PRICES } from "./pricing.js";
 
 const json = (x: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(x) }], structuredContent: x as Record<string, unknown> });
@@ -8,10 +8,10 @@ const fail = (e: unknown) => ({ content: [{ type: "text" as const, text: `error:
 
 /** Build the MCP server. One instance per stateless HTTP request is fine (cheap). */
 export function buildMcpServer() {
-  const s = new McpServer({ name: "degenscan-intel", version: "0.4.2" }, {
+  const s = new McpServer({ name: "degenscan-intel", version: "0.5.0" }, {
     instructions: [
       "Degenscan Intel: cross-asset event feed for trading agents. Events are normalized from ~40 primary sources (SEC, Fed, Federal Register, USGS, NHC, Nasdaq halts, DefiLlama, Polymarket…) and scored against an exposure graph into per-asset impacts.",
-      "Typical loop: regime_snapshot → events_since(since='4h', universe=[your book]) → impact_for(asset_id) for anything with confidence ≥ 0.4 → check tradable_now / next_open before acting. For prediction markets: polymarket_context(market) → compare yes_prob with fresh primary-source events.",
+      "Cheapest probe: pulse ($0.001). One-call briefing per asset: brief ($0.10). Typical loop: regime_snapshot → events_since(since='4h', universe=[your book]) → impact_for(asset_id) for anything with confidence ≥ 0.4 → check tradable_now / next_open before acting. For prediction markets: polymarket_context(market) → compare yes_prob with fresh primary-source events.",
       `Pricing per call (USDC via x402, or API key): ${Object.entries(PRICES).map(([k, v]) => `${k}=$${v}`).join(", ")}. universe and sources_status are free.`,
       "Direction: 1 supportive, -1 negative, 0 unclear. Confidence is a 0..1 product of source tier, event severity/novelty and graph path weight — not a probability.",
       "Access: initialize/tools/list/universe/sources_status are free. Priced tools: 100 free calls/day per IP, then pay per call with x402 (USDC on Base) or send X-API-KEY. Autonomous agents can buy a prepaid key with USDC (no human): POST /v1/keys/x402/pack_1k ($5 = 1,000 calls). Details: /llms.txt.",
@@ -48,6 +48,31 @@ export function buildMcpServer() {
     title: "Polymarket context", description: `Evidence pack for ONE prediction market: resolves a Polymarket market (id, slug or question text) to its current odds, then returns the primary-source events in our feed (regulators, Fed, filings, disasters, hacks…) that bear on the question, with relevance, source tier, corroboration and per-asset impacts. Use it before trading or quoting a probability on Polymarket/Kalshi-style markets ("Fed cut in October?", "ETF approved by year end?"), or to detect a fresh primary event the market hasn't repriced. Information, not a forecast. $${PRICES.polymarket_context}/call.`,
     inputSchema: PolymarketContextArgs.shape, annotations: { readOnlyHint: true },
   }, async (a) => { try { return json(await polymarketContext(PolymarketContextArgs.parse(a))); } catch (e) { return fail(e); } });
+
+  s.registerTool("pulse", {
+    title: "Pulse (1h)", description: `Cheapest first call: how many events hit the feed in the last hour by class (natural, regulatory, central-bank, corporate, crypto, media…), the 3 most severe with their top impacts, and which venues are open. Use it every hour to decide whether anything needs a deeper look, or as a health/probe call. $${PRICES.pulse}/call.`,
+    inputSchema: {}, annotations: { readOnlyHint: true },
+  }, async () => { try { return json(pulse()); } catch (e) { return fail(e); } });
+
+  s.registerTool("news_for", {
+    title: "News for asset", description: `Headlines that touch ONE asset in the window (press wires, corporate releases, halts, hacks, media), each with source tier, corroboration count, a −1..1 heuristic sentiment score and the asset's impact direction, plus an average sentiment label. Links to the original items; no article bodies. Use it to answer "what is the news flow on X today" or to feed a sentiment gate. $${PRICES.news_for}/call.`,
+    inputSchema: NewsArgs.shape, annotations: { readOnlyHint: true },
+  }, async (a) => { try { return json(newsFor(NewsArgs.parse(a))); } catch (e) { return fail(e); } });
+
+  s.registerTool("filings_for", {
+    title: "SEC filings for issuer", description: `SEC EDGAR filings that touch ONE US issuer in the window: 8-K by item (material agreements, results, departures), Form 4 insider trades, 13D/G activist stakes, S-1/424B offerings, bankruptcy — with summary, impact direction and link to the filing. Public-domain source. Use it before earnings or when a stock moves without news. $${PRICES.filings_for}/call.`,
+    inputSchema: FilingsArgs.shape, annotations: { readOnlyHint: true },
+  }, async (a) => { try { return json(filingsFor(FilingsArgs.parse(a))); } catch (e) { return fail(e); } });
+
+  s.registerTool("calendar", {
+    title: "Catalyst calendar", description: `Upcoming scheduled catalysts for the next N days: US macro prints (CPI, PPI, jobs, PCE, GDP, retail, JOLTS) with ET times, FOMC decisions and minutes, Treasury auctions and earnings dates seen in the feed, each with the assets it usually moves. Use it to avoid holding through a print or to schedule polling. $${PRICES.calendar}/call.`,
+    inputSchema: CalendarArgs.shape, annotations: { readOnlyHint: true },
+  }, async (a) => { try { return json(calendar(CalendarArgs.parse(a))); } catch (e) { return fail(e); } });
+
+  s.registerTool("brief", {
+    title: "Pre-trade brief (premium)", description: `One-call briefing for ONE asset, everything an operator reads before trading it: net pressure and drivers (24h), headlines with sentiment, recent SEC filings (equities), first-order exposure map, related Polymarket market with odds, upcoming scheduled catalysts (7d) and venue status / tradable_now. Replaces 6 separate calls; ideal once per asset per session or pre-open. $${PRICES.brief}/call.`,
+    inputSchema: BriefArgs.shape, annotations: { readOnlyHint: true },
+  }, async (a) => { try { return json(await brief(BriefArgs.parse(a))); } catch (e) { return fail(e); } });
 
   s.registerTool("universe", {
     title: "Universe", description: "List every asset id the service scores (top-100 US equities by volume, indices/ETFs, 15 crypto, commodities, FX, rates) with class, name and exposure tags, plus the universe version stamped on every response. Call it once to map your tickers to asset ids before using the other tools. Free.",

@@ -67,6 +67,26 @@ export function buildRoutes(): RoutesConfig {
       accepts: accept("explain"), description: "Human-readable rationale for one event's impacts.", mimeType: "application/json", ...common,
       extensions: declareDiscoveryExtension({ output: { example: { explanation: "…" } } }),
     },
+    "GET /v1/pulse": {
+      accepts: accept("pulse"), description: "Cheapest probe: last-hour event counts by class, top-3 severe events with impacts, venues open. Call hourly or as a health check before deeper calls.", mimeType: "application/json", ...common,
+      extensions: declareDiscoveryExtension({ output: { example: { window: "1h", events: 42, by_class: { reg: 6, corp: 18, crypto: 4, media: 14 }, high_severity: 2, venues_open: { crypto: true, us_equities: false } } } }),
+    },
+    "GET /v1/news/*": {
+      accepts: accept("news_for"), description: "Headlines touching one asset (press wires, releases, halts, hacks, media) with source tier, corroboration and a heuristic sentiment score (-1..1). Links only, no bodies.", mimeType: "application/json", ...common,
+      extensions: declareDiscoveryExtension({ input: { since: "24h", limit: 25 }, inputSchema: { properties: { since: { type: "string" }, limit: { type: "number" } } }, output: { example: { asset: { id: "NVDA" }, count: 3, sentiment_avg: 0.25, sentiment_label: "positive", items: [{ title: "NVIDIA announces…", tier: "primary", sentiment: 0.5, url: "https://…" }] } } }),
+    },
+    "GET /v1/filings/*": {
+      accepts: accept("filings_for"), description: "SEC EDGAR filings touching one US issuer: 8-K by item, Form 4 insider trades, 13D/G activist stakes, S-1 offerings, with impact direction and link. Public-domain source.", mimeType: "application/json", ...common,
+      extensions: declareDiscoveryExtension({ input: { since: "7d" }, inputSchema: { properties: { since: { type: "string" }, forms: { type: "string" } } }, output: { example: { asset: { id: "COIN" }, count: 1, filings: [{ kind: "corp.8k", title: "COINBASE GLOBAL files 8-K — Results of operations", url: "https://www.sec.gov/…" }] } } }),
+    },
+    "GET /v1/calendar": {
+      accepts: accept("calendar"), description: "Upcoming scheduled catalysts: US macro prints (CPI, jobs, PCE, GDP…) with ET times, FOMC decisions/minutes, Treasury auctions and earnings dates, each with the assets it usually moves.", mimeType: "application/json", ...common,
+      extensions: declareDiscoveryExtension({ input: { days: 7 }, inputSchema: { properties: { days: { type: "number" }, types: { type: "string" } } }, output: { example: { count: 2, items: [{ at: "2026-10-14T12:30:00.000Z", type: "macro", name: "Consumer Price Index (CPI)", affects: ["US10Y", "SPX", "BTC"] }] } } }),
+    },
+    "GET /v1/brief/*": {
+      accepts: accept("brief"), description: "Premium one-call pre-trade briefing for an asset: net pressure and drivers, headlines with sentiment, SEC filings, exposure map, related Polymarket odds, upcoming catalysts, venue status. Replaces six calls.", mimeType: "application/json", ...common,
+      extensions: declareDiscoveryExtension({ input: { since: "24h" }, inputSchema: { properties: { since: { type: "string" } } }, output: { example: { asset: { id: "MSTR" }, pressure: { bias: -0.4, n_events: 5 }, headlines: { sentiment_avg: -0.2 }, upcoming_catalysts: [{ name: "FOMC Rate Decision" }], tradable_now: ["crypto"] } } }),
+    },
     "GET /v1/polymarket/*": {
       accepts: accept("polymarket_context"), description: "Evidence pack for one Polymarket market: current odds plus the primary-source events (Fed, SEC, agencies, disasters, hacks) in our feed that bear on the question, with relevance and corroboration. For agents trading or quoting prediction markets.", mimeType: "application/json", ...common,
       extensions: declareDiscoveryExtension({ input: { since: "48h", limit: 15 }, inputSchema: { properties: { since: { type: "string" }, limit: { type: "number" } } }, output: { example: { market: { question: "Fed rate cut in October?", yes_prob: 0.62, change_24h: 0.03 }, n_related: 2, related: [{ kind: "cb.speech", title: "Fed Governor: inflation progress supports easing", tier: "primary", relevance: 0.5 }] } } }),

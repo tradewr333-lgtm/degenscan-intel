@@ -16,6 +16,11 @@ One normalized feed of price-moving events from ~40 primary sources (SEC, Federa
 
 | You need… | Call | Cost |
 |---|---|---|
+| Cheapest probe — anything new in the last hour? | `pulse` | $0.001 |
+| Everything an operator reads before trading one asset, in one call | `brief(asset_id)` | $0.10 |
+| Headlines on one asset with sentiment | `news_for(ticker, since)` | $0.002 |
+| SEC filings on one issuer (8-K, Form 4, 13D, S-1) | `filings_for(ticker, since)` | $0.002 |
+| Upcoming macro prints / FOMC / earnings / auctions | `calendar(days)` | $0.002 |
 | Situational picture right now: venues open, next opens, 24h pressure by asset, top events, prediction markets | `regime_snapshot` | $0.01 |
 | Everything since *t* that touches my assets (or a backtest window) | `events_since(since, universe, min_confidence)` | $0.005 |
 | Net pressure on one asset + its drivers ("why is MSTR down?") | `impact_for(asset_id, since)` | $0.003 |

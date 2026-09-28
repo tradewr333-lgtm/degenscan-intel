@@ -33,6 +33,11 @@ export function toolForRequest(req: FastifyRequest): string | null {
   if (url === "/v1/regime") return "regime_snapshot";
   if (url.startsWith("/v1/explain/")) return "explain";
   if (url.startsWith("/v1/polymarket/")) return "polymarket_context";
+  if (url === "/v1/pulse") return "pulse";
+  if (url.startsWith("/v1/news/")) return "news_for";
+  if (url.startsWith("/v1/filings/")) return "filings_for";
+  if (url === "/v1/calendar") return "calendar";
+  if (url.startsWith("/v1/brief/")) return "brief";
   return null;
 }
 

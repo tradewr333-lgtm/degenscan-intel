@@ -46,6 +46,11 @@ MCP (streamable HTTP, stateless): `POST http://host:8787/mcp`. Stdio for local a
 | `exposure_graph` | $0.002 | who/what an asset is exposed to |
 | `regime_snapshot` | $0.01 | venues open, 24h pressure ranking, high-severity events, prediction markets |
 | `explain` | $0.02 | rationale for one event |
+| `pulse` | $0.001 | cheapest probe: last-hour event counts by class, top-3 severe, venues open |
+| `news_for` | $0.002 | headlines on one asset with tier, corroboration, heuristic sentiment |
+| `filings_for` | $0.002 | SEC EDGAR filings on one issuer (8-K, Form 4, 13D/G, S-1) |
+| `calendar` | $0.002 | upcoming macro prints, FOMC, auctions, earnings (N days) |
+| `brief` | **$0.10** | premium one-call pre-trade briefing per asset (replaces six calls) |
 | `polymarket_context` | $0.01 | evidence pack for one prediction market: current odds + primary-source events in the feed that bear on the question |
 | `universe`, `sources_status` | free | discovery & transparency |
 

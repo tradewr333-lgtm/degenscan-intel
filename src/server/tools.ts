@@ -159,3 +159,138 @@ export async function polymarketContext(a: PolymarketContextArgs) {
     universe_version: loadUniverse().version,
   };
 }
+
+/* ───────────────────────── Discovery-priced endpoints (v0.5): pulse, news, filings, calendar; premium brief ───────────────────────── */
+
+/** $0.001 probe: what happened in the last hour, by event class, plus venues open. The obvious first call for a new agent. */
+export function pulse() {
+  const since = parseSince("1h");
+  const events = queryEvents({ since, limit: 500 });
+  const byClass: Record<string, number> = {};
+  for (const e of events) { const k = e.kind.split(".")[0]; byClass[k] = (byClass[k] ?? 0) + 1; }
+  const top = [...events].sort((a, b) => b.severity - a.severity).slice(0, 3).map(e => ({ id: e.id, kind: e.kind, title: e.title, severity: e.severity, top_impacts: e.impacts.slice(0, 3).map(i => `${i.asset_id}${i.direction > 0 ? "+" : i.direction < 0 ? "-" : "~"}`) }));
+  return { at: new Date().toISOString(), window: "1h", events: events.length, by_class: byClass, high_severity: events.filter(e => e.severity >= 0.7).length, top, venues_open: openVenues(new Date()), universe_version: loadUniverse().version, next: "events_since for detail · brief/{asset} for a full pre-trade briefing" };
+}
+
+const MEDIA_KINDS = ["media.", "corp.press", "corp.earnings", "corp.guidance", "corp.mna", "corp.recall", "corp.lawsuit", "corp.halt", "crypto.hack", "crypto.listing", "crypto.outage"];
+const FILING_KINDS = ["corp.8k", "corp.insider", "corp.activist", "corp.offering", "corp.bankruptcy"];
+const POS = /\b(beat|beats|surge|surges|soar|soars|rally|rallies|record|upgrade|upgrades|approve|approved|approval|wins|win|gain|gains|jump|jumps|bullish|expand|expands|partnership|buyback|dividend|raises guidance|outperform)\b/i;
+const NEG = /\b(miss|misses|plunge|plunges|fall|falls|drop|drops|slump|cut|cuts|downgrade|downgrades|probe|investigat\w+|lawsuit|sues|sued|recall|halt|halted|hack|hacked|exploit|breach|bankrupt\w*|default|sanction\w*|fine|fined|bearish|layoff\w*|delay\w*|warning|warns)\b/i;
+/** Cheap deterministic headline sentiment: -1..1 from lexical hits, blended with the event's own directional impact on the asset. */
+function headlineSentiment(title: string, summary: string, assetDir: number | undefined): number {
+  const t = `${title} ${summary}`; let s = 0;
+  if (POS.test(t)) s += 0.5; if (NEG.test(t)) s -= 0.5;
+  if (assetDir != null) s = s * 0.5 + assetDir * 0.5;
+  return Math.max(-1, Math.min(1, Math.round(s * 100) / 100));
+}
+
+export const NewsArgs = z.object({
+  ticker: z.string().describe("Asset id, e.g. NVDA, BTC, MSTR. Call `universe` to list ids."),
+  since: z.string().default("24h").describe('Window: "6h", "24h", "3d". Default 24h.'),
+  limit: z.number().int().min(1).max(100).default(25),
+});
+/** Headlines that touch one asset in the window, with source tier, corroboration and a heuristic sentiment score. Links to originals; no article bodies. */
+export function newsFor(a: z.infer<typeof NewsArgs>) {
+  const id = a.ticker.toUpperCase(); const asset = loadUniverse().assets.find(x => x.id === id);
+  if (!asset) throw new Error(`unknown asset_id ${a.ticker}`);
+  const since = parseSince(a.since, "24h");
+  const evs = queryEvents({ since, assets: [id], kinds: MEDIA_KINDS, limit: a.limit });
+  const items = evs.map(e => { const imp = e.impacts.find(i => i.asset_id === id); return { id: e.id, ts: e.ts_event, kind: e.kind, title: e.title, source: e.source.id, tier: e.source.tier, corroboration: e.corroboration.count, sentiment: headlineSentiment(e.title, e.summary, imp?.direction), direction: imp?.direction ?? 0, confidence: imp?.confidence ?? 0, url: e.raw_ref }; });
+  const avg = items.length ? Math.round((items.reduce((s, x) => s + x.sentiment, 0) / items.length) * 100) / 100 : 0;
+  return { asset: { id, name: asset.name, class: asset.class }, since, count: items.length, sentiment_avg: avg, sentiment_label: avg > 0.2 ? "positive" : avg < -0.2 ? "negative" : "neutral", items, universe_version: loadUniverse().version };
+}
+
+export const FilingsArgs = z.object({
+  ticker: z.string().describe("US equity id, e.g. NVDA, TSLA, COIN."),
+  since: z.string().default("7d").describe('Window: "24h", "7d", "30d". Default 7d.'),
+  forms: z.array(z.string()).optional().describe("Filter: 8k | insider (Form 4) | activist (13D/G) | offering (S-1/424B) | bankruptcy. Default all."),
+  limit: z.number().int().min(1).max(100).default(25),
+});
+/** SEC filings (8-K by item, Form 4 insider, 13D/G activist, S-1 offerings) that touch one issuer, from EDGAR (public domain), with per-asset impact. */
+export function filingsFor(a: z.infer<typeof FilingsArgs>) {
+  const id = a.ticker.toUpperCase(); const asset = loadUniverse().assets.find(x => x.id === id);
+  if (!asset) throw new Error(`unknown asset_id ${a.ticker}`);
+  const map: Record<string, string> = { "8k": "corp.8k", insider: "corp.insider", activist: "corp.activist", offering: "corp.offering", bankruptcy: "corp.bankruptcy" };
+  const kinds = a.forms?.length ? a.forms.map(f => map[f.toLowerCase()] ?? f) : FILING_KINDS;
+  const since = parseSince(a.since, "7d");
+  const evs = queryEvents({ since, assets: [id], kinds, limit: a.limit });
+  return { asset: { id, name: asset.name, cik: (asset as any).cik ?? null }, since, count: evs.length,
+    filings: evs.map(e => { const imp = e.impacts.find(i => i.asset_id === id); return { id: e.id, ts: e.ts_event, kind: e.kind, title: e.title, summary: e.summary.slice(0, 300), direction: imp?.direction ?? 0, confidence: imp?.confidence ?? 0, url: e.raw_ref, source: e.source.id }; }), universe_version: loadUniverse().version };
+}
+
+/** US macro calendar Q4-2026 (published schedules of BLS, BEA and the Federal Reserve; times ET). Verify against the issuer before trading around a print. */
+const MACRO_2026Q4: { date: string; time_et: string; name: string; type: "fomc" | "cpi" | "jobs" | "pce" | "gdp" | "ppi" | "retail" | "jolts" | "minutes"; source: string }[] = [
+  { date: "2026-10-02", time_et: "08:30", name: "Employment Situation (Nonfarm Payrolls)", type: "jobs", source: "bls.gov" },
+  { date: "2026-10-07", time_et: "14:00", name: "FOMC Minutes", type: "minutes", source: "federalreserve.gov" },
+  { date: "2026-10-14", time_et: "08:30", name: "Consumer Price Index (CPI)", type: "cpi", source: "bls.gov" },
+  { date: "2026-10-15", time_et: "08:30", name: "Producer Price Index (PPI)", type: "ppi", source: "bls.gov" },
+  { date: "2026-10-15", time_et: "08:30", name: "Advance Monthly Retail Sales", type: "retail", source: "census.gov" },
+  { date: "2026-10-28", time_et: "14:00", name: "FOMC Rate Decision + Statement", type: "fomc", source: "federalreserve.gov" },
+  { date: "2026-10-29", time_et: "08:30", name: "GDP Q3 (Advance)", type: "gdp", source: "bea.gov" },
+  { date: "2026-10-29", time_et: "08:30", name: "Personal Income & Outlays (PCE inflation)", type: "pce", source: "bea.gov" },
+  { date: "2026-11-03", time_et: "10:00", name: "JOLTS", type: "jolts", source: "bls.gov" },
+  { date: "2026-11-06", time_et: "08:30", name: "Employment Situation (Nonfarm Payrolls)", type: "jobs", source: "bls.gov" },
+  { date: "2026-11-10", time_et: "08:30", name: "Consumer Price Index (CPI)", type: "cpi", source: "bls.gov" },
+  { date: "2026-11-13", time_et: "08:30", name: "Producer Price Index (PPI)", type: "ppi", source: "bls.gov" },
+  { date: "2026-11-17", time_et: "08:30", name: "Advance Monthly Retail Sales", type: "retail", source: "census.gov" },
+  { date: "2026-11-18", time_et: "14:00", name: "FOMC Minutes", type: "minutes", source: "federalreserve.gov" },
+  { date: "2026-11-25", time_et: "08:30", name: "GDP Q3 (Second Estimate)", type: "gdp", source: "bea.gov" },
+  { date: "2026-11-25", time_et: "08:30", name: "Personal Income & Outlays (PCE inflation)", type: "pce", source: "bea.gov" },
+  { date: "2026-12-01", time_et: "10:00", name: "JOLTS", type: "jolts", source: "bls.gov" },
+  { date: "2026-12-04", time_et: "08:30", name: "Employment Situation (Nonfarm Payrolls)", type: "jobs", source: "bls.gov" },
+  { date: "2026-12-09", time_et: "14:00", name: "FOMC Rate Decision + Statement + SEP", type: "fomc", source: "federalreserve.gov" },
+  { date: "2026-12-10", time_et: "08:30", name: "Consumer Price Index (CPI)", type: "cpi", source: "bls.gov" },
+  { date: "2026-12-15", time_et: "08:30", name: "Producer Price Index (PPI)", type: "ppi", source: "bls.gov" },
+];
+const etToIso = (date: string, hhmm: string) => { const [h, m] = hhmm.split(":").map(Number); const d = new Date(`${date}T12:00:00Z`); const etOffset = /^(2026-1[01]|2026-10)/.test(date) && new Date(`${date}T00:00:00Z`) < new Date("2026-11-01T06:00:00Z") ? 4 : 5; return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), h + etOffset, m)).toISOString(); };
+
+export const CalendarArgs = z.object({
+  days: z.number().int().min(1).max(60).default(7).describe("Look-ahead window in days (default 7)."),
+  types: z.array(z.string()).optional().describe("Filter: macro (CPI/PPI/jobs/PCE/GDP/retail/JOLTS), fomc (decisions+minutes), earnings, auctions. Default all."),
+  universe: z.array(z.string()).optional().describe("For earnings: restrict to these asset ids."),
+});
+/** Upcoming scheduled catalysts: US macro prints, FOMC, Treasury auctions and earnings dates from the feed. */
+export function calendar(a: z.infer<typeof CalendarArgs>) {
+  const now = Date.now(); const until = now + a.days * 86_400_000;
+  const want = new Set((a.types ?? ["macro", "fomc", "earnings", "auctions"]).map(t => t.toLowerCase()));
+  const out: any[] = [];
+  if (want.has("macro") || want.has("fomc")) for (const m of MACRO_2026Q4) {
+    const isFomc = m.type === "fomc" || m.type === "minutes"; if ((isFomc && !want.has("fomc")) || (!isFomc && !want.has("macro"))) continue;
+    const at = etToIso(m.date, m.time_et); const t = new Date(at).getTime(); if (t < now - 3_600_000 || t > until) continue;
+    out.push({ at, type: isFomc ? "fomc" : "macro", subtype: m.type, name: m.name, source: m.source, affects: isFomc || ["cpi", "pce", "jobs"].includes(m.type) ? ["US10Y", "US2Y", "DXY", "SPX", "NDX", "GC", "BTC"] : ["SPX", "US10Y"] });
+  }
+  if (want.has("earnings") || want.has("auctions")) {
+    const evs = queryEvents({ since: new Date(now - 7 * 86_400_000).toISOString(), kinds: [...(want.has("earnings") ? ["corp.earnings"] : []), ...(want.has("auctions") ? ["macro.auction"] : [])], assets: a.universe, limit: 500 });
+    for (const e of evs) { const sched = (e.meta as any)?.scheduled_at ?? (e.meta as any)?.date ?? null; const at = sched ? new Date(sched).toISOString() : e.ts_event; const t = new Date(at).getTime(); if (t < now - 3_600_000 || t > until) continue; out.push({ at, type: e.kind === "corp.earnings" ? "earnings" : "auction", name: e.title, assets: e.impacts.slice(0, 5).map(i => i.asset_id), source: e.source.id, url: e.raw_ref }); }
+  }
+  out.sort((x, y) => x.at.localeCompare(y.at));
+  return { from: new Date(now).toISOString(), days: a.days, count: out.length, items: out, note: "Times converted from ET. Schedules compiled from BLS/BEA/Federal Reserve published calendars; verify with the issuer before trading around a print." };
+}
+
+export const BriefArgs = z.object({
+  asset_id: z.string().describe("Asset id, e.g. NVDA, BTC, MSTR, GC."),
+  since: z.string().default("24h").describe('Lookback for events (default 24h).'),
+});
+/** Premium ($0.10): one-call pre-trade briefing for an asset — pressure, top events, headlines+sentiment, filings, exposure map, related prediction markets, next scheduled catalysts, venue status. */
+export async function brief(a: z.infer<typeof BriefArgs>) {
+  const id = a.asset_id.toUpperCase(); const asset = loadUniverse().assets.find(x => x.id === id);
+  if (!asset) throw new Error(`unknown asset_id ${a.asset_id}`);
+  const impact = impactFor({ asset_id: id, since: a.since, limit: 30 } as any);
+  const news = newsFor({ ticker: id, since: a.since, limit: 10 });
+  const filings = asset.class === "equity" ? filingsFor({ ticker: id, since: "7d", limit: 10 }) : null;
+  const graph = neighborhood(id, 1);
+  const cal = calendar({ days: 7, universe: [id] } as any);
+  let pm: any = null; try { pm = await polymarketContext({ market: asset.name, since: "72h", limit: 5 }); } catch { pm = null; }
+  const venues = openVenues(new Date());
+  return {
+    asset: { id, name: asset.name, class: asset.class, tags: (asset as any).tags ?? [] }, generated_at: new Date().toISOString(), window: a.since,
+    pressure: { bias: (impact as any).bias, n_events: (impact as any).n_events, drivers: (impact as any).events?.slice(0, 5) ?? [] },
+    headlines: { sentiment_avg: news.sentiment_avg, label: news.sentiment_label, items: news.items.slice(0, 8) },
+    filings: filings ? filings.filings.slice(0, 5) : [],
+    exposure: { nodes: (graph as any).nodes?.slice(0, 20) ?? [], edges: (graph as any).edges?.slice(0, 30) ?? [] },
+    prediction_markets: pm && (pm as any).market?.question ? { question: (pm as any).market.question, yes_prob: (pm as any).market.yes_prob, url: (pm as any).market.url, related_events: (pm as any).n_related } : null,
+    upcoming_catalysts: cal.items.slice(0, 8),
+    venues_open: venues, tradable_now: Object.entries(venues).filter(([, v]) => v).map(([k]) => k),
+    disclaimer: "Information and analytics only — not investment advice.", universe_version: loadUniverse().version,
+  };
+}

@@ -58,7 +58,7 @@ describe("http + mcp", () => {
     expect(init.statusCode).toBe(200);
     const list = await app.inject({ method: "POST", url: "/mcp", headers: hdr, payload: { jsonrpc: "2.0", id: 2, method: "tools/list" } });
     const names = parseSse(list.body).result.tools.map((t: any) => t.name);
-    expect(names).toEqual(expect.arrayContaining(["events_since", "impact_for", "exposure_graph", "regime_snapshot", "universe", "sources_status", "explain", "polymarket_context"]));
+    expect(names).toEqual(expect.arrayContaining(["events_since", "impact_for", "exposure_graph", "regime_snapshot", "universe", "sources_status", "explain", "polymarket_context", "pulse", "news_for", "filings_for", "calendar", "brief"]));
     const call = await app.inject({ method: "POST", url: "/mcp", headers: hdr, payload: { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "impact_for", arguments: { asset_id: "coin", since: "24h" } } } });
     const res = parseSse(call.body).result;
     expect(res.structuredContent.asset.id).toBe("COIN");
@@ -80,7 +80,7 @@ describe("agent-facing docs", () => {
     expect(packs.json().packs.pack_1k).toMatchObject({ usd: 5, calls: 1000 });
     const root = await app.inject({ method: "GET", url: "/" });
     expect(root.json().skill).toContain("/skill.md");
-    expect(root.json().version).toBe("0.4.2");
+    expect(root.json().version).toBe("0.5.0");
     const wk = await app.inject({ method: "GET", url: "/.well-known/x402" }); expect(wk.json().resources.length).toBeGreaterThan(5);
     const oa = await app.inject({ method: "GET", url: "/openapi.json" }); expect(oa.json().openapi).toBe("3.1.0");
     const wl = await app.inject({ method: "GET", url: "/wallets.json" }); expect(wl.json().owned_or_test_wallets.length).toBe(2);
@@ -100,5 +100,24 @@ describe("polymarket_context", () => {
     const rest = await app.inject({ method: "GET", url: "/v1/polymarket/" + encodeURIComponent("SEC Coinbase staking") + "?since=24h" });
     expect(rest.statusCode).toBe(200);
     expect(rest.json()._billing.tool).toBe("polymarket_context");
+  });
+});
+
+describe("v0.5 endpoints", () => {
+  it("pulse, news, filings, calendar, brief work on the seeded store and are billed per tool", async () => {
+    const app = await buildHttp();
+    const p = await app.inject({ method: "GET", url: "/v1/pulse" });
+    expect(p.statusCode).toBe(200); expect(p.json().by_class.reg).toBe(1); expect(p.json()._billing.tool).toBe("pulse");
+    const n = await app.inject({ method: "GET", url: "/v1/news/COIN?since=24h" });
+    expect(n.statusCode).toBe(200); expect(n.json()._billing.tool).toBe("news_for");
+    const f = await app.inject({ method: "GET", url: "/v1/filings/COIN?since=7d" });
+    expect(f.statusCode).toBe(200); expect(f.json().asset.id).toBe("COIN");
+    const c = await app.inject({ method: "GET", url: "/v1/calendar?days=60&types=macro,fomc" });
+    expect(c.statusCode).toBe(200); expect(c.json().items.some((i: any) => i.subtype === "fomc")).toBe(true);
+    const b = await app.inject({ method: "GET", url: "/v1/brief/COIN" });
+    expect(b.statusCode).toBe(200); const bj = b.json();
+    expect(bj.pressure.bias).toBe(-1); expect(bj.headlines).toBeTruthy(); expect(bj.upcoming_catalysts).toBeInstanceOf(Array); expect(bj._billing.price_usd).toBe(0);
+    const wk = await app.inject({ method: "GET", url: "/.well-known/x402" });
+    expect(wk.json().resources.map((r: any) => r.tool)).toEqual(expect.arrayContaining(["pulse", "brief", "calendar", "news_for", "filings_for"]));
   });
 });
