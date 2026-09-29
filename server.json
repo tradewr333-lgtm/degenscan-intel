@@ -2,8 +2,8 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.tradewr333-lgtm/degenscan-intel",
   "title": "Degenscan Intel",
-  "description": "Cross-asset market event intelligence for AI trading agents. Pay per call (USDC/x402) or API key.",
-  "version": "0.7.0",
+  "description": "No key required: market-event intelligence for trading agents \u2014 SEC filings, Fed/FOMC, regulators, disasters, Nasdaq halts, DeFi hacks, Polymarket odds, Hyperliquid funding/OI \u2014 scored per asset. 100 free calls/day, then USDC per call (x402, Base/Solana) or API key.",
+  "version": "0.8.1",
   "websiteUrl": "https://intel.degenscan.io",
   "repository": {
     "url": "https://github.com/tradewr333-lgtm/degenscan-intel",

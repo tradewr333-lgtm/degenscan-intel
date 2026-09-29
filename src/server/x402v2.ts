@@ -76,6 +76,22 @@ export function buildRoutes(): RoutesConfig {
       accepts: accept("news_for"), description: "Headlines touching one asset (press wires, releases, halts, hacks, media) with source tier, corroboration and a heuristic sentiment score (-1..1). Links only, no bodies.", mimeType: "application/json", ...common,
       extensions: declareDiscoveryExtension({ input: { since: "24h", limit: 25 }, inputSchema: { properties: { since: { type: "string" }, limit: { type: "number" } } }, output: { example: { asset: { id: "NVDA" }, count: 3, sentiment_avg: 0.25, sentiment_label: "positive", items: [{ title: "NVIDIA announces…", tier: "primary", sentiment: 0.5, url: "https://…" }] } } }),
     },
+    "GET /v1/price/*": {
+      accepts: accept("price_for"), description: "Price probe for one coin, no key: Hyperliquid perp mark/mid/oracle + Coinbase spot, 24h change, basis, funding, plus links to our event pressure on the asset. ~1 KB, 30 s cache — made for polling.", mimeType: "application/json", ...common,
+      extensions: declareDiscoveryExtension({ output: { example: { symbol: "BTC", perp: { mark: 83102, change_24h_pct: -1.76, funding_1h: 0.0000125 }, spot: { venue: "coinbase", price: 83090 }, basis_pct: 0.0144 } } }),
+    },
+    "GET /v1/funding/alerts": {
+      accepts: accept("funding_alerts"), description: "Coins with extreme perp funding right now on Hyperliquid, sorted by |rate|, with annualized %, side paying, open interest and predicted funding per venue (Binance, Bybit, Hyperliquid). Poll every 5–15 min to catch crowded positioning.", mimeType: "application/json", ...common,
+      extensions: declareDiscoveryExtension({ input: { min_abs_rate_1h: 0.0003, limit: 15 }, inputSchema: { properties: { min_abs_rate_1h: { type: "number" }, limit: { type: "number" } } }, output: { example: { count: 2, alerts: [{ symbol: "HYPE", funding_1h: 0.0008, annualized_pct: 700.8, side_paying: "longs", open_interest_usd: 1798314282 }] } } }),
+    },
+    "GET /v1/whales": {
+      accepts: accept("whale_moves"), description: "Large stablecoin transfers (USDC/USDT) on Base and Ethereum from public explorers, no key: size in USD, best-effort exchange labels, flow tag (to_exchange / from_exchange / mint / burn / wallet_to_wallet), totals by flow. 60 s cache.", mimeType: "application/json", ...common,
+      extensions: declareDiscoveryExtension({ input: { min_usd: 1000000, limit: 25 }, inputSchema: { properties: { min_usd: { type: "number" }, chains: { type: "string" }, limit: { type: "number" } } }, output: { example: { count: 3, totals_usd: { to_exchange: 25000000, from_exchange: 0 }, moves: [{ chain: "ethereum", token: "USDC", usd: 25000000, from_label: "unlabeled", to_label: "Coinbase 10", flow: "to_exchange" }] } } }),
+    },
+    "GET /v1/polymarket/top": {
+      accepts: accept("polymarket_top"), description: "Most active Polymarket markets right now: YES odds, 24h change, 24h volume, liquidity, end date, and a link to our primary-source evidence pack per market. Sort by volume, liquidity or 24h change; optional tag filter (crypto, fed, politics).", mimeType: "application/json", ...common,
+      extensions: declareDiscoveryExtension({ input: { sort: "volume_24h", limit: 20 }, inputSchema: { properties: { sort: { type: "string" }, limit: { type: "number" }, tag: { type: "string" } } }, output: { example: { count: 20, markets: [{ question: "Fed rate cut in October?", yes_prob: 0.62, change_24h: 0.03, volume_24h_usd: 1250000 }] } } }),
+    },
     "GET /v1/derivs/*": {
       accepts: accept("derivs_for"), description: "Perpetual-futures microstructure for one coin from Hyperliquid's public API: funding (1h, 8h-equivalent, annualized), predicted funding by venue, open interest (coins/USD, OI-to-volume), premium vs oracle, 24h volume, 24h change, flags, plus our primary-source event pressure on the same asset.", mimeType: "application/json", ...common,
       extensions: declareDiscoveryExtension({ input: { since: "24h" }, inputSchema: { properties: { since: { type: "string" } } }, output: { example: { symbol: "BTC", funding: { rate_1h: 0.0000125, annualized_pct: 10.95 }, open_interest: { usd: 1250000000 }, price: { mark: 65000, premium_vs_oracle: 0.0002 }, flags: [], event_pressure: { bias: 0.2, n_events: 4 } } } }),

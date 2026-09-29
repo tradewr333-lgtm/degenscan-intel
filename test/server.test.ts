@@ -80,7 +80,7 @@ describe("agent-facing docs", () => {
     expect(packs.json().packs.pack_1k).toMatchObject({ usd: 5, calls: 1000 });
     const root = await app.inject({ method: "GET", url: "/" });
     expect(root.json().skill).toContain("/skill.md");
-    expect(root.json().version).toBe("0.7.0");
+    expect(root.json().version).toBe("0.8.1");
     const wk = await app.inject({ method: "GET", url: "/.well-known/x402" }); expect(wk.json().resources.length).toBeGreaterThan(5);
     const oa = await app.inject({ method: "GET", url: "/openapi.json" }); expect(oa.json().openapi).toBe("3.1.0");
     const wl = await app.inject({ method: "GET", url: "/wallets.json" }); expect(wl.json().owned_or_test_wallets.length).toBe(2);
@@ -164,5 +164,64 @@ describe("docs for LLMs", () => {
     expect(full.statusCode).toBe(200); expect(full.body).toContain("derivs_for: 0.003"); expect(full.body.split("## ").length).toBeGreaterThan(9);
     const sm = await app.inject({ method: "GET", url: "/sitemap.xml" }); expect(sm.body).toContain("/docs/pre-trade-brief-api-one-call");
     const rb = await app.inject({ method: "GET", url: "/robots.txt" }); expect(rb.body).toContain("Sitemap:");
+  });
+});
+
+describe("v0.8 entry shelf (mocked public sources)", () => {
+  it("price_for, funding_alerts, whale_moves, polymarket_top respond and bill per tool", async () => {
+    const tools = await import("../src/server/tools.js");
+    tools._ext.reset(); tools._hl.reset();
+    tools._hl.post = (async (body: any) => {
+      if (body.type === "metaAndAssetCtxs") return [
+        { universe: [{ name: "BTC", szDecimals: 5, maxLeverage: 40 }, { name: "HYPE", szDecimals: 2, maxLeverage: 5 }, { name: "DOGE", szDecimals: 0, maxLeverage: 10 }] },
+        [{ funding: "0.0000125", openInterest: "25000", prevDayPx: "64000", dayNtlVlm: "2000000000", premium: "0.0003", oraclePx: "65000", markPx: "65010", midPx: "65005" },
+         { funding: "0.0008", openInterest: "9000000", prevDayPx: "30", dayNtlVlm: "50000000", premium: "0.004", oraclePx: "31", markPx: "31.2", midPx: "31.1" },
+         { funding: "-0.0005", openInterest: "100000000", prevDayPx: "0.2", dayNtlVlm: "90000000", premium: "-0.001", oraclePx: "0.2", markPx: "0.199", midPx: "0.199" }],
+      ];
+      if (body.type === "predictedFundings") return [["HYPE", [["HlPerp", { fundingRate: "0.0008", nextFundingTime: 1800000000000 }], ["BinPerp", null]]]];
+      if (body.type === "candleSnapshot") {
+        // 32 daily closes alternating ±2% → daily log-return stdev ≈ 0.0202, annualised ≈ 0.386; last candle still open (T in the future) must be dropped
+        const now = Date.now(); const out: any[] = []; let px = 60000;
+        for (let i = 32; i >= 0; i--) { px = px * (i % 2 ? 1.02 : 0.98); out.push({ t: now - i * 86_400_000, T: now - (i - 1) * 86_400_000, c: String(px) }); }
+        return out;
+      }
+      throw new Error("unexpected " + body.type);
+    }) as any;
+    tools._ext.get = (async (url: string) => {
+      if (url.includes("api.coinbase.com")) return { data: { amount: "64990.00", currency: "USD" } };
+      if (url.includes("blockscout.com")) return { items: [
+        { total: { value: "25000000000000" }, from: { hash: "0xabc" }, to: { hash: "0xA9D1e08C7793af67e9d92fe308d5697FB81d3E43" }, transaction_hash: "0xtx1", timestamp: "2026-09-29T00:00:00Z" },
+        { total: { value: "500000000" }, from: { hash: "0xdef" }, to: { hash: "0x123" }, transaction_hash: "0xtx2" },
+        { total: { value: "3000000000000" }, from: { hash: "0x0000000000000000000000000000000000000000" }, to: { hash: "0x456" }, transaction_hash: "0xtx3" },
+      ] };
+      if (url.includes("gamma-api.polymarket.com/markets?active=true")) return [
+        { id: "1", slug: "fed-cut-october", question: "Fed rate cut in October?", outcomePrices: '["0.62","0.38"]', oneDayPriceChange: 0.03, volume24hr: 1250000.4, liquidity: 500000, endDate: "2026-10-29T00:00:00Z" },
+      ];
+      throw new Error("unexpected url " + url);
+    }) as any;
+    const app = await buildHttp();
+    const p = await app.inject({ method: "GET", url: "/v1/price/btc" });
+    expect(p.statusCode).toBe(200); const pj = p.json();
+    expect(pj.perp.mark).toBe(65010); expect(pj.spot.price).toBe(64990); expect(pj.basis_pct).toBeCloseTo(0.0308, 3); expect(pj._billing.tool).toBe("price_for");
+    expect(pj.realized_vol_30d_ann).toBeGreaterThan(0.36); expect(pj.realized_vol_30d_ann).toBeLessThan(0.41); expect(pj.realized_vol_note).toMatch(/30 daily log-returns/);
+    const h = await app.inject({ method: "GET", url: "/health" }); expect(h.json().storage).toEqual({ path: expect.any(String), persistent: false }); expect(typeof h.json().calls).toBe("number");
+    const f = await app.inject({ method: "GET", url: "/v1/funding/alerts?min_abs_rate_1h=0.0003" });
+    expect(f.statusCode).toBe(200); const fj = f.json();
+    expect(fj.alerts.map((x: any) => x.symbol)).toEqual(["HYPE", "DOGE"]); expect(fj.alerts[0].side_paying).toBe("longs"); expect(fj.alerts[1].side_paying).toBe("shorts");
+    expect(fj.alerts[0].predicted_by_venue).toEqual([{ venue: "HlPerp", rate: 0.0008 }]); expect(fj._billing.tool).toBe("funding_alerts");
+    const w = await app.inject({ method: "GET", url: "/v1/whales?min_usd=1000000&chains=ethereum" });
+    expect(w.statusCode).toBe(200); const wj = w.json();
+    expect(wj.count).toBe(4); expect(wj.moves[0].usd).toBe(25000000); expect(wj.moves[0].to_label).toBe("Coinbase 10"); expect(wj.moves[0].flow).toBe("to_exchange");
+    expect(wj.moves.some((m: any) => m.flow === "mint")).toBe(true); expect(wj.totals_usd.to_exchange).toBe(50000000); expect(wj._billing.tool).toBe("whale_moves");
+    const t = await app.inject({ method: "GET", url: "/v1/polymarket/top?sort=volume_24h&limit=5" });
+    expect(t.statusCode).toBe(200); const tj = t.json();
+    expect(tj.markets[0].yes_prob).toBe(0.62); expect(tj.markets[0].volume_24h_usd).toBe(1250000); expect(tj.markets[0].evidence).toBe("/v1/polymarket/fed-cut-october?since=48h"); expect(tj._billing.tool).toBe("polymarket_top");
+    // /v1/polymarket/top must be priced as polymarket_top ($0.002) in the x402 manifest, not as the wildcard ($0.01)
+    const wk0 = await app.inject({ method: "GET", url: "/.well-known/x402" });
+    const top = wk0.json().resources.find((r: any) => r.tool === "polymarket_top");
+    expect(top?.price_usd ?? top?.price).toBe(0.002);
+    const wk = await app.inject({ method: "GET", url: "/.well-known/x402" });
+    expect(wk.json().resources.map((r: any) => r.tool)).toEqual(expect.arrayContaining(["price_for", "funding_alerts", "whale_moves", "polymarket_top"]));
+    tools._ext.reset(); tools._hl.reset();
   });
 });

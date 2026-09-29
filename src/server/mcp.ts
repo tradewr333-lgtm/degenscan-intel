@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { EventsSinceArgs, ImpactForArgs, ExposureGraphArgs, PolymarketContextArgs, NewsArgs, FilingsArgs, CalendarArgs, BriefArgs, DerivsArgs, eventsSince, impactFor, exposureGraph, universe, sources, regimeSnapshot, explain, polymarketContext, pulse, newsFor, filingsFor, calendar, brief, derivsFor } from "./tools.js";
+import { EventsSinceArgs, ImpactForArgs, ExposureGraphArgs, PolymarketContextArgs, NewsArgs, FilingsArgs, CalendarArgs, BriefArgs, DerivsArgs, PriceArgs, FundingAlertsArgs, WhaleArgs, PolyTopArgs, eventsSince, impactFor, exposureGraph, universe, sources, regimeSnapshot, explain, polymarketContext, pulse, newsFor, filingsFor, calendar, brief, derivsFor, priceFor, fundingAlerts, whaleMoves, polymarketTop } from "./tools.js";
 import { PRICES } from "./pricing.js";
 
 const json = (x: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(x) }], structuredContent: x as Record<string, unknown> });
@@ -8,7 +8,7 @@ const fail = (e: unknown) => ({ content: [{ type: "text" as const, text: `error:
 
 /** Build the MCP server. One instance per stateless HTTP request is fine (cheap). */
 export function buildMcpServer() {
-  const s = new McpServer({ name: "degenscan-intel", version: "0.7.0" }, {
+  const s = new McpServer({ name: "degenscan-intel", version: "0.8.1" }, {
     instructions: [
       "Degenscan Intel: cross-asset event feed for trading agents. Events are normalized from ~40 primary sources (SEC, Fed, Federal Register, USGS, NHC, Nasdaq halts, DefiLlama, Polymarket…) and scored against an exposure graph into per-asset impacts.",
       "Cheapest probe: pulse ($0.001). One-call briefing per asset: brief ($0.10). Typical loop: regime_snapshot → events_since(since='4h', universe=[your book]) → impact_for(asset_id) for anything with confidence ≥ 0.4 → check tradable_now / next_open before acting. For prediction markets: polymarket_context(market) → compare yes_prob with fresh primary-source events.",
@@ -53,6 +53,26 @@ export function buildMcpServer() {
     title: "Pulse (1h)", description: `Cheapest first call: how many events hit the feed in the last hour by class (natural, regulatory, central-bank, corporate, crypto, media…), the 3 most severe with their top impacts, and which venues are open. Use it every hour to decide whether anything needs a deeper look, or as a health/probe call. $${PRICES.pulse}/call.`,
     inputSchema: {}, annotations: { readOnlyHint: true },
   }, async () => { try { return json(pulse()); } catch (e) { return fail(e); } });
+
+  s.registerTool("price_for", {
+    title: "Price probe", description: `Cheapest price check for ONE coin, no key: Hyperliquid perp mark/mid/oracle, Coinbase spot, 24h change, perp-spot basis, current funding, plus links to our event pressure on that asset. ~1 KB, cached 30 s — made for polling loops. $${PRICES.price_for}/call.`,
+    inputSchema: PriceArgs.shape, annotations: { readOnlyHint: true },
+  }, async (a) => { try { return json(await priceFor(PriceArgs.parse(a))); } catch (e) { return fail(e); } });
+
+  s.registerTool("funding_alerts", {
+    title: "Funding alerts", description: `Which perps have extreme funding RIGHT NOW on Hyperliquid: sorted by |hourly rate| with annualized %, which side is paying (crowded longs vs shorts), open interest and predicted next funding per venue (Hyperliquid, Binance, Bybit). Use every 5–15 min to detect crowded positioning or to pick a side to receive funding. $${PRICES.funding_alerts}/call.`,
+    inputSchema: FundingAlertsArgs.shape, annotations: { readOnlyHint: true },
+  }, async (a) => { try { return json(await fundingAlerts(FundingAlertsArgs.parse(a))); } catch (e) { return fail(e); } });
+
+  s.registerTool("whale_moves", {
+    title: "Whale moves", description: `Large USDC/USDT transfers on Base and Ethereum from public explorers (no key): USD size, best-effort exchange labels (Binance, Coinbase, OKX, Bybit…), flow tag (to_exchange = potential sell pressure, from_exchange = withdrawal, mint/burn = stablecoin supply, wallet_to_wallet), totals by flow, tx links. Default threshold $1M. $${PRICES.whale_moves}/call.`,
+    inputSchema: WhaleArgs.shape, annotations: { readOnlyHint: true },
+  }, async (a) => { try { return json(await whaleMoves(WhaleArgs.parse(a))); } catch (e) { return fail(e); } });
+
+  s.registerTool("polymarket_top", {
+    title: "Polymarket top markets", description: `The most active Polymarket markets right now (by 24h volume, liquidity or 24h change; optional tag like crypto/fed/politics): question, YES odds, 24h change, volume, liquidity, end date, and a link to our primary-source evidence pack for each. Use it to find where prediction-market money is moving before calling polymarket_context. $${PRICES.polymarket_top}/call.`,
+    inputSchema: PolyTopArgs.shape, annotations: { readOnlyHint: true },
+  }, async (a) => { try { return json(await polymarketTop(PolyTopArgs.parse(a))); } catch (e) { return fail(e); } });
 
   s.registerTool("derivs_for", {
     title: "Perp derivatives for coin", description: `Perpetual-futures microstructure for ONE coin from Hyperliquid's public API (no key): hourly funding with 8h-equivalent and annualized %, predicted next funding per venue (Hyperliquid, Binance, Bybit…), open interest in coins and USD with OI-to-24h-volume, mark/oracle/mid and premium vs oracle, 24h notional volume and change, and flags (funding_hot_long/short, premium_rich/discount, oi_heavy_vs_volume). Joined with our primary-source event pressure on the same asset when covered. Use it before sizing a perp position, to detect crowded funding, or as the market-structure leg next to events_since. Liquidations are not included. $${PRICES.derivs_for}/call.`,

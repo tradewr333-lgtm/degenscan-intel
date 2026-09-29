@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "langchain-degenscan"
+version = "0.1.0"
+description = "LangChain tools for Degenscan Intel — cross-asset market-event intelligence for trading agents (SEC, Fed, regulators, disasters, halts, hacks, Polymarket, Hyperliquid perps), paid per call in USDC (x402) or API key."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Marbella Collins LLC", email = "contact@degenscan.io" }]
+requires-python = ">=3.10"
+keywords = ["langchain", "langgraph", "tools", "x402", "ai-agents", "trading", "market-data", "sec-edgar", "hyperliquid", "polymarket"]
+dependencies = ["langchain-core>=0.3", "degenscan-intel>=0.1.0", "pydantic>=2"]
+
+[project.optional-dependencies]
+x402 = ["degenscan-intel[x402]"]
+
+[project.urls]
+Homepage = "https://intel.degenscan.io"
+Documentation = "https://intel.degenscan.io/docs"
+Repository = "https://github.com/tradewr333-lgtm/degenscan-intel"
+
+[tool.hatch.build.targets.wheel]
+packages = ["langchain_degenscan"]

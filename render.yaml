@@ -8,10 +8,12 @@ services:
     disk:
       name: intel-data
       mountPath: /data
-      sizeGB: 5
+      sizeGB: 1
     envVars:
       - key: INTEL_UA
         value: "Degenscan Intel/0.1 (+https://degenscan.io; contact@degenscan.io)"
+      - key: INTEL_DB_PATH
+        value: /data/intel.db
       - key: DB_PATH
         value: /data/intel.db
       - key: UNIVERSE_PATH
@@ -44,3 +46,11 @@ services:
         sync: false
       - key: STRIPE_PRICE_PRO
         sync: false
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: ORACLE_OPERATOR_KEY
+        sync: false
+      - key: ORACLE_CONCURRENCY
+        value: "2"
+      - key: ORACLE_BOARD_CRON
+        value: "0 6 * * *"

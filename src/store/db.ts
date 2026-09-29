@@ -6,7 +6,8 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { Event } from "../schema.js";
 
-const DB_PATH = process.env.DB_PATH ?? "data/intel.db";
+// INTEL_DB_PATH (persistent Render disk, e.g. /data/intel.db) takes precedence over the legacy DB_PATH.
+export const DB_PATH = process.env.INTEL_DB_PATH ?? process.env.DB_PATH ?? "data/intel.db";
 let db: DatabaseSync | null = null;
 
 export function getDb(): DatabaseSync {

@@ -19,10 +19,6 @@ Covers the questions trading agents ask most: Polymarket odds vs fresh primary e
 | You need… | Call | Cost |
 |---|---|---|
 | Cheapest probe — anything new in the last hour? | `pulse` | $0.001 |
-| Price of one coin, no key (Hyperliquid mark + Coinbase spot, 24h change, basis) | `price_for(symbol)` | $0.001 |
-| Which perps have extreme funding right now (crowded longs/shorts, predicted per venue) | `funding_alerts()` | $0.001 |
-| Large USDC/USDT transfers to/from exchanges on Base & Ethereum, with labels | `whale_moves(min_usd)` | $0.002 |
-| Most active Polymarket markets now (odds, 24h change, volume) | `polymarket_top(sort)` | $0.002 |
 | Everything an operator reads before trading one asset, in one call | `brief(asset_id)` | $0.10 |
 | Headlines on one asset with sentiment | `news_for(ticker, since)` | $0.002 |
 | Perp funding / open interest / premium / predicted funding by venue for one coin (Hyperliquid, no key) | `derivs_for(symbol)` | $0.003 |

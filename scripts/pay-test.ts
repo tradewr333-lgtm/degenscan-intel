@@ -1,59 +1,43 @@
 /**
- * End-to-end x402 v2 payment test against a live degenscan-intel server.
+ * One real x402 v2 payment against the live server — used to (a) index the service in the Coinbase Bazaar
+ * (CDP catalogs a resource on its first CDP-settled payment) and (b) prove the payment path end to end.
  *
- *   TEST_WALLET_PK=... npx tsx scripts/pay-test.ts [baseUrl]
+ *   TEST_WALLET_PK=... npx tsx scripts/pay-test.ts [baseUrl] [path]
  *
- * Uses a THROWAWAY wallet holding a few cents of USDC on Base. Never use a main wallet.
- * 1. Burns the free daily quota with plain requests until the server answers 402.
- * 2. Decodes the v2 PAYMENT-REQUIRED header the server advertises.
- * 3. Pays ONE call ($0.01) with @x402/fetch (EIP-3009 signature; facilitator pays gas) and prints the settlement receipt.
- * 4. Does the same through MCP (tools/call regime_snapshot) to prove agents can pay per tool.
+ * Uses the DISCLOSED operator test wallet (listed in /wallets.json, excluded from /v1/metrics). Never a main wallet.
+ * Default path: /v1/pulse ($0.001). Without the X-Free-Trial header the server answers 402 immediately.
  */
 import { privateKeyToAccount } from "viem/accounts";
 import { wrapFetchWithPaymentFromConfig, decodePaymentResponseHeader } from "@x402/fetch";
 import { ExactEvmScheme } from "@x402/evm";
 
-const BASE_URL = process.argv[2] ?? "https://intel.degenscan.io";
+const BASE_URL = (process.argv[2] ?? "https://intel.degenscan.io").replace(/\/$/, "");
+const PATH = process.argv[3] ?? "/v1/pulse";
 let pkRaw = (process.env.TEST_WALLET_PK ?? "").trim();
-if (pkRaw && !pkRaw.startsWith("0x")) pkRaw = "0x" + pkRaw;   // MetaMask exports without the 0x prefix
-if (!/^0x[0-9a-fA-F]{64}$/.test(pkRaw)) { console.error("Set TEST_WALLET_PK to a throwaway wallet private key (64 hex chars)."); process.exit(1); }
+if (pkRaw && !pkRaw.startsWith("0x")) pkRaw = "0x" + pkRaw;
+if (!/^0x[0-9a-fA-F]{64}$/.test(pkRaw)) { console.error("Set TEST_WALLET_PK to the disclosed test wallet private key (64 hex chars)."); process.exit(1); }
 
 const account = privateKeyToAccount(pkRaw as `0x${string}`);
-console.log(`Payer (throwaway): ${account.address}\nServer: ${BASE_URL}\n`);
+console.log(`Payer (disclosed test wallet): ${account.address}\nServer: ${BASE_URL}${PATH}\n`);
 
-// 1. exhaust free quota
-let status = 0, tries = 0, last: Response | null = null;
-while (status !== 402 && tries < 120) {
-  last = await fetch(`${BASE_URL}/v1/regime?n=${tries}`);
-  status = last.status;
-  if (status === 200) { const b: any = await last.json().catch(() => null); process.stdout.write(`\rfree call ${++tries} (${b?._billing?.method})   `); } else break;
-}
-console.log();
-if (status !== 402 || !last) { console.error(`Expected 402 after quota, got ${status}. Is INTEL_FREE=0 and X402_PAY_TO set?`); process.exit(1); }
-
-// 2. requirements (v2 header)
-const hdr = last.headers.get("payment-required");
-if (!hdr) { console.error("402 without PAYMENT-REQUIRED header — server not on x402 v2?"); process.exit(1); }
+// 1. see the 402 (no trial header)
+const first = await fetch(`${BASE_URL}${PATH}`);
+console.log(`Unpaid request → HTTP ${first.status}`);
+const hdr = first.headers.get("payment-required");
+if (first.status !== 402 || !hdr) { console.error("Expected 402 with PAYMENT-REQUIRED header. Aborting."); process.exit(1); }
 const req: any = JSON.parse(Buffer.from(hdr, "base64").toString("utf8"));
-const a = req.accepts[0];
-console.log("402 received (x402 v" + req.x402Version + "). Payment requirements:");
-console.log(`  network   ${a.network}\n  asset     ${a.asset}\n  amount    ${Number(a.amount) / 1e6} USDC\n  payTo     ${a.payTo}\n  resource  ${req.resource?.url ?? req.resource}\n`);
+for (const a of req.accepts ?? []) console.log(`  accepts: ${a.network} ${Number(a.amount) / 1e6} USDC → ${a.payTo}  extra=${JSON.stringify(a.extra ?? {})}`);
+console.log(`  resource: ${req.resource?.url ?? req.resource}\n  extensions declared: ${Object.keys(req.extensions ?? {}).join(",") || "none"}\n`);
 
-// 3. pay one REST call
+// 2. pay it (Base only)
 const fetchWithPay = wrapFetchWithPaymentFromConfig(fetch, { schemes: [{ network: "eip155:8453", client: new ExactEvmScheme(account) }] });
-let t0 = Date.now();
-const paid = await fetchWithPay(`${BASE_URL}/v1/regime?paid=1`);
-const data: any = await paid.json();
-console.log(`REST paid call → HTTP ${paid.status} in ${Date.now() - t0} ms`);
-console.log(`  _billing: ${JSON.stringify(data._billing)}`);
-console.log(`  events_24h: ${data.events_24h}, venues_open: ${JSON.stringify(data.venues_open)}`);
+const t0 = Date.now();
+const paid = await fetchWithPay(`${BASE_URL}${PATH}`);
+const body: any = await paid.json().catch(() => ({}));
+console.log(`Paid request → HTTP ${paid.status} in ${Date.now() - t0} ms`);
+console.log(`  _billing: ${JSON.stringify(body._billing)}`);
 const pr = paid.headers.get("payment-response");
-if (pr) { try { const r: any = decodePaymentResponseHeader(pr); console.log(`  settlement: success=${r.success} tx=${r.transaction} network=${r.network}`); } catch { console.log("  payment-response:", pr); } }
+if (pr) { try { const r: any = decodePaymentResponseHeader(pr); console.log(`  settlement: success=${r.success} network=${r.network} tx=${r.transaction}`); console.log(`  basescan: https://basescan.org/tx/${r.transaction}`); } catch { console.log("  payment-response:", pr); } }
+else console.log("  (no PAYMENT-RESPONSE header — settlement not confirmed)");
 
-// 4. pay one MCP tool call
-t0 = Date.now();
-const mcp = await fetchWithPay(`${BASE_URL}/mcp`, { method: "POST", headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
-  body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "regime_snapshot", arguments: {} } }) });
-const txt = await mcp.text();
-console.log(`MCP paid tool call → HTTP ${mcp.status} in ${Date.now() - t0} ms, ${txt.length} bytes${txt.includes("venues_open") ? " (regime_snapshot payload ok)" : ""}`);
-console.log(`\nCheck: https://basescan.org/address/${a.payTo}#tokentxns`);
+console.log(`\nNext (wait ~10 min): https://api.cdp.coinbase.com/platform/v2/x402/discovery/resources?limit=1000  → search "intel.degenscan.io"`);

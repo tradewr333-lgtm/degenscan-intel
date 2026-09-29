@@ -320,7 +320,7 @@ async function hlPost<T>(body: unknown, timeoutMs = 8000): Promise<T> {
   return res.json() as Promise<T>;
 }
 /** Exposed for tests: inject a fake fetcher. */
-export const _hl = { post: hlPost as <T>(body: unknown) => Promise<T>, reset() { hlCache = null; hlPredCache = null; } };
+export const _hl = { post: hlPost as <T>(body: unknown) => Promise<T>, reset() { hlCache = null; hlPredCache = null; hlVolCache = new Map(); } };
 
 async function hlMetaAndCtxs() {
   if (hlCache && Date.now() - hlCache.at < 30_000) return hlCache;
@@ -331,6 +331,28 @@ async function hlPredicted() {
   if (hlPredCache && Date.now() - hlPredCache.at < 60_000) return hlPredCache.rows;
   try { const rows = await _hl.post<typeof hlPredCache extends infer T ? T extends { rows: infer R } ? R : never : never>({ type: "predictedFundings" }); hlPredCache = { at: Date.now(), rows: rows as any }; return hlPredCache.rows; }
   catch { return hlPredCache?.rows ?? []; }
+}
+type HlCandle = { t: number; T: number; c: string };
+let hlVolCache = new Map<string, { at: number; v: { realized_vol_30d_ann: number; n: number } | null }>();
+/** 30-day realized volatility, annualised: sample stdev of daily log-returns of Hyperliquid 1d closes × √365.
+ *  Public candleSnapshot endpoint, cached 1 h. Drops the still-open candle. Returns null when < 20 closes are available. */
+export async function realizedVol30d(symbol: string): Promise<{ realized_vol_30d_ann: number; n: number } | null> {
+  const sym = symbol.toUpperCase();
+  const hit = hlVolCache.get(sym);
+  if (hit && Date.now() - hit.at < 3_600_000) return hit.v;
+  const now = Date.now();
+  let v: { realized_vol_30d_ann: number; n: number } | null = null;
+  try {
+    const rows = await _hl.post<HlCandle[]>({ type: "candleSnapshot", req: { coin: sym, interval: "1d", startTime: now - 36 * 86_400_000, endTime: now } });
+    const closes = (rows ?? []).filter(c => c.T <= now).map(c => Number(c.c)).filter(Number.isFinite).slice(-31);
+    if (closes.length >= 20) {
+      const lr = closes.slice(1).map((c, i) => Math.log(c / closes[i]));
+      const mean = lr.reduce((a, b) => a + b, 0) / lr.length;
+      const sd = Math.sqrt(lr.reduce((a, b) => a + (b - mean) ** 2, 0) / (lr.length - 1));
+      v = { realized_vol_30d_ann: r(sd * Math.sqrt(365), 4)!, n: lr.length };
+    }
+  } catch { v = hit?.v ?? null; }
+  hlVolCache.set(sym, { at: Date.now(), v }); return v;
 }
 const num = (v: string | number | null | undefined) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
 const r = (n: number | null, d = 6) => n == null ? null : Math.round(n * 10 ** d) / 10 ** d;
@@ -363,4 +385,130 @@ export async function derivsFor(a: DerivsArgs) {
     source: { id: "hyperliquid.info", url: "https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/info-endpoint", tier: "primary" },
     disclaimer: "Information and analytics only — not investment advice.", universe_version: loadUniverse().version,
   };
+}
+
+// ---------------------------------------------------------------------------
+// v0.8 — "entry shelf": the cheap, high-frequency, no-key data agents already buy
+// (price, funding alerts, whale moves, Polymarket top). All from public sources, 30–60 s cache,
+// ~1 KB responses, each pointing back to our event feed via `related`.
+// ---------------------------------------------------------------------------
+type Fetcher = <T>(url: string, init?: RequestInit & { timeoutMs?: number }) => Promise<T>;
+const defaultGet: Fetcher = async (url, init = {}) => {
+  const { timeoutMs = 8000, ...rest } = init;
+  const res = await fetch(url, { ...rest, headers: { accept: "application/json", "user-agent": "degenscan-intel/0.8 (+https://intel.degenscan.io)", ...(rest.headers as any ?? {}) }, signal: AbortSignal.timeout(timeoutMs) });
+  if (!res.ok) throw new Error(`HTTP ${res.status} ${url}`);
+  return res.json() as Promise<any>;
+};
+/** Exposed for tests: inject a fake fetcher and clear caches. */
+export const _ext = { get: defaultGet, reset() { cache.clear(); hlCache = null; hlPredCache = null; hlVolCache = new Map(); } };
+const cache = new Map<string, { at: number; v: any }>();
+async function cached<T>(key: string, ttlMs: number, fn: () => Promise<T>): Promise<T> {
+  const c = cache.get(key); if (c && Date.now() - c.at < ttlMs) return c.v as T;
+  const v = await fn(); cache.set(key, { at: Date.now(), v }); return v;
+}
+const relatedFor = (asset: string) => ({ events: `/v1/events?since=4h&universe=${asset}`, impact: `/v1/impact/${asset}?since=24h`, derivs: `/v1/derivs/${asset}` });
+
+// --- price_for ---------------------------------------------------------------
+export const PriceArgs = z.object({ symbol: z.string().describe("Coin, e.g. BTC, ETH, SOL, HYPE (Hyperliquid perp mark + Coinbase spot when available)") });
+/** $0.001 — mark/mid/oracle from Hyperliquid, spot from Coinbase (public, no key), 24h change, 30d realized vol (annualised), plus links to our event pressure. */
+export async function priceFor(a: z.infer<typeof PriceArgs>) {
+  const sym = a.symbol.toUpperCase().replace(/-PERP$|USDT?$|USDC$|-USD$/i, "");
+  const { meta, ctxs } = await hlMetaAndCtxs();
+  const idx = meta.universe.findIndex(u => u.name.toUpperCase() === sym);
+  const c = idx >= 0 ? ctxs[idx] : null;
+  const mark = c ? num(c.markPx) : null, prev = c ? num(c.prevDayPx) : null;
+  let spot: number | null = null;
+  try { const cb = await cached(`cb:${sym}`, 30_000, () => _ext.get<any>(`https://api.coinbase.com/v2/prices/${sym}-USD/spot`, { timeoutMs: 5000 })); spot = num(cb?.data?.amount); } catch { spot = null; }
+  if (mark == null && spot == null) throw new Error(`unknown symbol ${a.symbol} (not on Hyperliquid perps nor Coinbase spot)`);
+  const vol = c ? await realizedVol30d(sym) : null;
+  return {
+    symbol: sym, as_of: new Date().toISOString(),
+    realized_vol_30d_ann: vol?.realized_vol_30d_ann ?? null, realized_vol_note: vol ? `stdev of ${vol.n} daily log-returns (Hyperliquid 1d closes) × √365` : "unavailable",
+    perp: c ? { venue: "hyperliquid", mark, mid: num(c.midPx), oracle: num(c.oraclePx), prev_day: prev, change_24h_pct: mark != null && prev ? r(((mark - prev) / prev) * 100, 3) : null, funding_1h: r(num(c.funding), 8), volume_24h_usd: c.dayNtlVlm ? Math.round(Number(c.dayNtlVlm)) : null } : null,
+    spot: spot != null ? { venue: "coinbase", price: spot } : null,
+    basis_pct: mark != null && spot ? r(((mark - spot) / spot) * 100, 4) : null,
+    related: relatedFor(sym), source: { hyperliquid: "https://api.hyperliquid.xyz/info", coinbase: "https://api.coinbase.com/v2/prices" },
+    disclaimer: "Information only — not investment advice.",
+  };
+}
+
+// --- funding_alerts ----------------------------------------------------------
+export const FundingAlertsArgs = z.object({
+  min_abs_rate_1h: z.number().min(0).default(0.0003).describe("Alert threshold on |hourly funding|. Default 0.0003 (=0.03%/h ≈ 263%/yr)."),
+  limit: z.number().int().min(1).max(50).default(15),
+});
+/** $0.001 — coins with extreme funding right now on Hyperliquid (+ predicted funding per venue), sorted by |rate|. Poll every 5–15 min. */
+export async function fundingAlerts(a: z.infer<typeof FundingAlertsArgs>) {
+  const { meta, ctxs } = await hlMetaAndCtxs();
+  const pred = await hlPredicted();
+  const predMap = new Map<string, any[]>(pred.map(row => [String(row[0]).toUpperCase(), (row[1] ?? []).filter(([, p]: any) => p && typeof p === "object")] as any));
+  const rows = meta.universe.map((u, i) => ({ u, c: ctxs[i] })).filter(x => x.c && !x.u.isDelisted).map(({ u, c }) => {
+    const f = num(c.funding) ?? 0, oi = num(c.openInterest), mark = num(c.markPx);
+    return { symbol: u.name, funding_1h: r(f, 8), annualized_pct: r(f * 24 * 365 * 100, 1), side_paying: f > 0 ? "longs" : f < 0 ? "shorts" : "flat", open_interest_usd: oi != null && mark != null ? Math.round(oi * mark) : null, mark,
+      predicted_by_venue: (predMap.get(u.name.toUpperCase()) ?? []).map(([venue, p]: any) => ({ venue, rate: r(num(p.fundingRate), 8) })), abs: Math.abs(f) };
+  }).filter(x => x.abs >= a.min_abs_rate_1h).sort((x, y) => y.abs - x.abs).slice(0, a.limit).map(({ abs, ...x }) => ({ ...x, related: relatedFor(x.symbol) }));
+  return { as_of: new Date().toISOString(), venue: "hyperliquid", threshold_abs_rate_1h: a.min_abs_rate_1h, count: rows.length, alerts: rows, note: "Positive funding = longs pay shorts (crowded long). Compare predicted_by_venue for cross-venue divergence.", disclaimer: "Information only — not investment advice." };
+}
+
+// --- whale_moves -------------------------------------------------------------
+const WHALE_TOKENS: { chain: string; api: string; token: string; symbol: string; decimals: number }[] = [
+  { chain: "base", api: "https://base.blockscout.com", token: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", symbol: "USDC", decimals: 6 },
+  { chain: "ethereum", api: "https://eth.blockscout.com", token: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", symbol: "USDC", decimals: 6 },
+  { chain: "ethereum", api: "https://eth.blockscout.com", token: "0xdAC17F958D2ee523a2206206994597C13D831ec7", symbol: "USDT", decimals: 6 },
+];
+// Public, widely documented exchange deposit/hot wallets (labels are best-effort; unknown → "unlabeled").
+const KNOWN_LABELS: Record<string, string> = {
+  "0x28c6c06298d514db089934071355e5743bf21d60": "Binance 14", "0x21a31ee1afc51d94c2efccaa2092ad1028285549": "Binance 15", "0xdfd5293d8e347dfe59e90efd55b2956a1343963d": "Binance 16",
+  "0x56eddb7aa87536c09ccc2793473599fd21a8b17f": "Binance 17", "0x9696f59e4d72e237be84ffd425dcad154bf96976": "Binance 18", "0x4976a4a02f38326660d17bf34b431dc6e2eb2327": "Binance 20",
+  "0x71660c4005ba85c37ccec55d0c4493e05b8c8f87": "Coinbase 1", "0x503828976d22510aad0201ac7ec88293211d23da": "Coinbase 2", "0xddfabcdc4d8ffc6d5beaf154f18b778f892a0740": "Coinbase 3",
+  "0x3cd751e6b0078be393132286c442345e5dc49699": "Coinbase 4", "0xb5d85cbf7cb3ee0d56b3bb207d5fc4b82f43f511": "Coinbase 5", "0xa9d1e08c7793af67e9d92fe308d5697fb81d3e43": "Coinbase 10",
+  "0xf977814e90da44bfa03b6295a0616a897441acec": "Binance 8", "0x5041ed759dd4afc3a72b8192c143f72f4724081a": "OKX", "0x6cc5f688a315f3dc28a7781717a9a798a59fda7b": "OKX 2",
+  "0xf89d7b9c864f589bbf53a82105107622b35eaa40": "Bybit", "0x1b46970cfe6a271e884f6a5a2e5e2e4e0a0c7c33": "Bybit 2", "0x2faf487a4414fe77e2327f0bf4ae2a264a776ad2": "FTX (legacy)",
+  "0x0d0707963952f2fba59dd06f2b425ace40b492fe": "Gate.io", "0x1151314c646ce4e0efd76d1af4760ae66a9fe30f": "Bitfinex", "0x77134cbc06cb00b66f4c7e623d5fdbf6777635ec": "Bitfinex 2",
+  "0xe93381fb4c4f14bda253907b18fad305d799241a": "Huobi", "0x46340b20830761efd32832a74d7169b29feb9758": "Crypto.com", "0x6262998ced04146fa42253a5c0af90ca02dfd2a3": "Crypto.com 2",
+  "0x0000000000000000000000000000000000000000": "mint/burn",
+};
+export const WhaleArgs = z.object({
+  min_usd: z.number().min(10_000).default(1_000_000).describe("Minimum transfer size in USD. Default 1,000,000."),
+  chains: z.array(z.enum(["base", "ethereum"])).optional().describe("Default both."),
+  limit: z.number().int().min(1).max(100).default(25),
+});
+/** $0.002 — large stablecoin transfers (USDC/USDT) on Base and Ethereum from public Blockscout APIs (no key), with best-effort exchange labels and a flow tag (to_exchange / from_exchange / wallet_to_wallet / mint / burn). 60 s cache. */
+export async function whaleMoves(a: z.infer<typeof WhaleArgs>) {
+  const chains = a.chains ?? ["base", "ethereum"];
+  const targets = WHALE_TOKENS.filter(t => chains.includes(t.chain as any));
+  const results = await Promise.all(targets.map(t => cached(`whale:${t.chain}:${t.symbol}`, 60_000, async () => {
+    try { const j = await _ext.get<any>(`${t.api}/api/v2/tokens/${t.token}/transfers`, { timeoutMs: 8000 }); return { t, items: (j?.items ?? []) as any[] }; }
+    catch (e) { return { t, items: [] as any[], error: String((e as Error).message) }; }
+  })));
+  const label = (addr: string) => KNOWN_LABELS[addr.toLowerCase()] ?? null;
+  const moves = results.flatMap(({ t, items }) => items.map((x: any) => {
+    const raw = x.total?.value ?? x.value ?? "0"; const usd = Number(raw) / 10 ** t.decimals;
+    const from = String(x.from?.hash ?? ""), to = String(x.to?.hash ?? "");
+    const fl = label(from) ?? (x.from?.name || null), tl = label(to) ?? (x.to?.name || null);
+    const flow = from === "0x0000000000000000000000000000000000000000" ? "mint" : to === "0x0000000000000000000000000000000000000000" ? "burn" : tl && !fl ? "to_exchange" : fl && !tl ? "from_exchange" : fl && tl ? "exchange_to_exchange" : "wallet_to_wallet";
+    return { chain: t.chain, token: t.symbol, usd: Math.round(usd), from, from_label: fl ?? "unlabeled", to, to_label: tl ?? "unlabeled", flow, tx: x.transaction_hash ?? x.tx_hash ?? null, at: x.timestamp ?? null, explorer: x.transaction_hash ? `${t.api}/tx/${x.transaction_hash}` : null };
+  })).filter(m => m.usd >= a.min_usd).sort((x, y) => y.usd - x.usd).slice(0, a.limit);
+  const errors = results.filter(r => (r as any).error).map(r => ({ chain: r.t.chain, token: r.t.symbol, error: (r as any).error }));
+  const sum = (f: string) => moves.filter(m => m.flow === f).reduce((s, m) => s + m.usd, 0);
+  return { as_of: new Date().toISOString(), min_usd: a.min_usd, chains, count: moves.length, totals_usd: { to_exchange: sum("to_exchange"), from_exchange: sum("from_exchange"), mint: sum("mint"), burn: sum("burn"), wallet_to_wallet: sum("wallet_to_wallet") }, moves, sources_unavailable: errors,
+    related: { events: "/v1/events?since=4h&universe=BTC,ETH", pulse: "/v1/pulse" }, note: "Recent transfers window as served by Blockscout (latest page). Labels are best-effort public exchange wallets; 'unlabeled' is not 'retail'.", disclaimer: "Information only — not investment advice." };
+}
+
+// --- polymarket_top ----------------------------------------------------------
+export const PolyTopArgs = z.object({
+  sort: z.enum(["volume_24h", "liquidity", "change_24h"]).default("volume_24h"),
+  limit: z.number().int().min(1).max(50).default(20),
+  tag: z.string().optional().describe("Optional Gamma tag slug filter, e.g. 'crypto', 'fed', 'politics'."),
+});
+/** $0.002 — the most active Polymarket markets right now: yes odds, 24h change, 24h volume, liquidity, end date, plus a link to our evidence pack per market. 60 s cache. */
+export async function polymarketTop(a: z.infer<typeof PolyTopArgs>) {
+  const order = a.sort === "liquidity" ? "liquidity" : a.sort === "change_24h" ? "oneDayPriceChange" : "volume24hr";
+  const url = `https://gamma-api.polymarket.com/markets?active=true&closed=false&order=${order}&ascending=false&limit=${a.limit}${a.tag ? `&tag_slug=${encodeURIComponent(a.tag)}` : ""}`;
+  const raw = await cached(`pmtop:${url}`, 60_000, () => _ext.get<any[]>(url, { timeoutMs: 8000 }));
+  const markets = (Array.isArray(raw) ? raw : []).map((m: any) => {
+    let yes: number | null = null; try { const p = typeof m.outcomePrices === "string" ? JSON.parse(m.outcomePrices) : m.outcomePrices; yes = p ? num(p[0]) : null; } catch { yes = null; }
+    return { id: String(m.id), slug: m.slug, question: m.question, yes_prob: yes != null ? r(yes, 4) : null, change_24h: r(num(m.oneDayPriceChange), 4), volume_24h_usd: m.volume24hr != null ? Math.round(Number(m.volume24hr)) : null, liquidity_usd: m.liquidity != null ? Math.round(Number(m.liquidity)) : null, end_date: m.endDate ?? null, url: m.slug ? `https://polymarket.com/market/${m.slug}` : null, evidence: `/v1/polymarket/${encodeURIComponent(m.slug ?? m.id)}?since=48h` };
+  });
+  return { as_of: new Date().toISOString(), sort: a.sort, tag: a.tag ?? null, count: markets.length, markets, source: { id: "polymarket.gamma", url: "https://gamma-api.polymarket.com" }, note: "yes_prob = current YES price. Use `evidence` for the primary-source events that bear on each question.", disclaimer: "Information only — not investment advice." };
 }

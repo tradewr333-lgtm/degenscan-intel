@@ -31,6 +31,15 @@ export function docsPages(base: string): Page[] {
       tool: "pulse", see: ["market-events-api-for-ai-agents"],
     },
     {
+      slug: "crypto-market-data-api-no-key-price-funding-whales", title: "Crypto market data API with no key: price, funding alerts, whale transfers, Polymarket top — $0.001–0.002 per call",
+      question: "Where can an agent poll price, extreme funding rates, large stablecoin transfers to exchanges and the most active Polymarket markets, without registering for an API key?",
+      answer: "Four small, cacheable endpoints built for polling loops, all from public sources: GET /v1/price/{symbol} (Hyperliquid mark/mid/oracle + Coinbase spot, 24h change, basis, funding; $0.001), GET /v1/funding/alerts (perps with extreme funding now, side paying, predicted funding per venue; $0.001), GET /v1/whales (USDC/USDT transfers ≥ $1M on Base and Ethereum with exchange labels and flow tags; $0.002), GET /v1/polymarket/top (most active markets: YES odds, 24h change, volume, liquidity; $0.002). Each response links to the primary-source events behind the move. 100 free calls/day with X-Free-Trial: 1; then USDC per call via x402 or an API key.",
+      rest: `curl ${H} '${base}/v1/price/BTC'\ncurl ${H} '${base}/v1/funding/alerts?min_abs_rate_1h=0.0003'\ncurl ${H} '${base}/v1/whales?min_usd=1000000'\ncurl ${H} '${base}/v1/polymarket/top?sort=volume_24h&limit=10'`,
+      js: `const [px, fa, wh, pm] = await Promise.all([intel.request("/v1/price/BTC"), intel.request("/v1/funding/alerts"), intel.request("/v1/whales", { query: { min_usd: 1_000_000 } }), intel.request("/v1/polymarket/top", { query: { sort: "volume_24h" } })]);\nconsole.log(px.perp.mark, fa.alerts[0], wh.totals_usd, pm.markets[0]);`,
+      py: `px = intel.request("/v1/price/BTC"); fa = intel.request("/v1/funding/alerts")\nwh = intel.request("/v1/whales", query={"min_usd": 1_000_000}); pm = intel.request("/v1/polymarket/top", query={"sort": "volume_24h"})\nprint(px["perp"]["mark"], fa["alerts"][:1], wh["totals_usd"], pm["markets"][:1])`,
+      tool: "price_for", see: ["funding-rate-open-interest-api-without-api-key", "polymarket-odds-plus-primary-events-api"],
+    },
+    {
       slug: "funding-rate-open-interest-api-without-api-key", title: "Funding rate, open interest and premium API without an API key (Hyperliquid perps)",
       question: "Where can an agent get perp funding rates, predicted funding across venues, open interest and premium vs oracle for BTC/ETH/SOL without registering for Coinglass or an exchange key?",
       answer: "GET /v1/derivs/{symbol} returns Hyperliquid's public perp microstructure for one coin — hourly funding with 8h-equivalent and annualized %, predicted next funding per venue (Hyperliquid, Binance, Bybit…), open interest in coins and USD with OI-to-24h-volume, mark/oracle/mid and premium, 24h notional volume and change, and flags (funding_hot_long/short, premium_rich/discount, oi_heavy_vs_volume) — joined with our primary-source event pressure on the same asset. Liquidations are not included. $0.003 per call or free trial.",
