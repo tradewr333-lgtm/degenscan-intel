@@ -24,6 +24,9 @@ Covers the questions trading agents ask most: Polymarket odds vs fresh primary e
 | Large USDC/USDT transfers to/from exchanges on Base & Ethereum, with labels | `whale_moves(min_usd)` | $0.002 |
 | Most active Polymarket markets now (odds, 24h change, volume) | `polymarket_top(sort)` | $0.002 |
 | Everything an operator reads before trading one asset, in one call | `brief(asset_id)` | $0.10 |
+| A calibrated probability (not a headline) for "will X happen by date?" — BTC above a target, Fed cut, Polymarket question | `oracle_forecast(question)` → poll `oracle_get(forecast_id)` (free, 1–3 min) | $0.25 |
+| Cheap calibrated priors for standing questions, refreshed daily, no waiting | `oracle_board()` / `oracle_board(slug)` | $0.002 |
+| How much to trust the oracle: public Brier score, oracle vs. market | `oracle_track_record()` | free |
 | Headlines on one asset with sentiment | `news_for(ticker, since)` | $0.002 |
 | Perp funding / open interest / premium / predicted funding by venue for one coin (Hyperliquid, no key) | `derivs_for(symbol)` | $0.003 |
 | SEC filings on one issuer (8-K, Form 4, 13D, S-1) | `filings_for(ticker, since)` | $0.002 |

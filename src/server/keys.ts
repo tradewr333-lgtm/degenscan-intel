@@ -1,3 +1,4 @@
+import { CREDITS_SQL } from "./pricing.js";
 import { createHash, randomBytes } from "node:crypto";
 import { getDb } from "../store/db.js";
 
@@ -78,12 +79,12 @@ export function revokeBySubscription(sub: string) {
 /** Calls this calendar month for a key id (from the billing log). */
 export function monthlyUsage(id: string): number {
   const from = new Date(); from.setUTCDate(1); from.setUTCHours(0, 0, 0, 0);
-  const r = getDb().prepare("SELECT COUNT(*) AS n FROM calls WHERE payer = ? AND ts >= ?").get(`key:${id}`, from.toISOString()) as unknown as { n: number };
+  const r = getDb().prepare(`SELECT COALESCE(${CREDITS_SQL},0) AS n FROM calls WHERE payer = ? AND ts >= ?`).get(`key:${id}`, from.toISOString()) as unknown as { n: number };
   return r.n;
 }
 
 export function lifetimeUsage(id: string): number {
-  return (getDb().prepare("SELECT COUNT(*) AS n FROM calls WHERE payer = ?").get(`key:${id}`) as unknown as { n: number }).n;
+  return (getDb().prepare(`SELECT COALESCE(${CREDITS_SQL},0) AS n FROM calls WHERE payer = ?`).get(`key:${id}`) as unknown as { n: number }).n;
 }
 
 /** Validate a raw key: active and under quota (monthly for subscriptions, lifetime for prepaid packs). Legacy env API_KEYS (comma-separated) still accepted as unlimited "legacy" keys. */

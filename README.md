@@ -56,6 +56,8 @@ MCP (streamable HTTP, stateless): `POST http://host:8787/mcp`. Stdio for local a
 | `filings_for` | $0.002 | SEC EDGAR filings on one issuer (8-K, Form 4, 13D/G, S-1) |
 | `calendar` | $0.002 | upcoming macro prints, FOMC, auctions, earnings (N days) |
 | `brief` | **$0.10** | premium one-call pre-trade briefing per asset (replaces six calls) |
+| `oracle_board` | $0.002 | daily board of calibrated probabilities for standing questions (BTC/ETH/SOL targets, FOMC, top Polymarket) — cached, no waiting |
+| `oracle_forecast` | **$0.25** | calibrated YES-probability for any binary question: Monte Carlo of LLM agent societies + base-rate-anchored expert panel on live Intel data; async (202 → poll free); 80% interval, edge vs market, drivers, commitment hash. Public Brier record at `/v1/oracle/track-record` (free) |
 | `polymarket_context` | $0.01 | evidence pack for one prediction market: current odds + primary-source events in the feed that bear on the question |
 | `universe`, `sources_status` | free | discovery & transparency |
 

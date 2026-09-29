@@ -1,6 +1,6 @@
 import type { FastifyRequest } from "fastify";
 import { validateKey } from "./keys.js";
-import { priceOf, FREE_DAILY_CALLS_PER_IP } from "./pricing.js";
+import { priceOf, creditsFor, FREE_DAILY_CALLS_PER_IP } from "./pricing.js";
 
 /**
  * Decide whether a request may proceed WITHOUT an x402 payment.
@@ -27,6 +27,9 @@ export function toolForRequest(req: FastifyRequest): string | null {
     if (!b || Array.isArray(b) || b.method !== "tools/call") return null;   // handshake, tools/list… free
     return String(b.params?.name ?? "");
   }
+  if (url === "/v1/oracle/forecast" && req.method === "POST") return "oracle_forecast";
+  if (url === "/v1/oracle/board" || url.startsWith("/v1/oracle/board/")) return "oracle_board";
+  if (url.startsWith("/v1/oracle/")) return null;   // GET forecast/{id}, track-record, resolve (operator key): free
   if (url.startsWith("/v1/events")) return "events_since";
   if (url.startsWith("/v1/impact/")) return "impact_for";
   if (url.startsWith("/v1/graph/")) return "exposure_graph";
@@ -54,7 +57,7 @@ export function decideAccess(req: FastifyRequest): Access | null {
   const key = (req.headers["x-api-key"] as string | undefined)?.trim();
   if (key) {
     const v = validateKey(key);
-    if (v && v.remaining > 0) return { method: "api_key", payer: `key:${v.id}`, price };
+    if (v && v.remaining >= creditsFor(tool)) return { method: "api_key", payer: `key:${v.id}`, price };
     // invalid or exhausted key → fall through to x402 (agent may still pay per call)
   }
   // Free daily quota is opt-in (header X-Free-Trial: 1) so that unauthenticated probes from indexers see a real 402.

@@ -104,6 +104,19 @@ export function buildRoutes(): RoutesConfig {
       accepts: accept("calendar"), description: "Upcoming scheduled catalysts: US macro prints (CPI, jobs, PCE, GDP…) with ET times, FOMC decisions/minutes, Treasury auctions and earnings dates, each with the assets it usually moves.", mimeType: "application/json", ...common,
       extensions: declareDiscoveryExtension({ input: { days: 7 }, inputSchema: { properties: { days: { type: "number" }, types: { type: "string" } } }, output: { example: { count: 2, items: [{ at: "2026-10-14T12:30:00.000Z", type: "macro", name: "Consumer Price Index (CPI)", affects: ["US10Y", "SPX", "BTC"] }] } } }),
     },
+    "POST /v1/oracle/forecast": {
+      accepts: accept("oracle_forecast"), description: "Calibrated YES-probability for a binary market question: Monte Carlo of LLM agent societies + base-rate-anchored expert panel, grounded in live price, vol, funding, Polymarket odds and calendar. Async: 202 + forecast_id, poll free. Returns probability, 80% interval, edge vs market, drivers, commitment hash. Public Brier record.", mimeType: "application/json", ...common,
+      extensions: declareDiscoveryExtension({ bodyType: "json", input: { question: "Will Bitcoin close above 120,000 USD on 2026-10-31?", resolves_at: "2026-10-31T23:59:00Z", runs: 8, population: 24, rounds: 3 }, inputSchema: { properties: { question: { type: "string" }, resolves_at: { type: "string" }, context: { type: "string" }, runs: { type: "number" }, population: { type: "number" }, rounds: { type: "number" } }, required: ["question"] },
+        output: { example: { forecast_id: "3f9a1c2b7d4e", status: "queued", eta_s: 150, poll: "/v1/oracle/forecast/3f9a1c2b7d4e", done_example: { probability: 0.319, ci80: [0.24, 0.41], base_rate: 0.227, market_odds: 0.35, edge: -0.031, confidence: "medium", commitment_hash: "sha256…" } } } }),
+    },
+    "GET /v1/oracle/board": {
+      accepts: accept("oracle_board"), description: "Daily board of calibrated probabilities for standing binary questions (BTC/ETH/SOL vs price targets, next FOMC, top Polymarket markets, CPI/NFP): probability, 80% interval, base rate, market odds, edge, commitment hash. Cached, refreshed daily — poll it in a loop.", mimeType: "application/json", ...common,
+      extensions: declareDiscoveryExtension({ input: {}, inputSchema: { properties: {} }, output: { example: { count: 8, items: [{ slug: "btc-120k-oct31", question: "Will Bitcoin close above 120,000 USD on 2026-10-31?", probability: 0.319, ci_lo: 0.24, ci_hi: 0.41, base_rate: 0.227, market_odds: 0.35, edge: -0.031 }] } } }),
+    },
+    "GET /v1/oracle/board/:slug": {
+      accepts: accept("oracle_board"), description: "One standing forecast from the daily oracle board by slug (e.g. btc-120k-oct31): probability, 80% interval, disagreement, drivers, failure modes, base rate, market odds, edge, commitment hash.", mimeType: "application/json", ...common,
+      extensions: declareDiscoveryExtension({ input: {}, inputSchema: { properties: {} }, output: { example: { slug: "btc-120k-oct31", probability: 0.319, ci80: [0.24, 0.41], confidence: "medium" } } }),
+    },
     "GET /v1/brief/*": {
       accepts: accept("brief"), description: "Premium one-call pre-trade briefing for an asset: net pressure and drivers, headlines with sentiment, SEC filings, exposure map, related Polymarket odds, upcoming catalysts, venue status. Replaces six calls.", mimeType: "application/json", ...common,
       extensions: declareDiscoveryExtension({ input: { since: "24h" }, inputSchema: { properties: { since: { type: "string" } } }, output: { example: { asset: { id: "MSTR" }, pressure: { bias: -0.4, n_events: 5 }, headlines: { sentiment_avg: -0.2 }, upcoming_catalysts: [{ name: "FOMC Rate Decision" }], tradable_now: ["crypto"] } } }),

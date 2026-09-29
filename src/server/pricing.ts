@@ -16,6 +16,10 @@ export const PRICES: Record<string, number> = {
   filings_for: 0.002,
   calendar: 0.002,
   brief: 0.10,
+  oracle_board: 0.002,
+  oracle_forecast: 0.25,
+  oracle_get: 0,
+  oracle_track_record: 0,
   universe: 0,
   sources_status: 0,
   health: 0,
@@ -25,3 +29,7 @@ export const FREE_DAILY_CALLS_PER_IP = Number(process.env.FREE_DAILY_CALLS ?? 10
 
 export function priceOf(tool: string) { return PRICES[tool] ?? 0.005; }
 export function toAtomicUsdc(usd: number) { return String(Math.round(usd * 1e6)); }
+
+/** Prepaid-pack credits consumed per call (1 credit = one $0.002-class call). oracle_forecast = 0.25 / 0.002 = 125. */
+export function creditsFor(tool: string) { return tool === "oracle_forecast" ? 125 : 1; }
+export const CREDITS_SQL = "SUM(CASE WHEN tool = 'oracle_forecast' THEN 125 ELSE 1 END)";
