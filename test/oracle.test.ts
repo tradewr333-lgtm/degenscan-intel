@@ -24,6 +24,14 @@ describe("oracle context builder (port of context.py)", () => {
     const c2 = await ctx.buildContext("Will the Fed cut at the October 2026 FOMC?", ctx.mockProvider);
     expect(c2.market_odds).toBe(0.71); expect(c2.asset).toBeNull();
   });
+  it("ignores dates/years when detecting the target and complements the base rate for BELOW questions", async () => {
+    expect(ctx.detectTarget("Will a new all-time high for Bitcoin be set between 2026-09-30 and 2026-10-31?")).toBeNull();
+    expect(ctx.detectTarget("Will the Fed cut at the October 2026 FOMC?")).toBeNull();
+    expect(ctx.detectTarget("Will BTC close above 91,500 USD on 2026-10-31?")).toBe(91_500);
+    const above = await ctx.buildContext("Will BTC close above 100,000 USD on 2026-10-31?", ctx.mockProvider, new Date(Date.UTC(2026, 8, 29)));
+    const below = await ctx.buildContext("Will BTC close below 100,000 USD on 2026-10-31?", ctx.mockProvider, new Date(Date.UTC(2026, 8, 29)));
+    expect(above.base_rate! + below.base_rate!).toBeCloseTo(1, 2); expect(below.base_rate_note).toMatch(/complement/);
+  });
   it("touch questions use the reflection principle (≈2× end-above)", () => {
     const [end] = ctx.baseRateThreshold(10, 0.5, 30, false); const [touch] = ctx.baseRateThreshold(10, 0.5, 30, true);
     expect(touch!).toBeCloseTo(Math.min(1, 2 * end!), 3);

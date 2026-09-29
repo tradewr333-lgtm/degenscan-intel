@@ -10,6 +10,7 @@ import { llmConfigured } from "./llm.js";
 
 export type Resolution =
   | { type: "price_close_above"; symbol: string; target: number }          // spot at/after resolves_at > target
+  | { type: "price_close_below"; symbol: string; target: number }          // spot at/after resolves_at < target
   | { type: "price_touch_above"; symbol: string; target: number }          // any daily high ≥ target before resolves_at (checked daily)
   | { type: "polymarket"; slug: string }                                   // Gamma market closed → outcomePrices
   | { type: "manual"; note: string };
@@ -41,7 +42,7 @@ export async function dynamicPriceQuestions(now = new Date()): Promise<BoardQues
     for (const pct of [10, 20]) {
       const up = round(spot * (1 + pct / 100)), dn = round(spot * (1 - pct / 100));
       out.push({ slug: `${sym.toLowerCase()}-above-${up}-${ym}`, question: `Will ${sym} close above ${up.toLocaleString("en-US")} USD on ${end.toISOString().slice(0, 10)} (Coinbase daily close, UTC)?`, resolves_at: end.toISOString(), resolution: { type: "price_close_above", symbol: sym, target: up }, source: `+${pct}% from spot ${Math.round(spot)}` });
-      out.push({ slug: `${sym.toLowerCase()}-below-${dn}-${ym}`, question: `Will ${sym} close below ${dn.toLocaleString("en-US")} USD on ${end.toISOString().slice(0, 10)} (Coinbase daily close, UTC)?`, resolves_at: end.toISOString(), resolution: { type: "manual", note: `close < ${dn}: resolve as NOT(price_close_above ${dn})` }, source: `-${pct}% from spot ${Math.round(spot)}` });
+      out.push({ slug: `${sym.toLowerCase()}-below-${dn}-${ym}`, question: `Will ${sym} close below ${dn.toLocaleString("en-US")} USD on ${end.toISOString().slice(0, 10)} (Coinbase daily close, UTC)?`, resolves_at: end.toISOString(), resolution: { type: "price_close_below", symbol: sym, target: dn }, source: `-${pct}% from spot ${Math.round(spot)}` });
     }
   }
   return out;
@@ -123,6 +124,8 @@ export async function autoResolve(): Promise<{ resolved: { id: string; slug: str
     try {
       if (rule.type === "price_close_above") {
         if (new Date(r.resolves_at).getTime() <= now) { const p = cache.get(rule.symbol) ?? await tools.priceFor({ symbol: rule.symbol }); cache.set(rule.symbol, p); const spot = (p as any).spot?.price ?? (p as any).perp?.mark; if (spot) outcome = spot > rule.target; }
+      } else if (rule.type === "price_close_below") {
+        if (new Date(r.resolves_at).getTime() <= now) { const p = cache.get(rule.symbol) ?? await tools.priceFor({ symbol: rule.symbol }); cache.set(rule.symbol, p); const spot = (p as any).spot?.price ?? (p as any).perp?.mark; if (spot) outcome = spot < rule.target; }
       } else if (rule.type === "price_touch_above") {
         const p = cache.get(rule.symbol) ?? await tools.priceFor({ symbol: rule.symbol }); cache.set(rule.symbol, p); const spot = (p as any).spot?.price ?? (p as any).perp?.mark;
         if (spot && spot >= rule.target) outcome = true; else if (new Date(r.resolves_at).getTime() <= now) outcome = false;

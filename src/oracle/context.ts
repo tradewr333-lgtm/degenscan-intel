@@ -43,8 +43,11 @@ export function detectAsset(q: string): string | null {
   for (const [sym, names] of Object.entries(ASSETS)) if (names.some(n => new RegExp(`\\b${esc(n)}\\b`).test(ql))) return sym;
   return null;
 }
+/** Deviation from context.py (reported to the Architect 29/09): ISO dates and 4-digit years are stripped first, otherwise
+ *  "…between 2026-09-30 and 2026-10-31" yields target = 2026. */
 export function detectTarget(q: string): number | null {
-  const m = /(\d{1,3}(?:[,.]\d{3})+|\d+(?:\.\d+)?)\s*(k|usd|\$)?/i.exec(q.replace(/US\$/g, "$"));
+  const cleaned = q.replace(/US\$/g, "$").replace(/\b20\d{2}-\d{2}-\d{2}\b/g, " ").replace(/\b(19|20)\d{2}\b/g, " ");
+  const m = /(\d{1,3}(?:[,.]\d{3})+|\d+(?:\.\d+)?)\s*(k|usd|\$)?/i.exec(cleaned);
   if (!m) return null;
   const raw = m[1], unit = (m[2] ?? "").toLowerCase();
   let val = /^\d{1,3}(?:[,.]\d{3})+$/.test(raw) ? Number(raw.replace(/[,.]/g, "")) : Number(raw);
@@ -110,6 +113,10 @@ export async function buildContext(question: string, provider: DataProvider | nu
       ctx.z_to_target = round2(Math.log(1 + ctx.distance_pct / 100) / s);
     }
     [ctx.base_rate, ctx.base_rate_note] = baseRateThreshold(ctx.distance_pct, ctx.realized_vol_30d_ann, ctx.horizon_days, touch);
+    // Deviation from context.py: "below/under" questions ask for the complementary event.
+    if (ctx.base_rate != null && /\b(below|under|beneath|less than|abaixo)\b/i.test(question) && !/\b(above|over|acima)\b/i.test(question)) {
+      ctx.base_rate = Math.round((1 - ctx.base_rate) * 1000) / 1000; ctx.base_rate_note = "complement (question asks for BELOW): " + ctx.base_rate_note;
+    }
   }
   try { const pm = await provider.polymarketSearch(question); if (pm && pm.yes != null) { ctx.market_odds = Number(pm.yes); ctx.market_ref = pm.url ?? null; ctx.sources.push("polymarket_context"); } }
   catch (e) { ctx.sources_unavailable.push(`polymarket: ${errName(e)}`); }
