@@ -33,6 +33,8 @@ const clamp = (x: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, x
 const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
 const pstdev = (xs: number[]) => { const m = mean(xs); return Math.sqrt(mean(xs.map(x => (x - m) ** 2))); };
 const r4 = (n: number) => Math.round(n * 10000) / 10000;
+const logit = (p: number) => { const q = clamp(p, 0.005, 0.995); return Math.log(q / (1 - q)); };
+export const logitMean = (xs: number[]) => 1 / (1 + Math.exp(-mean(xs.map(logit))));
 const num = (v: unknown, d: number) => { const n = Number(v); return Number.isFinite(n) ? n : d; };
 
 // ---------------------------------------------------------------- routing
@@ -147,6 +149,11 @@ export async function runSociety(req: ForecastRequest, routing: Routing, seed: n
 export async function expertPanel(req: ForecastRequest, routing: Routing, seed: number, usage: Usage): Promise<Record<string, any>[]> {
   const out = await chatJson(SYS, `TASK: panel\nQuestion: ${req.question}\nDomain: ${routing.domain}\n` +
     `${req.context.slice(0, 4500)}\nResolves: ${req.resolves_at ?? "None"}\n` +
+    // Architect 30/09 (tail-bias fix): odds-ratio rule for tails.
+    "TAIL RULE: when the anchor is below 0.20 or above 0.80, express every adjustment as an odds " +
+    "ratio and keep it within x0.5..x2.0 of the anchor's odds (e.g. anchor 0.15 -> stay within " +
+    "0.08..0.26) unless a named reason in calendar/positioning/market justifies more. Never add " +
+    "'a few points for uncertainty' to a tail — uncertainty is already in the base rate.\n" +
     "Convene 5 superforecasters. Each MUST start from the reference class in MARKET CONTEXT " +
     "(base_rate if present, else market_odds, else an explicit historical frequency they state) and " +
     "then adjust with named evidence (each adjustment <= 15 percentage points, justified). Methods: " +
@@ -183,7 +190,9 @@ export async function forecast(req0: ForecastRequest, opts: { baseSeed?: number;
   if (routing.method === "expert_panel" || routing.method === "hybrid") panel = await expertPanel(req, routing, baseSeed, usage);
 
   const samples = [...runs.map(r => r.probability), ...panel.map(e => e.probability as number)];
-  const pNaive = samples.length ? mean(samples) : 0.5;
+  // tail-bias fix (Architect 30/09): average in LOG-ODDS, not in probability — the arithmetic mean of [0.02, 0.03, 0.15]
+  // is 0.067, the log-odds mean ≈ 0.046. Disagreement stays in probability units for readability.
+  const pNaive = samples.length ? logitMean(samples) : 0.5;
   const disagreement = samples.length > 1 ? pstdev(samples) : 0.3;
 
   const agg = await chatJson(SYS, "TASK: aggregate\n" +
@@ -195,8 +204,8 @@ export async function forecast(req0: ForecastRequest, opts: { baseSeed?: number;
     `Naive mean=${pNaive.toFixed(3)}, spread=${disagreement.toFixed(3)}.\n` +
     // Architect 29/09 (§2.3): when a listed market matched, it is the primary anchor and base_rate the secondary.
     (mctx.market_odds != null
-      ? "Produce the final calibrated probability for YES. Calibration rule: this question matches a listed market — anchor on market_odds first and base_rate second, then move with the simulation and panel evidence; 0.5 is NOT a default and must never be used as a fallback. If your number differs from market_odds by more than 10 points, name the specific evidence that justifies the edge. "
-      : "Produce the final calibrated probability for YES. Calibration rule: anchor on base_rate, then move with the simulation and panel evidence; 0.5 is NOT a default and must never be used as a fallback. If your number differs from base_rate by more than 10 points, name the specific evidence that justifies the move. ") +
+      ? "Produce the final calibrated probability for YES. Calibration rule: this question matches a listed market — anchor on market_odds first and base_rate second, then move with the simulation and panel evidence. " + "For tails (anchor < 0.20 or > 0.80) reason in odds ratios, not percentage points, and treat the log-odds mean of runs/panel (Naive mean below) as the centre — do not drift upward just because some societies are optimistic. " + "0.5 is NOT a default and must never be used as a fallback. If your number differs from market_odds by more than 10 points, name the specific evidence that justifies the edge. "
+      : "Produce the final calibrated probability for YES. Calibration rule: anchor on base_rate, then move with the simulation and panel evidence. " + "For tails (anchor < 0.20 or > 0.80) reason in odds ratios, not percentage points, and treat the log-odds mean of runs/panel (Naive mean below) as the centre — do not drift upward just because some societies are optimistic. " + "0.5 is NOT a default and must never be used as a fallback. If your number differs from base_rate by more than 10 points, name the specific evidence that justifies the move. ") +
     "Societies that diverge from the panel are information: keep that divergence visible in drivers, do not smooth it away. " +
     "Also give a 2-sentence summary, top drivers, failure_modes (how the YES/NO world breaks), " +
     "confidence in [low, medium, high] (low only when sources_unavailable is long or spread > 0.15). " +

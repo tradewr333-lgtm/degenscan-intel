@@ -65,7 +65,13 @@ export function trackRecord() {
   const pending = (d.prepare("SELECT COUNT(*) AS n FROM oracle_forecasts WHERE outcome IS NULL AND (board_slug IS NULL OR board_slug NOT LIKE 'retired:%')").get() as any).n as number;
   const nextRes = (d.prepare("SELECT MIN(resolves_at) AS t FROM oracle_forecasts WHERE outcome IS NULL AND (board_slug IS NULL OR board_slug NOT LIKE 'retired:%') AND resolves_at > ?").get(new Date().toISOString()) as any)?.t ?? null;
   const retired = (d.prepare("SELECT COUNT(*) AS n FROM oracle_forecasts WHERE board_slug LIKE 'retired:%'").get() as any).n as number;
-  const evb = d.prepare("SELECT engine_version AS v, AVG(ABS(edge_vs_base)) AS m, COUNT(edge_vs_base) AS n FROM oracle_forecasts WHERE edge_vs_base IS NOT NULL GROUP BY engine_version").all() as any[];
+  // Architect 30/09 §5b: point agents straight at the first scored forecast (or the next one due) so the scorecard is visibly alive.
+  const firstRes = d.prepare("SELECT id, question, board_slug, resolved_at, outcome, brier, market_brier FROM oracle_forecasts WHERE outcome IS NOT NULL ORDER BY resolved_at LIMIT 1").get() as any;
+  const nextDue = d.prepare("SELECT id, question, board_slug, resolves_at, probability, market_odds FROM oracle_forecasts WHERE outcome IS NULL AND (board_slug IS NULL OR board_slug NOT LIKE 'retired:%') AND resolves_at > ? ORDER BY resolves_at, created_at DESC LIMIT 1").get(new Date().toISOString()) as any;
+  // signed tail-bias metric (Architect 30/09): healthy = frac_positive 0.40–0.60; ~1.0 means a systematic upward artefact
+  const evb = d.prepare(`SELECT engine_version AS v, AVG(ABS(edge_vs_base)) AS m, AVG(edge_vs_base) AS sm,
+    AVG(CASE WHEN edge_vs_base > 0 THEN 1.0 ELSE 0.0 END) AS fp, COUNT(edge_vs_base) AS n
+    FROM oracle_forecasts WHERE edge_vs_base IS NOT NULL AND (board_slug IS NULL OR board_slug NOT LIKE 'retired:%') GROUP BY engine_version`).all() as any[];
   const byDomain: Record<string, any> = {};
   const byVersion: Record<string, any> = {};
   for (const r of rows) {
@@ -78,7 +84,11 @@ export function trackRecord() {
   const n = rows.length;
   return {
     forecasts_total: total, resolved: n, pending, n_pending: pending, retired, next_resolves_at: nextRes,
-    edge_vs_base_by_version: Object.fromEntries(evb.map(r => [r.v ?? "unknown", { mean_abs: r4(r.m), n: r.n }])),
+    first_resolution_at: firstRes?.resolved_at ?? null,
+    first_resolution: firstRes ? { id: firstRes.id, question: firstRes.question, slug: firstRes.board_slug, resolved_at: firstRes.resolved_at, outcome: Boolean(firstRes.outcome), brier: firstRes.brier, market_brier: firstRes.market_brier, link: `/v1/oracle/forecast/${firstRes.id}` }
+      : nextDue ? { upcoming: true, id: nextDue.id, question: nextDue.question, slug: nextDue.board_slug, resolves_at: nextDue.resolves_at, probability: nextDue.probability, market_odds: nextDue.market_odds, link: `/v1/oracle/forecast/${nextDue.id}` } : null,
+    edge_vs_base_by_version: Object.fromEntries(evb.map(r => [r.v ?? "unknown", { mean_abs: r4(r.m), mean_signed: r4(r.sm), frac_positive: Math.round(r.fp * 1000) / 1000, n: r.n }])),
+    edge_vs_base_healthy_range: { frac_positive: [0.4, 0.6] },
     brier: n ? r4(rows.reduce((s, r) => s + r.brier, 0) / n) : null,
     brier_reference: { coin_flip: 0.25, good_human_forecaster: 0.15, superforecaster: 0.10 },
     vs_market: {  // the number an agent actually pays for

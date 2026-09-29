@@ -63,4 +63,4 @@ export interface Forecast {
 }
 
 export const DISCLAIMER = "Information and analytics only — not investment advice. Probabilities are model outputs with a public Brier track record at /v1/oracle/track-record.";
-export const ENGINE_VERSION = "0.3.1-ts";
+export const ENGINE_VERSION = "0.3.2-ts";

@@ -13,6 +13,10 @@ export type Resolution =
   | { type: "price_close_below"; symbol: string; target: number }          // spot at/after resolves_at < target
   | { type: "price_touch_above"; symbol: string; target: number }          // any daily high ≥ target before resolves_at (checked daily)
   | { type: "polymarket"; slug: string }                                   // Gamma market closed → outcomePrices
+  | { type: "polymarket_event_any"; event_slug: string; match: string }    // YES if any market of the event whose question matches /match/ resolves YES; NO once all matching markets closed NO
+  | { type: "spx_month_above_prev"; month: string }                        // last close of `month` (YYYY-MM) > last close of the previous month (Yahoo ^GSPC)
+  | { type: "rvol_above"; a: string; b: string; date: string }             // rvol30(a) > rvol30(b) on `date` (YYYY-MM-DD), Hyperliquid 1d closes up to date inclusive
+  | { type: "selic_cut"; meeting_date: string }                            // SGS 432 target on the first day after the meeting < target on the meeting day
   | { type: "manual"; note: string };
 export interface BoardQuestion { slug: string; question: string; resolves_at: string; resolution: Resolution; source?: string }
 
@@ -20,11 +24,11 @@ export interface BoardQuestion { slug: string; question: string; resolves_at: st
 export const LOTE_1: BoardQuestion[] = [
   { slug: "btc-120k-oct31", question: "Will Bitcoin close above 120,000 USD on 2026-10-31 (Coinbase daily close, UTC)?", resolves_at: "2026-10-31T23:59:59Z", resolution: { type: "price_close_above", symbol: "BTC", target: 120_000 } },
   { slug: "eth-5k-touch-oct31", question: "Will Ethereum trade above 5,000 USD at any point before 2026-10-31?", resolves_at: "2026-10-31T23:59:59Z", resolution: { type: "price_touch_above", symbol: "ETH", target: 5_000 } },
-  { slug: "fed-cut-oct2026", question: "Will the US Federal Reserve cut the federal funds rate at its October 2026 FOMC meeting?", resolves_at: "2026-10-28T19:00:00Z", resolution: { type: "manual", note: "FOMC statement 2026-10-28 14:00 ET (federalreserve.gov); auto-resolve via Polymarket when a matching market exists" } },
-  { slug: "sol-vs-eth-rvol-oct31", question: "Will Solana close above Ethereum in 30-day realized volatility on 2026-10-31?", resolves_at: "2026-10-31T23:59:59Z", resolution: { type: "manual", note: "compare price_for(SOL).realized_vol_30d_ann vs price_for(ETH) on 2026-10-31" } },
+  { slug: "fed-cut-oct2026", question: "Will the US Federal Reserve cut the federal funds rate at its October 2026 FOMC meeting?", resolves_at: "2026-10-28T19:00:00Z", resolution: { type: "polymarket_event_any", event_slug: "fed-decision-in-october-20260617190323537", match: "decrease" } },
+  { slug: "sol-vs-eth-rvol-oct31", question: "Will Solana close above Ethereum in 30-day realized volatility on 2026-10-31?", resolves_at: "2026-10-31T23:59:59Z", resolution: { type: "rvol_above", a: "SOL", b: "ETH", date: "2026-10-31" } },
   { slug: "crypto-mcap-up-oct2026", question: "Will total crypto market cap be higher on 2026-10-31 than on 2026-09-30 (CoinGecko)?", resolves_at: "2026-10-31T23:59:59Z", resolution: { type: "manual", note: "CoinGecko global market cap, 2026-10-31 vs 2026-09-30" } },
-  { slug: "spx-oct-above-sep-2026", question: "Will the S&P 500 close October 2026 above its September 2026 close?", resolves_at: "2026-10-30T21:00:00Z", resolution: { type: "manual", note: "SPX official close 2026-10-30 vs 2026-09-30" } },
-  { slug: "copom-cut-nov2026", question: "Will Brazil's central bank (Copom) cut the Selic rate at its November 2026 meeting?", resolves_at: "2026-11-05T21:30:00Z", resolution: { type: "manual", note: "Copom statement (bcb.gov.br)" } },
+  { slug: "spx-oct-above-sep-2026", question: "Will the S&P 500 close October 2026 above its September 2026 close?", resolves_at: "2026-10-30T21:00:00Z", resolution: { type: "spx_month_above_prev", month: "2026-10" } },
+  { slug: "copom-cut-nov2026", question: "Will Brazil's central bank (Copom) cut the Selic rate at its November 2026 meeting?", resolves_at: "2026-11-05T21:30:00Z", resolution: { type: "selic_cut", meeting_date: "2026-11-04" } },
   { slug: "btc-ath-oct2026", question: "Will a new all-time high for Bitcoin be set between 2026-09-30 and 2026-10-31?", resolves_at: "2026-10-31T23:59:59Z", resolution: { type: "manual", note: "prior ATH from Coinbase history; touch check daily" } },
 ];
 
@@ -133,20 +137,66 @@ function upsertBoardMeta(q: BoardQuestion) {
 export async function autoResolve(): Promise<{ resolved: { id: string; slug: string; outcome: boolean }[]; pending: number }> {
   ensureOracleTables();
   getDb().exec("CREATE TABLE IF NOT EXISTS oracle_board (slug TEXT PRIMARY KEY, question TEXT NOT NULL, resolves_at TEXT NOT NULL, resolution TEXT NOT NULL, source TEXT, updated_at TEXT NOT NULL)");
-  const rows = getDb().prepare(`SELECT f.id, f.board_slug AS slug, f.resolves_at, b.resolution FROM oracle_forecasts f JOIN oracle_board b ON b.slug = f.board_slug WHERE f.outcome IS NULL AND f.board_slug IS NOT NULL`).all() as any[];
+  const rows = getDb().prepare(`SELECT f.id, f.board_slug AS slug, f.resolves_at, f.created_at, b.resolution FROM oracle_forecasts f JOIN oracle_board b ON b.slug = f.board_slug WHERE f.outcome IS NULL AND f.board_slug IS NOT NULL`).all() as any[];
+  // Legacy Lote-1 rows (Push D, board_slug NULL) resolve with the same rule as the board question they share the text with.
+  const legacy = getDb().prepare(`SELECT f.id, b.slug AS slug, b.resolves_at AS resolves_at, f.created_at, b.resolution FROM oracle_forecasts f JOIN oracle_board b ON b.question = f.question WHERE f.outcome IS NULL AND f.board_slug IS NULL`).all() as any[];
+  rows.push(...legacy.map(l => ({ ...l, slug: `legacy:${l.slug}` })));
   const out: { id: string; slug: string; outcome: boolean }[] = []; let pending = 0;
   const now = Date.now(); const cache = new Map<string, any>();
   for (const r of rows) {
     const rule: Resolution = JSON.parse(r.resolution);
     let outcome: boolean | null = null;
     try {
-      if (rule.type === "price_close_above") {
-        if (new Date(r.resolves_at).getTime() <= now) { const p = cache.get(rule.symbol) ?? await tools.priceFor({ symbol: rule.symbol }); cache.set(rule.symbol, p); const spot = (p as any).spot?.price ?? (p as any).perp?.mark; if (spot) outcome = spot > rule.target; }
-      } else if (rule.type === "price_close_below") {
-        if (new Date(r.resolves_at).getTime() <= now) { const p = cache.get(rule.symbol) ?? await tools.priceFor({ symbol: rule.symbol }); cache.set(rule.symbol, p); const spot = (p as any).spot?.price ?? (p as any).perp?.mark; if (spot) outcome = spot < rule.target; }
+      if (rule.type === "price_close_above" || rule.type === "price_close_below") {
+        if (new Date(r.resolves_at).getTime() <= now) {
+          const close = cache.get(`close:${rule.symbol}:${r.resolves_at}`) ?? await dailyClose(rule.symbol, r.resolves_at); cache.set(`close:${rule.symbol}:${r.resolves_at}`, close);
+          if (close != null) outcome = rule.type === "price_close_above" ? close > rule.target : close < rule.target;
+        }
       } else if (rule.type === "price_touch_above") {
-        const p = cache.get(rule.symbol) ?? await tools.priceFor({ symbol: rule.symbol }); cache.set(rule.symbol, p); const spot = (p as any).spot?.price ?? (p as any).perp?.mark;
-        if (spot && spot >= rule.target) outcome = true; else if (new Date(r.resolves_at).getTime() <= now) outcome = false;
+        const hi = await highSince(rule.symbol, r.created_at, cache);
+        if (hi != null && hi >= rule.target) outcome = true; else if (new Date(r.resolves_at).getTime() <= now) outcome = false;
+      } else if (rule.type === "polymarket_event_any") {
+        const ev = await tools._ext.get<any[]>(`https://gamma-api.polymarket.com/events?slug=${encodeURIComponent(rule.event_slug)}`, { timeoutMs: 8000 });
+        const re = new RegExp(rule.match, "i");
+        const ms = (ev?.[0]?.markets ?? []).filter((m: any) => re.test(String(m.question ?? "")));
+        const yesOf = (m: any) => { try { const p = typeof m.outcomePrices === "string" ? JSON.parse(m.outcomePrices) : m.outcomePrices; return Number(p?.[0]); } catch { return NaN; } };
+        const closed = (m: any) => m.closed === true || m.umaResolutionStatus === "resolved";
+        if (ms.some((m: any) => closed(m) && yesOf(m) >= 0.5)) outcome = true;
+        else if (ms.length && ms.every((m: any) => closed(m))) outcome = false;
+      } else if (rule.type === "spx_month_above_prev") {
+        if (new Date(r.resolves_at).getTime() + 3 * 3_600_000 <= now) {
+          const { spxFacts } = await import("./sources.js");
+          const f = cache.get("spx") ?? await spxFacts(); cache.set("spx", f);
+          const closes: { d: string; c: number }[] = f.closes ?? [];
+          const [y, mo] = rule.month.split("-").map(Number); const prev = new Date(Date.UTC(y, mo - 2, 1)).toISOString().slice(0, 7);
+          const lastOf = (ym: string) => [...closes].reverse().find(x => x.d.slice(0, 7) === ym);
+          const cur = lastOf(rule.month), pv = lastOf(prev);
+          // require a close dated in the following month, so the month's last session is final
+          const hasNext = closes.some(x => x.d.slice(0, 7) > rule.month);
+          if (cur && pv && (hasNext || now > Date.UTC(y, mo, 2))) outcome = cur.c > pv.c;
+        }
+      } else if (rule.type === "rvol_above") {
+        const end = Date.parse(rule.date + "T23:59:59Z");
+        if (end + 2 * 3_600_000 <= now) {
+          const rv = async (coin: string) => {
+            const rows = await tools._hl.post<{ t: number; T: number; c: string }[]>({ type: "candleSnapshot", req: { coin, interval: "1d", startTime: end - 40 * 86_400_000, endTime: end } });
+            const cl = (rows ?? []).filter(x => x.T <= end + 1000).map(x => Number(x.c)).filter(Number.isFinite).slice(-31);
+            if (cl.length < 25) return null;
+            const lr = cl.slice(1).map((c, i) => Math.log(c / cl[i])); const m = lr.reduce((a, b) => a + b, 0) / lr.length;
+            return Math.sqrt(lr.reduce((a, b) => a + (b - m) ** 2, 0) / (lr.length - 1));
+          };
+          const [va, vb] = await Promise.all([rv(rule.a), rv(rule.b)]);
+          if (va != null && vb != null) outcome = va > vb;
+        }
+      } else if (rule.type === "selic_cut") {
+        const md = Date.parse(rule.meeting_date + "T12:00:00Z");
+        if (md + 2 * 86_400_000 <= now) {
+          const rows = await tools._ext.get<any[]>("https://api.bcb.gov.br/dados/serie/bcdata.sgs.432/dados/ultimos/40?formato=json", { timeoutMs: 8000 });
+          const pts = (rows ?? []).map((x: any) => { const [d, m, y] = String(x.data).split("/").map(Number); return { t: Date.UTC(y, m - 1, d), v: Number(String(x.valor).replace(",", ".")) }; }).filter(x => Number.isFinite(x.v)).sort((a, b) => a.t - b.t);
+          const before = [...pts].reverse().find(x => x.t <= md - 2 * 86_400_000);
+          const after = [...pts].reverse().find(x => x.t <= md + 7 * 86_400_000 && x.t > md);
+          if (before && after) outcome = after.v < before.v;
+        }
       } else if (rule.type === "polymarket") {
         const ms = await tools._ext.get<any[]>(`https://gamma-api.polymarket.com/markets?slug=${encodeURIComponent(rule.slug)}`, { timeoutMs: 8000 });
         const m = Array.isArray(ms) ? ms[0] : null;
@@ -158,6 +208,29 @@ export async function autoResolve(): Promise<{ resolved: { id: string; slug: str
   }
   if (out.length) console.log(`[oracle/board] auto-resolved ${out.length}: ${out.map(o => `${o.slug}=${o.outcome ? "YES" : "NO"}`).join(", ")}`);
   return { resolved: out, pending };
+}
+
+/** Coinbase daily close (UTC candle) for the calendar day of `at`; falls back to the current spot only within 6 h of that day's end. */
+async function dailyClose(symbol: string, at: string): Promise<number | null> {
+  const day = at.slice(0, 10); const start = `${day}T00:00:00Z`; const end = `${day}T23:59:59Z`;
+  try {
+    const rows = await tools._ext.get<any[]>(`https://api.exchange.coinbase.com/products/${symbol}-USD/candles?granularity=86400&start=${start}&end=${end}`, { timeoutMs: 8000 });
+    // [time, low, high, open, close, volume]
+    const c = (rows ?? []).find((x: any) => new Date(Number(x[0]) * 1000).toISOString().slice(0, 10) === day);
+    if (c && Date.now() > Date.parse(end)) return Number(c[4]);
+  } catch { /* fall back */ }
+  if (Date.now() - Date.parse(end) < 6 * 3_600_000) { const p: any = await tools.priceFor({ symbol }); return p.spot?.price ?? p.perp?.mark ?? null; }
+  return null;
+}
+/** Highest daily high since `from` (Hyperliquid 1d candles), for touch rules; includes today's live candle. */
+async function highSince(symbol: string, from: string, cache: Map<string, any>): Promise<number | null> {
+  const key = `hi:${symbol}:${from.slice(0, 10)}`; if (cache.has(key)) return cache.get(key);
+  let hi: number | null = null;
+  try {
+    const rows = await tools._hl.post<{ t: number; h: string }[]>({ type: "candleSnapshot", req: { coin: symbol, interval: "1d", startTime: Date.parse(from), endTime: Date.now() } });
+    const hs = (rows ?? []).map(x => Number(x.h)).filter(Number.isFinite); hi = hs.length ? Math.max(...hs) : null;
+  } catch { const p: any = await tools.priceFor({ symbol }).catch(() => null); hi = p?.perp?.mark ?? p?.spot?.price ?? null; }
+  cache.set(key, hi); return hi;
 }
 
 // ---------------------------------------------------------------- scheduler
@@ -172,11 +245,15 @@ export function startBoardScheduler() {
   };
   const t1 = setInterval(tick, 60_000);
   const t2 = setInterval(() => autoResolve().catch(() => {}), 3_600_000);
+  // Extra sweeps at fixed instants (Architect 30/09 §5a): the FOMC scorecard should update in minutes, not up to an hour.
+  const at = (process.env.ORACLE_RESOLVE_AT ?? "2026-10-28T19:05:00Z,2026-10-28T19:35:00Z,2026-10-29T19:05:00Z").split(",").map(x => Date.parse(x.trim())).filter(Number.isFinite);
+  const fired = new Set<number>();
+  const t3 = setInterval(() => { const now = Date.now(); for (const t of at) if (!fired.has(t) && now >= t && now - t < 10 * 60_000) { fired.add(t); console.log(`[oracle/board] scheduled resolve sweep ${new Date(t).toISOString()}`); autoResolve().catch(() => {}); } }, 30_000);
   setTimeout(() => {
     ensureOracleTables();
     const n = (getDb().prepare("SELECT COUNT(*) AS n FROM oracle_forecasts WHERE board_slug IS NOT NULL").get() as any).n;
     if (n === 0 && process.env.ORACLE_BOARD_BOOTSTRAP !== "0") { console.log("[oracle/board] empty board → bootstrapping"); refreshBoard().catch(e => console.warn("[oracle/board]", (e as Error).message)); }
   }, 90_000);
   console.log(`[oracle/board] scheduler: daily at ${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")} UTC, auto-resolve hourly`);
-  return () => { clearInterval(t1); clearInterval(t2); };
+  return () => { clearInterval(t1); clearInterval(t2); clearInterval(t3); };
 }

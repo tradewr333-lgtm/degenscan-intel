@@ -38,17 +38,18 @@ export async function selicFacts(): Promise<{ facts: Record<string, unknown>; ma
 }
 
 /** S&P 500 daily closes: Yahoo Finance chart JSON (^GSPC, no key) first, Stooq CSV as fallback. Last close, prior month-end close, 30d realized vol. */
-export async function spxFacts(): Promise<{ facts: Record<string, unknown>; spot: number | null; vol: number | null; prevMonthClose: number | null }> {
-  const closes: { d: string; c: number }[] = await cached("spx:closes", 3_600_000, async () => {
+export async function spxFacts(): Promise<{ provider?: string; closes?: { d: string; c: number }[]; facts: Record<string, unknown>; spot: number | null; vol: number | null; prevMonthClose: number | null }> {
+  const got: { src: string; closes: { d: string; c: number }[] } = await cached("spx:closes", 3_600_000, async () => {
     try {
       const j = await tools._ext.get<any>("https://query1.finance.yahoo.com/v8/finance/chart/%5EGSPC?range=3mo&interval=1d", { timeoutMs: 10000 });
       const r = j?.chart?.result?.[0]; const ts: number[] = r?.timestamp ?? []; const cl: (number | null)[] = r?.indicators?.quote?.[0]?.close ?? [];
       const out = ts.map((t, i) => ({ d: new Date(t * 1000).toISOString().slice(0, 10), c: Number(cl[i]) })).filter(x => Number.isFinite(x.c));
-      if (out.length >= 25) return out;
+      if (out.length >= 25) return { src: "yahoo_finance", closes: out };
     } catch { /* fall through */ }
     const csv = await tools._ext.get<string>("https://stooq.com/q/d/l/?s=^spx&i=d", { timeoutMs: 10000, text: true });
-    return String(csv).trim().split(/\r?\n/).slice(1).map(l => l.split(",")).filter(c => c.length >= 5 && Number.isFinite(Number(c[4]))).map(c => ({ d: c[0], c: Number(c[4]) }));
+    return { src: "stooq", closes: String(csv).trim().split(/\r?\n/).slice(1).map(l => l.split(",")).filter(c => c.length >= 5 && Number.isFinite(Number(c[4]))).map(c => ({ d: c[0], c: Number(c[4]) })) };
   });
+  const closes = got.closes;
   if (closes.length < 25) return { facts: { spx: "unavailable" }, spot: null, vol: null, prevMonthClose: null };
   const last = closes[closes.length - 1];
   const win = closes.slice(-31); const lr = win.slice(1).map((x, i) => Math.log(x.c / win[i].c));
@@ -56,7 +57,7 @@ export async function spxFacts(): Promise<{ facts: Record<string, unknown>; spot
   const vol = r(sd * Math.sqrt(252));
   const ym = last.d.slice(0, 7);
   const prevMonth = [...closes].reverse().find(x => x.d.slice(0, 7) < ym);
-  return { facts: { spx_close: last.c, spx_close_date: last.d, spx_prev_month_close: prevMonth?.c ?? null, spx_prev_month_close_date: prevMonth?.d ?? null, spx_realized_vol_30d_ann: vol, spx_mtd_pct: prevMonth ? r((last.c / prevMonth.c - 1) * 100, 2) : null }, spot: last.c, vol, prevMonthClose: prevMonth?.c ?? null };
+  return { provider: got.src, closes, facts: { spx_close: last.c, spx_close_date: last.d, spx_prev_month_close: prevMonth?.c ?? null, spx_prev_month_close_date: prevMonth?.d ?? null, spx_realized_vol_30d_ann: vol, spx_mtd_pct: prevMonth ? r((last.c / prevMonth.c - 1) * 100, 2) : null }, spot: last.c, vol, prevMonthClose: prevMonth?.c ?? null };
 }
 
 /** Total crypto market cap: Coinlore /global (no key, generous limits) first, CoinGecko /global as fallback; BTC 30d realized vol from our own price_for as the vol proxy. */
@@ -76,16 +77,18 @@ export async function mcapFacts(): Promise<{ facts: Record<string, unknown>; mca
 export async function extraFactsFor(question: string, ctx: { asset: string | null; horizon_days: number | null }) {
   const q = question.toLowerCase();
   const facts: Record<string, unknown> = {}; const sources: string[] = []; const unavailable: string[] = [];
+  // label = the datum, provider = who served it (Architect 30/09 §4.1)
+  const provider: Record<string, string> = {}; facts.provider = provider;
   let market_odds: number | null | undefined, market_ref: string | null | undefined, base_rate: number | null | undefined, base_rate_note: string | undefined;
   const errName = (e: unknown) => (e instanceof Error ? e.message.slice(0, 60) : String(e));
 
   if (/\b(copom|selic|bcb|banco central do brasil|brazil'?s central bank)\b/.test(q)) {
-    try { const s = await selicFacts(); Object.assign(facts, s.facts); sources.push("bcb_sgs_focus"); if (/\b(cut|cortar|corte|reduz|lower)\b/.test(q) && s.market_odds != null) { market_odds = s.market_odds; market_ref = "https://www.bcb.gov.br/controleinflacao/historicotaxasjuros (Focus median)"; facts.selic_note = s.note; } }
-    catch (e) { unavailable.push(`bcb: ${errName(e)}`); }
+    try { const s = await selicFacts(); Object.assign(facts, s.facts); sources.push("selic_focus"); provider.selic_focus = "bcb_sgs_432+focus_olinda"; if (/\b(cut|cortar|corte|reduz|lower)\b/.test(q) && s.market_odds != null) { market_odds = s.market_odds; market_ref = "https://www.bcb.gov.br/controleinflacao/historicotaxasjuros (Focus median)"; facts.selic_note = s.note; } }
+    catch (e) { unavailable.push(`selic_focus: ${errName(e)}`); }
   }
   if (ctx.asset === "SPX" || /\b(s&p|spx|s&p 500)\b/.test(q)) {
     try {
-      const s = await spxFacts(); Object.assign(facts, s.facts); sources.push("stooq_spx");
+      const s = await spxFacts(); Object.assign(facts, s.facts); sources.push("spx_close"); provider.spx_close = s.provider ?? "unknown";
       // "close October above its September close" → threshold = prev month close, horizon = days to month end
       if (s.spot && s.prevMonthClose && s.vol && /\b(above|acima|higher)\b/.test(q) && /\b(close|fecha)\b/.test(q)) {
         const h = ctx.horizon_days ?? Math.max(1, Math.ceil((Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth() + 1, 0) - Date.now()) / 86_400_000));
@@ -93,26 +96,62 @@ export async function extraFactsFor(question: string, ctx: { asset: string | nul
         const [br, note] = baseRateThreshold(dist, s.vol, h, false);
         base_rate = br; base_rate_note = `SPX vs prior month-end close (${s.prevMonthClose}) from spot ${s.spot}; ${note}`;
       }
-    } catch (e) { unavailable.push(`stooq_spx: ${errName(e)}`); }
+    } catch (e) { unavailable.push(`spx_close: ${errName(e)}`); }
   }
   if (/\b(market cap|mcap|total crypto|capitaliza)/.test(q)) {
     try {
-      const m = await mcapFacts(); Object.assign(facts, m.facts); sources.push(String(m.facts.mcap_source ?? "mcap"));
+      const m = await mcapFacts(); Object.assign(facts, m.facts); sources.push("crypto_mcap"); provider.crypto_mcap = String(m.facts.mcap_source ?? "unknown");
       if (m.mcap && m.vol && ctx.horizon_days) {
         // "higher on day X than on day Y": the reference level is (approximately) today's level → driftless walk gives ~0.5;
         // the panel moves it with calendar/positioning. Distance 0 by construction until the reference date has passed.
         const [br, note] = baseRateThreshold(0, m.vol, ctx.horizon_days, false);
         base_rate = br; base_rate_note = `total mcap vs reference level ≈ today's (${Math.round(m.mcap / 1e9)}B USD); ${note}`;
       }
-    } catch (e) { unavailable.push(`mcap: ${errName(e)}`); }
+    } catch (e) { unavailable.push(`crypto_mcap: ${errName(e)}`); }
   }
   if (/\b(realized vol|realised vol|volatility|rvol)\b/.test(q) && /\b(sol|solana)\b/.test(q) && /\b(eth|ethereum)\b/.test(q)) {
     try {
       const [sol, eth] = await Promise.all([tools.priceFor({ symbol: "SOL" }), tools.priceFor({ symbol: "ETH" })]);
       const vs = (sol as any).realized_vol_30d_ann, ve = (eth as any).realized_vol_30d_ann;
-      Object.assign(facts, { sol_realized_vol_30d_ann: vs, eth_realized_vol_30d_ann: ve, sol_minus_eth_vol: vs != null && ve != null ? r(vs - ve) : null }); sources.push("price_for(SOL,ETH)");
-      if (vs != null && ve != null) { base_rate = vs > ve ? 0.78 : 0.22; base_rate_note = `vol ranking persistence: SOL ${vs} vs ETH ${ve} today; 30d rvol rankings between majors persist ~75–80% over one month`; }
-    } catch (e) { unavailable.push(`rvol: ${errName(e)}`); }
+      Object.assign(facts, { sol_realized_vol_30d_ann: vs, eth_realized_vol_30d_ann: ve, sol_minus_eth_vol: vs != null && ve != null ? r(vs - ve) : null }); sources.push("rvol_sol_eth"); provider.rvol_sol_eth = "hyperliquid_1d_candles";
+      if (vs != null && ve != null) {
+        const h = Math.max(1, ctx.horizon_days ?? 31);
+        const per = await rvolPersistence("SOL", "ETH", h).catch(() => null);
+        if (per && per.n >= 60) {
+          base_rate = vs > ve ? per.persistence : r(1 - per.persistence, 3);
+          base_rate_note = `measured persistence of sign(rvol30 SOL − rvol30 ETH) over ${h}d: ${per.persistence} (n=${per.n} overlapping samples, last ${per.window_days}d of Hyperliquid 1d candles); today SOL ${vs} vs ETH ${ve}`;
+          Object.assign(facts, { rvol_persistence: per.persistence, rvol_persistence_n: per.n, rvol_persistence_h_days: h });
+        } else {
+          base_rate = vs > ve ? 0.78 : 0.22;
+          base_rate_note = `provisional: assumed persistence 0.78 (measured series unavailable); today SOL ${vs} vs ETH ${ve}`;
+        }
+      }
+    } catch (e) { unavailable.push(`rvol_sol_eth: ${errName(e)}`); }
   }
+  if (!Object.keys(provider).length) delete facts.provider;
   return { facts, sources, unavailable, market_odds, market_ref, base_rate, base_rate_note };
+}
+
+/** Empirical persistence of the realized-vol ranking between two coins (Architect 30/09 §4.2): for each day t in the last
+ *  `windowDays`, s(t) = sign(rvol30_A(t) − rvol30_B(t)); persistence = share of t with s(t) == s(t+h). Daily closes from
+ *  Hyperliquid candleSnapshot 1d; cached 24 h per (A,B,h). */
+export async function rvolPersistence(a: string, b: string, h: number, windowDays = 180): Promise<{ persistence: number; n: number; window_days: number }> {
+  return cached(`rvolpers:${a}:${b}:${h}:${windowDays}`, 24 * 3_600_000, async () => {
+    const now = Date.now(); const start = now - (windowDays + h + 40) * 86_400_000;
+    const load = async (coin: string) => {
+      const rows = await tools._hl.post<{ t: number; T: number; c: string }[]>({ type: "candleSnapshot", req: { coin, interval: "1d", startTime: start, endTime: now } });
+      return (rows ?? []).filter(x => x.T <= now).map(x => ({ day: new Date(x.t).toISOString().slice(0, 10), c: Number(x.c) })).filter(x => Number.isFinite(x.c));
+    };
+    const [ca, cb] = await Promise.all([load(a), load(b)]);
+    const mb = new Map(cb.map(x => [x.day, x.c]));
+    const days = ca.filter(x => mb.has(x.day)).map(x => ({ day: x.day, a: x.c, b: mb.get(x.day)! }));
+    const rv = (xs: number[]) => { const lr = xs.slice(1).map((c, i) => Math.log(c / xs[i])); const m = lr.reduce((p, q) => p + q, 0) / lr.length; return Math.sqrt(lr.reduce((p, q) => p + (q - m) ** 2, 0) / (lr.length - 1)); };
+    const sign: number[] = [];
+    for (let i = 30; i < days.length; i++) { const wa = days.slice(i - 30, i + 1).map(d => d.a), wb = days.slice(i - 30, i + 1).map(d => d.b); sign.push(Math.sign(rv(wa) - rv(wb))); }
+    const first = Math.max(0, sign.length - h - windowDays);
+    let same = 0, n = 0;
+    for (let t = first; t + h < sign.length; t++) { if (sign[t] === 0 || sign[t + h] === 0) continue; n++; if (sign[t] === sign[t + h]) same++; }
+    // Laplace smoothing (same+1)/(n+2): overlapping samples are not independent, never report certainty
+    return { persistence: r((same + 1) / (n + 2), 3), n, window_days: windowDays };
+  });
 }

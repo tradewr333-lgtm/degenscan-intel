@@ -119,7 +119,7 @@ describe("oracle HTTP (async jobs, board, resolve, discovery)", () => {
     expect(res.statusCode).toBe(200); expect(res.json().brier).toBeCloseTo(f.probability ** 2, 4);
     const tr = await app.inject({ method: "GET", url: "/v1/oracle/track-record" });
     expect(tr.json().resolved).toBeGreaterThanOrEqual(1); expect(tr.json().recent[0]).toHaveProperty("commitment_hash");
-    expect(tr.json()).toHaveProperty("n_pending"); expect(tr.json()).toHaveProperty("next_resolves_at"); expect(tr.json().edge_vs_base_by_version["0.3.1-ts"]).toBeDefined();
+    expect(tr.json()).toHaveProperty("n_pending"); expect(tr.json()).toHaveProperty("next_resolves_at"); expect(tr.json().edge_vs_base_by_version["0.3.2-ts"]).toBeDefined(); expect(tr.json().edge_vs_base_by_version["0.3.2-ts"]).toHaveProperty("frac_positive"); expect(tr.json()).toHaveProperty("first_resolution");
   });
   it("board serves the latest forecast per slug from the DB (no LLM) and bills oracle_board", async () => {
     const app = await buildHttp();
@@ -201,7 +201,7 @@ describe("oracle extra sources (Selic/Focus, SPX, market cap, SOL vs ETH vol) �
       throw new Error("unexpected " + body.type);
     }) as any;
     const copom = await sources.extraFactsFor("Will Brazil's central bank (Copom) cut the Selic rate at its November 2026 meeting?", { asset: null, horizon_days: 37 });
-    expect(copom.facts.selic_target_pct).toBe(15); expect(copom.market_odds).toBe(0.85); expect(copom.sources).toContain("bcb_sgs_focus");
+    expect(copom.facts.selic_target_pct).toBe(15); expect(copom.market_odds).toBe(0.85); expect(copom.sources).toContain("selic_focus"); expect((copom.facts.provider as any).selic_focus).toMatch(/bcb/);
     const spx = await sources.extraFactsFor("Will the S&P 500 close October 2026 above its September 2026 close?", { asset: "SPX", horizon_days: 31 });
     expect(spx.facts.spx_close).toBeGreaterThan(6000); expect(spx.base_rate).toBeGreaterThan(0.2); expect(spx.base_rate).toBeLessThan(0.8);
     const mcap = await sources.extraFactsFor("Will total crypto market cap be higher on 2026-10-31 than on 2026-09-30 (CoinGecko)?", { asset: null, horizon_days: 31 });
@@ -253,5 +253,81 @@ describe("polymarketSearch pulls the whole event for sibling summing", () => {
     const m: any = await ctx.intelProvider.polymarketSearch("Will the US Federal Reserve cut the federal funds rate at its October 2026 FOMC meeting?");
     expect(m.yes).toBeCloseTo(0.007, 4); expect(m.event).toBe("Fed Decision in October?"); expect(m.question).toMatch(/2 sibling outcomes/);
     tools._ext.reset();
+  });
+});
+
+describe("v0.10.5 — tail-bias fix and automatic resolvers", () => {
+  it("log-odds mean matches the Architect's case", () => {
+    expect(Math.abs(engine.logitMean([0.02, 0.03, 0.15]) - 0.04)).toBeLessThan(0.01);
+    expect(engine.logitMean([0.5, 0.5])).toBeCloseTo(0.5, 6);
+  });
+  it("resolves Coinbase daily close, touch via daily highs, SPX month, rvol, Selic cut, Fed event-any — and legacy Lote-1 rows by question text", async () => {
+    const tools = await import("../src/server/tools.js");
+    const sources = await import("../src/oracle/sources.js");
+    const board = await import("../src/oracle/board.js");
+    const { getDb } = await import("../src/store/db.js");
+    tools._ext.reset(); tools._hl.reset(); sources._sources.reset();
+    const d = getDb(); ledger.ensureOracleTables();
+    d.exec("CREATE TABLE IF NOT EXISTS oracle_board (slug TEXT PRIMARY KEY, question TEXT NOT NULL, resolves_at TEXT NOT NULL, resolution TEXT NOT NULL, source TEXT, updated_at TEXT NOT NULL)");
+    const past = "2026-09-01T23:59:59Z";
+    const mk = (slug: string, q: string, rule: any, boardSlug: string | null = slug, resolves = past) => {
+      d.prepare("INSERT OR REPLACE INTO oracle_board (slug, question, resolves_at, resolution, source, updated_at) VALUES (?,?,?,?,?,?)").run(slug, q, resolves, JSON.stringify(rule), null, new Date().toISOString());
+      const f: any = { id: "t-" + slug + (boardSlug ? "" : "-legacy"), question: q, created_at: "2026-08-20T00:00:00Z", resolves_at: resolves, routing: { domain: "t", method: "hybrid", human_driven: true, binary: true, rationale: "" }, probability: 0.3, ci80: [0.2, 0.4], disagreement: 0, runs: [], panel: [], summary: "", drivers: [], failure_modes: [], confidence: "medium", cost: {}, commitment_hash: "x", market_odds: null, market_ref: null, edge: null, base_rate: 0.3, edge_vs_base: 0, config: { runs: 1, population: 1, rounds: 1, capped: false }, context_used: {}, engine_version: "test", disclaimer: "" };
+      ledger.putForecast(f, boardSlug);
+      return f.id;
+    };
+    const ids = {
+      close: mk("t-close", "T close above 100?", { type: "price_close_above", symbol: "BTC", target: 100 }),
+      touch: mk("t-touch", "T touch 150?", { type: "price_touch_above", symbol: "BTC", target: 150 }, "t-touch", "2027-01-01T00:00:00Z"),
+      spx: mk("t-spx", "T spx?", { type: "spx_month_above_prev", month: "2026-08" }),
+      rvol: mk("t-rvol", "T rvol?", { type: "rvol_above", a: "SOL", b: "ETH", date: "2026-09-01" }),
+      selic: mk("t-selic", "T selic?", { type: "selic_cut", meeting_date: "2026-08-15" }),
+      fed: mk("t-fed", "T fed?", { type: "polymarket_event_any", event_slug: "ev", match: "decrease" }),
+    };
+    const legacyId = mk("t-close2", "T legacy close above 100?", { type: "price_close_above", symbol: "BTC", target: 100 }, null);
+    tools._ext.get = (async (url: string) => {
+      if (url.includes("api.exchange.coinbase.com")) return [[Date.parse("2026-09-01T00:00:00Z") / 1000, 90, 130, 95, 120, 1]];
+      if (url.includes("query1.finance.yahoo.com")) { const ts: number[] = [], cl: number[] = []; for (let i = 0; i < 60; i++) { const t = Date.parse("2026-07-10T20:00:00Z") + i * 86_400_000; ts.push(t / 1000); cl.push(new Date(t).toISOString().slice(0, 7) === "2026-08" ? 6600 : 6500); } return { chart: { result: [{ timestamp: ts, indicators: { quote: [{ close: cl }] } }] } }; }
+      if (url.includes("bcdata.sgs.432")) return [{ data: "10/08/2026", valor: "15,00" }, { data: "18/08/2026", valor: "14,75" }];
+      if (url.includes("events?slug=ev")) return [{ markets: [{ question: "Will the Fed decrease rates by 25 bps?", closed: true, outcomePrices: '["1","0"]' }, { question: "Will the Fed decrease rates by 50 bps?", closed: true, outcomePrices: '["0","1"]' }] }];
+      throw new Error("unexpected " + url);
+    }) as any;
+    tools._hl.post = (async (body: any) => {
+      if (body.type === "candleSnapshot") {
+        const coin = body.req.coin; const amp = coin === "SOL" ? 0.05 : 0.01; let px = 100; const out: any[] = []; const end = body.req.endTime;
+        for (let i = 35; i >= 0; i--) { px *= i % 2 ? 1 + amp : 1 - amp; out.push({ t: end - (i + 1) * 86_400_000, T: end - i * 86_400_000, c: String(px), h: String(coin === "BTC" ? (i === 3 ? 160 : 120) : px) }); }
+        return out;
+      }
+      throw new Error("unexpected " + body.type);
+    }) as any;
+    const res = await board.autoResolve();
+    const got = Object.fromEntries(res.resolved.map(r => [r.id, r.outcome]));
+    expect(got[ids.close]).toBe(true);   // Coinbase close 120 > 100
+    expect(got[ids.touch]).toBe(true);   // a daily high of 160 ≥ 150
+    expect(got[ids.spx]).toBe(true);     // Aug last close 6600 > Jul last close 6500
+    expect(got[ids.rvol]).toBe(true);    // SOL swings 5 %/day vs ETH 1 %
+    expect(got[ids.selic]).toBe(true);   // 15.00 → 14.75
+    expect(got[ids.fed]).toBe(true);     // the 25 bps "decrease" market resolved YES
+    expect(got[legacyId]).toBe(true);    // legacy row resolved with the board rule sharing its question text
+    tools._ext.reset(); tools._hl.reset(); sources._sources.reset();
+  });
+});
+
+describe("empirical rvol persistence (Architect §4.2)", () => {
+  it("SOL always more volatile than ETH → persistence 1 with ≥ 60 overlapping samples; used as base rate", async () => {
+    const tools = await import("../src/server/tools.js");
+    const sources = await import("../src/oracle/sources.js");
+    tools._hl.reset(); sources._sources.reset();
+    tools._hl.post = (async (body: any) => {
+      if (body.type === "candleSnapshot") { const amp = body.req.coin === "SOL" ? 0.05 : 0.02; const n = Math.floor((body.req.endTime - body.req.startTime) / 86_400_000); let px = 100; const out: any[] = []; for (let i = 0; i < n; i++) { px *= i % 2 ? 1 + amp * (1 + (i % 3) / 10) : 1 - amp; out.push({ t: body.req.startTime + i * 86_400_000, T: body.req.startTime + (i + 1) * 86_400_000, c: String(px) }); } return out; }
+      if (body.type === "metaAndAssetCtxs") return [{ universe: [{ name: "SOL" }, { name: "ETH" }] }, [{ funding: "0", openInterest: "1", prevDayPx: "100", dayNtlVlm: "1", premium: "0", oraclePx: "100", markPx: "100", midPx: "100" }, { funding: "0", openInterest: "1", prevDayPx: "3000", dayNtlVlm: "1", premium: "0", oraclePx: "3000", markPx: "3000", midPx: "3000" }]];
+      throw new Error("unexpected " + body.type);
+    }) as any;
+    tools._ext.get = (async () => { throw new Error("no coinbase in this test"); }) as any;
+    const per = await sources.rvolPersistence("SOL", "ETH", 31);
+    expect(per.n).toBeGreaterThanOrEqual(60); expect(per.persistence).toBeCloseTo((per.n + 1) / (per.n + 2), 3);
+    const x = await sources.extraFactsFor("Will Solana close above Ethereum in 30-day realized volatility on 2026-10-31?", { asset: "SOL", horizon_days: 31 });
+    expect(x.base_rate).toBe(per.persistence); expect(x.base_rate!).toBeLessThan(1); expect(x.base_rate_note).toMatch(/measured persistence/);
+    tools._hl.reset(); tools._ext.reset(); sources._sources.reset();
   });
 });
