@@ -1,0 +1,113 @@
+/** Extra grounded facts for the oracle context (Architect 29/09 §2): Selic + Focus (BCB), S&P 500 close + 30d vol (Stooq),
+ *  total crypto market cap (CoinGecko), SOL vs ETH realized vols (our own price_for). All public, no key, cached, failures
+ *  become `unavailable` entries — never errors. Uses tools._ext.get so tests can mock. */
+import * as tools from "../server/tools.js";
+import { baseRateThreshold } from "./context.js";
+
+const r = (n: number, d = 4) => Math.round(n * 10 ** d) / 10 ** d;
+const cache = new Map<string, { at: number; v: any }>();
+async function cached<T>(key: string, ttlMs: number, fn: () => Promise<T>): Promise<T> {
+  const hit = cache.get(key); if (hit && Date.now() - hit.at < ttlMs) return hit.v as T;
+  const v = await fn(); cache.set(key, { at: Date.now(), v }); return v;
+}
+export const _sources = { reset() { cache.clear(); } };
+
+/** Selic target (SGS 432) + Focus median expectation for the next meetings → synthetic odds of a cut. */
+export async function selicFacts(): Promise<{ facts: Record<string, unknown>; market_odds: number | null; note: string }> {
+  const meta = await cached("selic:meta", 6 * 3_600_000, () => tools._ext.get<any[]>("https://api.bcb.gov.br/dados/serie/bcdata.sgs.432/dados/ultimos/1?formato=json", { timeoutMs: 8000 }));
+  const selic = Number(String(meta?.[0]?.valor ?? "").replace(",", "."));
+  let focus: any[] = [];
+  try {
+    const j = await cached("selic:focus", 6 * 3_600_000, () => tools._ext.get<any>("https://olinda.bcb.gov.br/olinda/servico/Expectativas/versao/v1/odata/ExpectativasMercadoSelic?$top=12&$orderby=Data%20desc&$format=json", { timeoutMs: 10000 }));
+    focus = Array.isArray(j?.value) ? j.value : [];
+  } catch { focus = []; }
+  // latest survey date, first upcoming meeting
+  const latestDate = focus.map(f => f.Data).sort().pop();
+  const rows = focus.filter(f => f.Data === latestDate).sort((a, b) => String(a.Reuniao).localeCompare(String(b.Reuniao)));
+  const next = rows[0];
+  const median = next ? Number(next.Mediana) : null;
+  const facts: Record<string, unknown> = { selic_target_pct: Number.isFinite(selic) ? selic : null, focus_survey_date: latestDate ?? null, focus_next_meeting: next?.Reuniao ?? null, focus_median_next_pct: median, focus_min_next_pct: next ? Number(next.Minimo) : null, focus_max_next_pct: next ? Number(next.Maximo) : null, focus_respondents: next ? Number(next.numeroRespondentes) : null };
+  // synthetic odds of a cut at the next meeting: how far the median sits below the current target, scaled by the survey range
+  let odds: number | null = null; let note = "no Focus data";
+  if (Number.isFinite(selic) && median != null && next) {
+    const lo = Number(next.Minimo), hi = Number(next.Maximo);
+    if (median < selic - 0.1) odds = 0.85; else if (median < selic) odds = 0.6; else if (median > selic + 0.1) odds = 0.05; else odds = lo < selic ? 0.25 : 0.1;
+    note = `synthetic from Focus: target ${selic}%, median for ${next.Reuniao} = ${median}% (range ${lo}–${hi})`;
+  }
+  return { facts, market_odds: odds, note };
+}
+
+/** S&P 500 daily closes from Stooq (CSV, no key): last close, prior month-end close, 30d realized vol. */
+export async function spxFacts(): Promise<{ facts: Record<string, unknown>; spot: number | null; vol: number | null; prevMonthClose: number | null }> {
+  const csv = await cached("spx:csv", 3_600_000, () => tools._ext.get<string>("https://stooq.com/q/d/l/?s=^spx&i=d", { timeoutMs: 10000, text: true }));
+  const lines = String(csv).trim().split(/\r?\n/).slice(1).map(l => l.split(",")).filter(c => c.length >= 5 && Number.isFinite(Number(c[4])));
+  const closes = lines.map(c => ({ d: c[0], c: Number(c[4]) }));
+  if (closes.length < 25) return { facts: { spx: "unavailable" }, spot: null, vol: null, prevMonthClose: null };
+  const last = closes[closes.length - 1];
+  const lr = closes.slice(-31).slice(1).map((x, i, arr) => Math.log(x.c / (i === 0 ? closes[closes.length - 31].c : arr[i - 1].c)));
+  const mean = lr.reduce((a, b) => a + b, 0) / lr.length; const sd = Math.sqrt(lr.reduce((a, b) => a + (b - mean) ** 2, 0) / (lr.length - 1));
+  const vol = r(sd * Math.sqrt(252));
+  const ym = last.d.slice(0, 7);
+  const prevMonth = [...closes].reverse().find(x => x.d.slice(0, 7) < ym);
+  return { facts: { spx_close: last.c, spx_close_date: last.d, spx_prev_month_close: prevMonth?.c ?? null, spx_prev_month_close_date: prevMonth?.d ?? null, spx_realized_vol_30d_ann: vol, spx_mtd_pct: prevMonth ? r((last.c / prevMonth.c - 1) * 100, 2) : null }, spot: last.c, vol, prevMonthClose: prevMonth?.c ?? null };
+}
+
+/** Total crypto market cap (CoinGecko /global) + BTC 31d series as vol proxy. */
+export async function mcapFacts(): Promise<{ facts: Record<string, unknown>; mcap: number | null; vol: number | null }> {
+  const g = await cached("cg:global", 3_600_000, () => tools._ext.get<any>("https://api.coingecko.com/api/v3/global", { timeoutMs: 10000 }));
+  const mcap = Number(g?.data?.total_market_cap?.usd); const chg24 = Number(g?.data?.market_cap_change_percentage_24h_usd);
+  let vol: number | null = null; let monthStart: number | null = null;
+  try {
+    const mc = await cached("cg:btc31", 3_600_000, () => tools._ext.get<any>("https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=31&interval=daily", { timeoutMs: 10000 }));
+    const caps: number[] = (mc?.market_caps ?? []).map((x: any) => Number(x[1])).filter(Number.isFinite);
+    if (caps.length >= 20) { const lr = caps.slice(1).map((c, i) => Math.log(c / caps[i])); const m = lr.reduce((a, b) => a + b, 0) / lr.length; vol = r(Math.sqrt(lr.reduce((a, b) => a + (b - m) ** 2, 0) / (lr.length - 1)) * Math.sqrt(365)); monthStart = caps[0]; }
+  } catch { /* optional */ }
+  return { facts: { total_crypto_mcap_usd: Number.isFinite(mcap) ? Math.round(mcap) : null, mcap_change_24h_pct: Number.isFinite(chg24) ? r(chg24, 2) : null, btc_share_pct: g?.data?.market_cap_percentage?.btc != null ? r(Number(g.data.market_cap_percentage.btc), 1) : null, mcap_vol_proxy_btc_30d_ann: vol, btc_mcap_31d_ago_usd: monthStart != null ? Math.round(monthStart) : null }, mcap: Number.isFinite(mcap) ? mcap : null, vol };
+}
+
+/** Dispatcher: which extra facts a question needs. Returns grounded facts and, when possible, a synthetic market_odds or base_rate. */
+export async function extraFactsFor(question: string, ctx: { asset: string | null; horizon_days: number | null }) {
+  const q = question.toLowerCase();
+  const facts: Record<string, unknown> = {}; const sources: string[] = []; const unavailable: string[] = [];
+  let market_odds: number | null | undefined, market_ref: string | null | undefined, base_rate: number | null | undefined, base_rate_note: string | undefined;
+  const errName = (e: unknown) => (e instanceof Error ? e.message.slice(0, 60) : String(e));
+
+  if (/\b(copom|selic|bcb|banco central do brasil|brazil'?s central bank)\b/.test(q)) {
+    try { const s = await selicFacts(); Object.assign(facts, s.facts); sources.push("bcb_sgs_focus"); if (/\b(cut|cortar|corte|reduz|lower)\b/.test(q) && s.market_odds != null) { market_odds = s.market_odds; market_ref = "https://www.bcb.gov.br/controleinflacao/historicotaxasjuros (Focus median)"; facts.selic_note = s.note; } }
+    catch (e) { unavailable.push(`bcb: ${errName(e)}`); }
+  }
+  if (ctx.asset === "SPX" || /\b(s&p|spx|s&p 500)\b/.test(q)) {
+    try {
+      const s = await spxFacts(); Object.assign(facts, s.facts); sources.push("stooq_spx");
+      // "close October above its September close" → threshold = prev month close, horizon = days to month end
+      if (s.spot && s.prevMonthClose && s.vol && /\b(above|acima|higher)\b/.test(q) && /\b(close|fecha)\b/.test(q)) {
+        const h = ctx.horizon_days ?? Math.max(1, Math.ceil((Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth() + 1, 0) - Date.now()) / 86_400_000));
+        const dist = (s.prevMonthClose / s.spot - 1) * 100;
+        const [br, note] = baseRateThreshold(dist, s.vol, h, false);
+        base_rate = br; base_rate_note = `SPX vs prior month-end close (${s.prevMonthClose}) from spot ${s.spot}; ${note}`;
+      }
+    } catch (e) { unavailable.push(`stooq_spx: ${errName(e)}`); }
+  }
+  if (/\b(market cap|mcap|total crypto|capitaliza)/.test(q)) {
+    try {
+      const m = await mcapFacts(); Object.assign(facts, m.facts); sources.push("coingecko_global");
+      if (m.mcap && m.vol && typeof facts.btc_mcap_31d_ago_usd === "number" && ctx.horizon_days) {
+        // "higher on day X than on day Y": driftless walk from today → base rate ≈ 0.5 adjusted by MTD move already realised
+        const startShare = Number(facts.btc_share_pct) / 100 || 0.57;
+        const refMcap = (facts.btc_mcap_31d_ago_usd as number) / startShare; // total mcap ~31d ago (proxy)
+        const dist = (refMcap / m.mcap - 1) * 100; // how far the reference sits from today's level
+        const [br, note] = baseRateThreshold(dist, m.vol, ctx.horizon_days, false);
+        base_rate = br; base_rate_note = `total mcap vs reference level (~31d ago, BTC-share proxy); ${note}`;
+      }
+    } catch (e) { unavailable.push(`coingecko: ${errName(e)}`); }
+  }
+  if (/\b(realized vol|realised vol|volatility|rvol)\b/.test(q) && /\b(sol|solana)\b/.test(q) && /\b(eth|ethereum)\b/.test(q)) {
+    try {
+      const [sol, eth] = await Promise.all([tools.priceFor({ symbol: "SOL" }), tools.priceFor({ symbol: "ETH" })]);
+      const vs = (sol as any).realized_vol_30d_ann, ve = (eth as any).realized_vol_30d_ann;
+      Object.assign(facts, { sol_realized_vol_30d_ann: vs, eth_realized_vol_30d_ann: ve, sol_minus_eth_vol: vs != null && ve != null ? r(vs - ve) : null }); sources.push("price_for(SOL,ETH)");
+      if (vs != null && ve != null) { base_rate = vs > ve ? 0.78 : 0.22; base_rate_note = `vol ranking persistence: SOL ${vs} vs ETH ${ve} today; 30d rvol rankings between majors persist ~75–80% over one month`; }
+    } catch (e) { unavailable.push(`rvol: ${errName(e)}`); }
+  }
+  return { facts, sources, unavailable, market_odds, market_ref, base_rate, base_rate_note };
+}

@@ -6,6 +6,29 @@
  */
 import type { FastifyInstance } from "fastify";
 import { PRICES } from "./pricing.js";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+
+/** Long-form pages written by the Architect (markdown in /docs/*.md), rendered with a minimal converter — no dependency. */
+const LONGFORM: { slug: string; file: string; title: string }[] = [
+  { slug: "oracle-methodology", file: "oracle-methodology.md", title: "How the Degenscan Intel Oracle produces a probability — methodology" },
+];
+function readLongform(file: string): string { try { return readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../docs", file), "utf8"); } catch { return "# Not available\n"; } }
+function mdToHtml(md: string): string {
+  const inline = (t: string) => esc(t).replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>").replace(/\*([^*]+)\*/g, "<em>$1</em>");
+  const out: string[] = []; let list: string[] = [], para: string[] = [];
+  const flushP = () => { if (para.length) { out.push(`<p>${inline(para.join(" "))}</p>`); para = []; } };
+  const flushL = () => { if (list.length) { out.push(`<ul>${list.map(li => `<li>${inline(li)}</li>`).join("")}</ul>`); list = []; } };
+  for (const line of md.split(/\r?\n/)) {
+    const h = /^(#{1,3})\s+(.*)$/.exec(line);
+    if (h) { flushP(); flushL(); out.push(`<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`); continue; }
+    if (/^\s*[-*]\s+/.test(line)) { flushP(); list.push(line.replace(/^\s*[-*]\s+/, "")); continue; }
+    if (!line.trim()) { flushP(); flushL(); continue; }
+    para.push(line.trim());
+  }
+  flushP(); flushL(); return out.join("\n");
+}
 
 type Page = { slug: string; title: string; question: string; answer: string; rest: string; js: string; py: string; tool: keyof typeof PRICES | null; see?: string[] };
 
@@ -133,13 +156,19 @@ ${see ? `<h2>See also</h2><ul>${see}</ul>` : ""}
 
 export function installDocs(app: FastifyInstance, base: string) {
   const pages = docsPages(base);
-  app.get("/docs", async (_req, reply) => reply.type("text/html; charset=utf-8").send(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Docs — Degenscan Intel: market-event API for AI trading agents</title><link rel="icon" href="/favicon.ico"><style>${STYLE}</style></head><body><nav><a href="/">Degenscan Intel</a><a href="/openapi.json">OpenAPI</a><a href="/llms.txt">llms.txt</a><a href="/llms-full.txt">llms-full.txt</a></nav><h1>Degenscan Intel — docs for agents and the models that write them</h1><p>Each page answers one question with copy-pasteable curl, JavaScript and Python. Pay per call in USDC (x402) or with an API key; 100 free calls/day/IP.</p><ul>${pages.map(p => `<li><a href="/docs/${p.slug}">${esc(p.title)}</a></li>`).join("")}</ul><footer>Marbella Collins LLC · MIT · not investment advice</footer></body></html>`));
+  app.get("/docs", async (_req, reply) => reply.type("text/html; charset=utf-8").send(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Docs — Degenscan Intel: market-event API for AI trading agents</title><link rel="icon" href="/favicon.ico"><style>${STYLE}</style></head><body><nav><a href="/">Degenscan Intel</a><a href="/openapi.json">OpenAPI</a><a href="/llms.txt">llms.txt</a><a href="/llms-full.txt">llms-full.txt</a></nav><h1>Degenscan Intel — docs for agents and the models that write them</h1><p>Each page answers one question with copy-pasteable curl, JavaScript and Python. Pay per call in USDC (x402) or with an API key; 100 free calls/day/IP.</p><ul>${pages.map(p => `<li><a href="/docs/${p.slug}">${esc(p.title)}</a></li>`).join("")}${LONGFORM.map(l => `<li><a href="/docs/${l.slug}">${esc(l.title)}</a></li>`).join("")}</ul><footer>Marbella Collins LLC · MIT · not investment advice</footer></body></html>`));
   for (const p of pages) app.get(`/docs/${p.slug}`, async (_req, reply) => reply.type("text/html; charset=utf-8").header("cache-control", "public, max-age=3600").send(pageHtml(p, base, pages)));
+  for (const lf of LONGFORM) app.get(`/docs/${lf.slug}`, async (_req, reply) => {
+    const md = readLongform(lf.file);
+    reply.type("text/html; charset=utf-8").header("cache-control", "public, max-age=3600").send(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(lf.title)} — Degenscan Intel</title><meta name="description" content="How the oracle grounds a question in live data, computes a volatility base rate, simulates agent societies and an expert panel, aggregates, commits a hash and publishes its Brier score."><link rel="canonical" href="${base}/docs/${lf.slug}"><link rel="icon" href="/favicon.ico"><style>${STYLE}</style></head><body><nav><a href="/">Degenscan Intel</a><a href="/docs">Docs</a><a href="/v1/oracle/track-record">Track record</a><a href="/docs/calibrated-probability-forecast-api-for-agents">Oracle API</a></nav><article>${mdToHtml(md)}</article><footer>Marbella Collins LLC · MIT · Information and analytics only — not investment advice</footer></body></html>`);
+  });
+  for (const lf of LONGFORM) app.get(`/docs/${lf.slug}.md`, async (_req, reply) => reply.type("text/markdown; charset=utf-8").send(readLongform(lf.file)));
   app.get("/llms-full.txt", async (_req, reply) => reply.type("text/plain; charset=utf-8").send(
     `# Degenscan Intel — full docs for LLMs\n> Cross-asset market-event intelligence for AI trading agents. REST ${base}/v1 · MCP POST ${base}/mcp · pay per call in USDC (x402, Base or Solana) or X-API-KEY · 100 free calls/day/IP with header X-Free-Trial: 1.\n> SDKs: npm i @degenscan/intel · pip install degenscan-intel · skill: npx skills add tradewr333-lgtm/degenscan-intel\n\n## Prices (USD per call)\n${Object.entries(PRICES).map(([t, p]) => `- ${t}: ${p}`).join("\n")}\n\n` +
     pages.map(p => `## ${p.title}\nQ: ${p.question}\nA: ${p.answer}\n\ncurl:\n${p.rest}\n\nJavaScript:\n${p.js}\n\nPython:\n${p.py}\n`).join("\n---\n\n") +
+    LONGFORM.map(l => `\n---\n\n${readLongform(l.file)}\n`).join("") +
     `\n## Operator\nMarbella Collins LLC · contact@degenscan.io · MIT · Information and analytics only — not investment advice. Public metrics ${base}/v1/metrics; our own wallets ${base}/wallets.json.\n`));
-  app.get("/sitemap.xml", async (_req, reply) => reply.type("application/xml").send(`<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${["", "/docs", "/llms.txt", "/llms-full.txt", "/openapi.json", "/skill.md", "/v1/metrics", ...pages.map(p => `/docs/${p.slug}`)].map(u => `<url><loc>${base}${u}</loc></url>`).join("")}</urlset>`));
+  app.get("/sitemap.xml", async (_req, reply) => reply.type("application/xml").send(`<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${["", "/docs", "/llms.txt", "/llms-full.txt", "/openapi.json", "/skill.md", "/v1/metrics", ...pages.map(p => `/docs/${p.slug}`), ...LONGFORM.map(l => `/docs/${l.slug}`)].map(u => `<url><loc>${base}${u}</loc></url>`).join("")}</urlset>`));
   app.get("/robots.txt", async (_req, reply) => reply.type("text/plain").send(`User-agent: *\nAllow: /\nSitemap: ${base}/sitemap.xml\n`));
   return pages.length;
 }

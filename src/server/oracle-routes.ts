@@ -9,7 +9,7 @@
 import type { FastifyInstance } from "fastify";
 import { ForecastRequest, DISCLAIMER } from "../oracle/schema.js";
 import { enqueueForecast, recoverJobs, _queue } from "../oracle/queue.js";
-import { boardLatest, getForecast, getJob, recentForecasts, resolveForecast, trackRecord, ensureOracleTables } from "../oracle/ledger.js";
+import { boardLatest, getForecast, getJob, recentForecasts, resolveForecast, trackRecord, ensureOracleTables, putForecast } from "../oracle/ledger.js";
 import { llmConfigured } from "../oracle/llm.js";
 import { refreshBoard, autoResolve, boardQuestions } from "../oracle/board.js";
 import { getDb } from "../store/db.js";
@@ -28,9 +28,10 @@ export function installOracleRoutes(app: FastifyInstance, billing: (req: any, to
     if (!parsed.success) { reply.code(400); return { error: "invalid request", issues: parsed.error.issues.map(i => `${i.path.join(".")}: ${i.message}`) }; }
     let r = parsed.data; let trial: typeof TRIAL_LIMITS | null = null;
     const method = req.x402Context ? "x402" : req.intelAccess?.method ?? "free";
-    if (method === "quota") { trial = TRIAL_LIMITS; r = { ...r, runs: Math.min(r.runs, TRIAL_LIMITS.runs), population: Math.min(r.population, TRIAL_LIMITS.population), rounds: Math.min(r.rounds, TRIAL_LIMITS.rounds) }; }
+    // anyone not paying (trial header, or FREE_MODE) gets the cheap config
+    if (method === "quota" || method === "free") { trial = TRIAL_LIMITS; r = { ...r, runs: Math.min(r.runs, TRIAL_LIMITS.runs), population: Math.min(r.population, TRIAL_LIMITS.population), rounds: Math.min(r.rounds, TRIAL_LIMITS.rounds) }; }
     const payer = req.x402Context ? `x402:${(req.x402Context.paymentPayload as any)?.payload?.authorization?.from ?? "unknown"}` : req.intelAccess?.payer ?? null;
-    const job = enqueueForecast(r, payer);
+    const job = enqueueForecast(r, payer, { capped: trial != null });
     reply.code(202);
     return { ...job, question: r.question, config: { runs: r.runs, population: r.population, rounds: r.rounds }, trial_limits: trial, note: "Poll `poll` (free) until status is done. The forecast_id is yours forever; the result is committed with a sha256 hash before resolution.", _billing: billing(req, "oracle_forecast"), disclaimer: DISCLAIMER };
   });
@@ -93,6 +94,34 @@ export function installOracleRoutes(app: FastifyInstance, billing: (req: any, to
     const row = (getDb().prepare("SELECT body, content_type FROM well_known WHERE name IN (?, 'x402list.txt', 'x402-list.txt') ORDER BY CASE WHEN name = ? THEN 0 ELSE 1 END LIMIT 1").get(name, name) as any);
     if (!row) { reply.code(404); return "not set"; }
     return reply.type(row.content_type).send(row.body);
+  });
+
+  // Push D — import legacy forecasts (Lote 1, Python v0.2) preserving id, commitment_hash, created_at, probability. Operator only.
+  app.post("/v1/admin/oracle/import", async (req: any, reply) => {
+    if (!operator(req, reply)) return { error: "operator key required" };
+    const rows = Array.isArray(req.body?.rows) ? req.body.rows : null;
+    if (!rows) { reply.code(400); return { error: "body { rows: [{ id, question, created_at, resolves_at?, probability, commitment_hash, payload, engine_version?, board_slug? }] }" }; }
+    const { createHash } = await import("node:crypto");
+    const out: any[] = [];
+    for (const r of rows) {
+      try {
+        const payload = typeof r.payload === "string" ? JSON.parse(r.payload) : r.payload ?? {};
+        const created = String(r.created_at); const p = Number(r.probability);
+        const expect = createHash("sha256").update(`${r.id}|${r.question}|${p.toFixed(4)}|${created}`).digest("hex");
+        const hashOk = expect === r.commitment_hash;
+        const f: any = { ...payload, id: String(r.id), question: String(r.question), created_at: created, resolves_at: r.resolves_at ?? payload.resolves_at ?? null,
+          routing: payload.routing ?? { domain: r.domain ?? "general", method: r.method ?? "hybrid", human_driven: true, binary: true, rationale: "" },
+          probability: p, ci80: payload.ci80 ?? [p, p], disagreement: payload.disagreement ?? 0, runs: payload.runs ?? [], panel: payload.panel ?? [],
+          summary: payload.summary ?? "", drivers: payload.drivers ?? [], failure_modes: payload.failure_modes ?? [], confidence: payload.confidence ?? "medium", cost: payload.cost ?? {},
+          commitment_hash: String(r.commitment_hash), market_odds: payload.market_odds ?? null, market_ref: payload.market_ref ?? null, edge: payload.edge ?? null,
+          base_rate: payload.base_rate ?? null, edge_vs_base: null, config: { runs: payload.runs?.length ?? 0, population: 0, rounds: 0, capped: false },
+          context_used: payload.context_used ?? {}, engine_version: String(r.engine_version ?? "0.2-nodata"), disclaimer: DISCLAIMER, legacy_id: String(r.id), hash_verified: hashOk };
+        if (getForecast(f.id)) { out.push({ id: f.id, status: "exists" }); continue; }
+        putForecast(f, r.board_slug ?? null);
+        out.push({ id: f.id, status: "imported", hash_verified: hashOk });
+      } catch (e) { out.push({ id: r?.id, status: "error", error: (e as Error).message }); }
+    }
+    return { imported: out.filter(o => o.status === "imported").length, results: out };
   });
 
   app.get("/v1/oracle/track-record", async () => ({ ...trackRecord(), recent: recentForecasts(20), disclaimer: DISCLAIMER }));

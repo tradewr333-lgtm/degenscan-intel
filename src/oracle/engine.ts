@@ -152,7 +152,11 @@ export async function expertPanel(req: ForecastRequest, routing: Routing, seed: 
     "then adjust with named evidence (each adjustment <= 15 percentage points, justified). Methods: " +
     "outside view / reference class, inside view, trend & positioning (funding, OI, flows), " +
     "event-driven (calendar), devil's advocate. Never output 0.5 as a default; if evidence is " +
-    "genuinely absent, output the base rate. Return {experts:[{name, method, anchor, probability, " +
+    "genuinely absent, output the base rate. " +
+    // Architect 29/09 (§2.2): let the panel move when it has a named reason — up to 25 pp cumulatively.
+    "The base rate is your starting point, not your answer. If the calendar, positioning or a listed market give you a named reason, move — up to 25 points cumulatively — and say which. " +
+    "Named reasons that justify moving: (a) a scheduled event inside the horizon that appears in upcoming_events, (b) extreme positioning in funding_8h (|rate| > 0.05%) or open interest, (c) market_odds that differ from base_rate by more than 10 points — the market knows something volatility does not. " +
+    "Return {experts:[{name, method, anchor, probability, " +
     "reasoning, key_uncertainty}]}.", { temperature: 0.7, seed }, usage);
   return (Array.isArray(out?.experts) ? out.experts : []).slice(0, 7).map((e: any) => ({ ...e, probability: clamp(num(e?.probability, 0.5), 0.01, 0.99) }));
 }
@@ -164,7 +168,7 @@ export function ci80(xs: number[]): [number, number] {
   return [r4(s[Math.floor(0.10 * (s.length - 1))]), r4(s[Math.ceil(0.90 * (s.length - 1))])];
 }
 
-export async function forecast(req0: ForecastRequest, opts: { baseSeed?: number; provider?: DataProvider | null; id?: string } = {}): Promise<Forecast> {
+export async function forecast(req0: ForecastRequest, opts: { baseSeed?: number; provider?: DataProvider | null; id?: string; configCapped?: boolean } = {}): Promise<Forecast> {
   const baseSeed = opts.baseSeed ?? 42;
   const usage = newUsage();
   // v0.3: never simulate blind — assemble market context first and inject it everywhere
@@ -189,10 +193,11 @@ export async function forecast(req0: ForecastRequest, opts: { baseSeed?: number;
     `Tipping rounds: ${JSON.stringify(runs.map(r => r.tipping_round))}\nFlips: ${JSON.stringify(runs.map(r => r.flipped))}\n` +
     `Panel: ${JSON.stringify(panel).slice(0, 3000)}\n` +
     `Naive mean=${pNaive.toFixed(3)}, spread=${disagreement.toFixed(3)}.\n` +
-    "Produce the final calibrated probability for YES. Calibration rule: anchor on base_rate (or " +
-    "market_odds when the question IS a listed market), then move with the simulation and panel " +
-    "evidence; 0.5 is NOT a default and must never be used as a fallback. If your number differs " +
-    "from market_odds by more than 10 points, name the specific evidence that justifies the edge. " +
+    // Architect 29/09 (§2.3): when a listed market matched, it is the primary anchor and base_rate the secondary.
+    (mctx.market_odds != null
+      ? "Produce the final calibrated probability for YES. Calibration rule: this question matches a listed market — anchor on market_odds first and base_rate second, then move with the simulation and panel evidence; 0.5 is NOT a default and must never be used as a fallback. If your number differs from market_odds by more than 10 points, name the specific evidence that justifies the edge. "
+      : "Produce the final calibrated probability for YES. Calibration rule: anchor on base_rate, then move with the simulation and panel evidence; 0.5 is NOT a default and must never be used as a fallback. If your number differs from base_rate by more than 10 points, name the specific evidence that justifies the move. ") +
+    "Societies that diverge from the panel are information: keep that divergence visible in drivers, do not smooth it away. " +
     "Also give a 2-sentence summary, top drivers, failure_modes (how the YES/NO world breaks), " +
     "confidence in [low, medium, high] (low only when sources_unavailable is long or spread > 0.15). " +
     "Return {probability, summary, drivers, failure_modes, confidence}.", { strong: true, seed: baseSeed }, usage);
@@ -205,12 +210,14 @@ export async function forecast(req0: ForecastRequest, opts: { baseSeed?: number;
   const created = new Date().toISOString();
   const h = createHash("sha256").update(`${fid}|${req.question}|${p.toFixed(4)}|${created}`).digest("hex");
   const edge = mctx.market_odds != null ? r4(p - mctx.market_odds) : null;
+  const edgeVsBase = mctx.base_rate != null ? r4(p - mctx.base_rate) : null;
   return {
     id: fid, question: req0.question, created_at: created, resolves_at: req0.resolves_at ?? null, routing,
     probability: r4(p), ci80: ci80(samples.length ? samples : [p]), disagreement: r4(disagreement), runs, panel,
     summary: String(agg?.summary ?? ""), drivers: (Array.isArray(agg?.drivers) ? agg.drivers : []).slice(0, 6).map(String),
     failure_modes: (Array.isArray(agg?.failure_modes) ? agg.failure_modes : []).slice(0, 6).map(String), confidence: conf as Forecast["confidence"],
-    cost: { ...usage }, commitment_hash: h, market_odds: mctx.market_odds, market_ref: mctx.market_ref, edge, base_rate: mctx.base_rate,
+    cost: { ...usage }, commitment_hash: h, market_odds: mctx.market_odds, market_ref: mctx.market_ref, edge, base_rate: mctx.base_rate, edge_vs_base: edgeVsBase,
+    config: { runs: req0.runs, population: req0.population, rounds: req0.rounds, capped: Boolean(opts.configCapped) },
     context_used: JSON.parse(JSON.stringify(mctx)), engine_version: ENGINE_VERSION, disclaimer: DISCLAIMER,
   };
 }

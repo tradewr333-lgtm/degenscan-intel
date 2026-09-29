@@ -34,6 +34,26 @@ describe("oracle context builder (port of context.py)", () => {
     const below = await ctx.buildContext("Will BTC close below 100,000 USD on 2026-10-31?", ctx.mockProvider, new Date(Date.UTC(2026, 8, 29)));
     expect(above.base_rate! + below.base_rate!).toBeCloseTo(1, 2); expect(below.base_rate_note).toMatch(/complement/);
   });
+  it("v0.3.1 parity: detect_target cases, touch-below reflection, match_market with synonyms/event tag/direction", async () => {
+    expect(ctx.detectTarget("Will BTC trade above 95k before 2026-10-31?")).toBe(95_000);
+    expect(ctx.detectTarget("Will SOL close below $ 95 on 2026-10-31?")).toBe(95);
+    expect(ctx.detectTarget("Will 95 people attend?")).toBeNull();
+    expect(ctx.detectDirection("Will Bitcoin close below 75,000 USD?")).toBe("below");
+    const now = new Date(Date.UTC(2026, 8, 29));
+    const cb = await ctx.buildContext("Will Bitcoin close below 75,000 USD on 2026-10-31?", ctx.mockProvider, now);
+    expect(cb.base_rate!).toBeLessThan(0.15); expect(cb.base_rate_note.startsWith("complement")).toBe(true);
+    const tb = await ctx.buildContext("Will Bitcoin trade below 75,000 USD at any point before 2026-10-31?", ctx.mockProvider, now);
+    expect(tb.base_rate!).toBeCloseTo(Math.min(1, 2 * cb.base_rate!), 2);
+    const markets = [
+      { question: "Will the Fed decrease interest rates by 25 bps after the October meeting?", yes: 0.36, url: "u1" },
+      { question: "Will the Fed increase interest rates by 25 bps after the October meeting?", yes: 0.01, url: "u2" },
+      { question: "Will Bitcoin hit $100k in October?", yes: 0.12, url: "u3" },
+      { question: "Will Lakers win the 2026 NBA finals?", yes: 0.08, url: "u4" },
+    ];
+    const m = ctx.matchMarket("Will the US Federal Reserve cut the federal funds rate at its October 2026 FOMC meeting?", markets);
+    expect(m?.url).toBe("u1");
+    expect(ctx.matchMarket("Will Brazil's Copom cut the Selic in November 2026?", markets)).toBeNull();
+  });
   it("touch questions use the reflection principle (≈2× end-above)", () => {
     const [end] = ctx.baseRateThreshold(10, 0.5, 30, false); const [touch] = ctx.baseRateThreshold(10, 0.5, 30, true);
     expect(touch!).toBeCloseTo(Math.min(1, 2 * end!), 3);
@@ -81,7 +101,8 @@ describe("oracle HTTP (async jobs, board, resolve, discovery)", () => {
     const got = await app.inject({ method: "GET", url: `/v1/oracle/forecast/${j.forecast_id}` });
     expect(got.statusCode).toBe(200); const f = got.json();
     expect(f.status).toBe("done");
-    for (const k of ["probability", "ci80", "disagreement", "base_rate", "commitment_hash", "runs", "panel", "disclaimer", "context_used"]) expect(f).toHaveProperty(k);
+    for (const k of ["probability", "ci80", "disagreement", "base_rate", "commitment_hash", "runs", "panel", "disclaimer", "context_used", "edge_vs_base", "engine_version"]) expect(f).toHaveProperty(k);
+    expect(f.config.capped).toBe(true); expect(f.config.runs).toBe(2);
     expect(f.context_used.sources.length).toBeGreaterThan(0); expect(f.runs[0].belief_trajectory.length).toBeGreaterThan(1); expect(f.panel[0]).toHaveProperty("anchor");
     expect(f.resolves_at).toBe("2026-10-31T23:59:00Z");
     // unknown id → 404; bad body → 400
@@ -93,6 +114,7 @@ describe("oracle HTTP (async jobs, board, resolve, discovery)", () => {
     expect(res.statusCode).toBe(200); expect(res.json().brier).toBeCloseTo(f.probability ** 2, 4);
     const tr = await app.inject({ method: "GET", url: "/v1/oracle/track-record" });
     expect(tr.json().resolved).toBeGreaterThanOrEqual(1); expect(tr.json().recent[0]).toHaveProperty("commitment_hash");
+    expect(tr.json()).toHaveProperty("n_pending"); expect(tr.json()).toHaveProperty("next_resolves_at"); expect(tr.json().edge_vs_base_by_version["0.3.1-ts"]).toBeDefined();
   });
   it("board serves the latest forecast per slug from the DB (no LLM) and bills oracle_board", async () => {
     const app = await buildHttp();
@@ -151,5 +173,58 @@ describe("oracle board (scheduler logic, mocked sources)", () => {
     expect((await app.inject({ method: "POST", url: "/v1/oracle/board/refresh", payload: {} })).statusCode).toBe(401);
     expect((await app.inject({ method: "GET", url: "/v1/oracle/board/questions" })).json().items.length).toBe(qs.length);
     tools._ext.reset(); tools._hl.reset();
+  });
+});
+
+describe("oracle extra sources (Selic/Focus, SPX, market cap, SOL vs ETH vol) — mocked", () => {
+  it("grounds the four manual Lote-1 questions with facts, synthetic odds and base rates", async () => {
+    const tools = await import("../src/server/tools.js");
+    const sources = await import("../src/oracle/sources.js");
+    tools._ext.reset(); tools._hl.reset(); sources._sources.reset();
+    const now = Date.now(); const csv = ["Date,Open,High,Low,Close,Volume", ...Array.from({ length: 45 }, (_, i) => { const d = new Date(now - (45 - i) * 86_400_000).toISOString().slice(0, 10); const c = 6500 * (1 + 0.01 * Math.sin(i * 7.3)); return `${d},${c},${c},${c},${c.toFixed(2)},1`; })].join("\n");
+    tools._ext.get = (async (url: string, init: any) => {
+      if (url.includes("bcdata.sgs.432")) return [{ data: "29/09/2026", valor: "15,00" }];
+      if (url.includes("ExpectativasMercadoSelic")) return { value: [{ Data: "2026-09-26", Reuniao: "R7/2026", Mediana: 14.75, Minimo: 14.5, Maximo: 15.0, numeroRespondentes: 80 }, { Data: "2026-09-26", Reuniao: "R8/2026", Mediana: 14.5, Minimo: 14.25, Maximo: 15.0, numeroRespondentes: 78 }] };
+      if (url.includes("stooq.com")) { expect(init?.text).toBe(true); return csv; }
+      if (url.includes("coingecko.com/api/v3/global")) return { data: { total_market_cap: { usd: 2.9e12 }, market_cap_change_percentage_24h_usd: -1.2, market_cap_percentage: { btc: 57.1 } } };
+      if (url.includes("market_chart")) return { market_caps: Array.from({ length: 32 }, (_, i) => [now - (31 - i) * 86_400_000, 1.65e12 * (1 + 0.01 * Math.sin(i))]) };
+      throw new Error("unexpected " + url);
+    }) as any;
+    tools._hl.post = (async (body: any) => {
+      if (body.type === "metaAndAssetCtxs") return [{ universe: [{ name: "SOL" }, { name: "ETH" }] }, [{ funding: "0", openInterest: "1", prevDayPx: "100", dayNtlVlm: "1", premium: "0", oraclePx: "100", markPx: "100", midPx: "100" }, { funding: "0", openInterest: "1", prevDayPx: "3000", dayNtlVlm: "1", premium: "0", oraclePx: "3000", markPx: "3000", midPx: "3000" }]];
+      if (body.type === "candleSnapshot") { const amp = body.req.coin === "SOL" ? 0.04 : 0.02; let px = 100; return Array.from({ length: 33 }, (_, i) => { px *= i % 2 ? 1 + amp : 1 - amp; return { t: now - (32 - i) * 86_400_000, T: now - (31 - i) * 86_400_000, c: String(px) }; }); }
+      throw new Error("unexpected " + body.type);
+    }) as any;
+    const copom = await sources.extraFactsFor("Will Brazil's central bank (Copom) cut the Selic rate at its November 2026 meeting?", { asset: null, horizon_days: 37 });
+    expect(copom.facts.selic_target_pct).toBe(15); expect(copom.market_odds).toBe(0.85); expect(copom.sources).toContain("bcb_sgs_focus");
+    const spx = await sources.extraFactsFor("Will the S&P 500 close October 2026 above its September 2026 close?", { asset: "SPX", horizon_days: 31 });
+    expect(spx.facts.spx_close).toBeGreaterThan(6000); expect(spx.base_rate).toBeGreaterThan(0.2); expect(spx.base_rate).toBeLessThan(0.8);
+    const mcap = await sources.extraFactsFor("Will total crypto market cap be higher on 2026-10-31 than on 2026-09-30 (CoinGecko)?", { asset: null, horizon_days: 31 });
+    expect(mcap.facts.total_crypto_mcap_usd).toBe(2.9e12); expect(mcap.base_rate).not.toBeNull();
+    const rvol = await sources.extraFactsFor("Will Solana close above Ethereum in 30-day realized volatility on 2026-10-31?", { asset: "SOL", horizon_days: 31 });
+    expect(rvol.facts.sol_realized_vol_30d_ann).toBeGreaterThan(rvol.facts.eth_realized_vol_30d_ann as number); expect(rvol.base_rate).toBe(0.78);
+    // through buildContext with the real provider wiring (extra facts hook)
+    const c = await ctx.buildContext("Will Brazil's central bank (Copom) cut the Selic rate at its November 2026 meeting?", ctx.intelProvider);
+    expect(c.market_odds).toBe(0.85); expect(c.extra.selic_target_pct).toBe(15);
+    tools._ext.reset(); tools._hl.reset(); sources._sources.reset();
+  });
+});
+
+describe("Push D — legacy import", () => {
+  it("imports Lote-1 rows preserving id/hash/created_at, verifies the hash, labels the engine version, refuses duplicates", async () => {
+    const app = await buildHttp();
+    const { createHash } = await import("node:crypto");
+    const created = "2026-09-29T10:00:00+00:00"; const p = 0.52; const id = "abc123def456";
+    const hash = createHash("sha256").update(`${id}|Will X happen?|${p.toFixed(4)}|${created}`).digest("hex");
+    const row = { id, question: "Will X happen?", created_at: created, resolves_at: "2026-10-31T00:00:00Z", probability: p, commitment_hash: hash, domain: "crypto", method: "hybrid", payload: JSON.stringify({ ci80: [0.4, 0.6], confidence: "low", routing: { domain: "crypto", method: "hybrid", human_driven: true, binary: true, rationale: "" } }) };
+    expect((await app.inject({ method: "POST", url: "/v1/admin/oracle/import", payload: { rows: [row] } })).statusCode).toBe(401);
+    const r = await app.inject({ method: "POST", url: "/v1/admin/oracle/import", headers: { "x-operator-key": "op-test-key" }, payload: { rows: [row] } });
+    expect(r.json().imported).toBe(1); expect(r.json().results[0].hash_verified).toBe(true);
+    const g = (await app.inject({ method: "GET", url: `/v1/oracle/forecast/${id}` })).json();
+    expect(g.engine_version).toBe("0.2-nodata"); expect(g.commitment_hash).toBe(hash); expect(g.created_at).toBe(created); expect(g.probability).toBe(p);
+    const again = await app.inject({ method: "POST", url: "/v1/admin/oracle/import", headers: { "x-operator-key": "op-test-key" }, payload: { rows: [row] } });
+    expect(again.json().results[0].status).toBe("exists");
+    const tr = (await app.inject({ method: "GET", url: "/v1/oracle/track-record" })).json();
+    expect(tr.forecasts_total).toBeGreaterThanOrEqual(1);
   });
 });

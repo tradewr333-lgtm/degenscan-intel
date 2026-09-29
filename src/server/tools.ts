@@ -392,12 +392,12 @@ export async function derivsFor(a: DerivsArgs) {
 // (price, funding alerts, whale moves, Polymarket top). All from public sources, 30–60 s cache,
 // ~1 KB responses, each pointing back to our event feed via `related`.
 // ---------------------------------------------------------------------------
-type Fetcher = <T>(url: string, init?: RequestInit & { timeoutMs?: number }) => Promise<T>;
+type Fetcher = <T = any>(url: string, init?: RequestInit & { timeoutMs?: number; text?: boolean }) => Promise<T>;
 const defaultGet: Fetcher = async (url, init = {}) => {
-  const { timeoutMs = 8000, ...rest } = init;
-  const res = await fetch(url, { ...rest, headers: { accept: "application/json", "user-agent": "degenscan-intel/0.8 (+https://intel.degenscan.io)", ...(rest.headers as any ?? {}) }, signal: AbortSignal.timeout(timeoutMs) });
+  const { timeoutMs = 8000, text = false, ...rest } = init;
+  const res = await fetch(url, { ...rest, headers: { accept: text ? "text/plain, text/csv, */*" : "application/json", "user-agent": "degenscan-intel/0.9 (+https://intel.degenscan.io)", ...(rest.headers as any ?? {}) }, signal: AbortSignal.timeout(timeoutMs) });
   if (!res.ok) throw new Error(`HTTP ${res.status} ${url}`);
-  return res.json() as Promise<any>;
+  return (text ? res.text() : res.json()) as Promise<any>;
 };
 /** Exposed for tests: inject a fake fetcher and clear caches. */
 export const _ext = { get: defaultGet, reset() { cache.clear(); hlCache = null; hlPredCache = null; hlVolCache = new Map(); } };

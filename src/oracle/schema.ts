@@ -54,6 +54,8 @@ export interface Forecast {
   market_odds: number | null; market_ref: string | null;
   edge: number | null;           // probability - market_odds: what the caller pays for. null = no listed market
   base_rate: number | null;      // reference-class probability implied by volatility/history, zero directional view
+  edge_vs_base: number | null;   // probability - base_rate: what the societies/panel added beyond the lognormal formula
+  config: { runs: number; population: number; rounds: number; capped: boolean }; // capped = free-trial reduced config
   context_used: Record<string, any>;
   engine_version: string;
   outcome?: boolean | null; brier?: number | null; market_brier?: number | null; resolved_at?: string | null;
@@ -61,4 +63,4 @@ export interface Forecast {
 }
 
 export const DISCLAIMER = "Information and analytics only — not investment advice. Probabilities are model outputs with a public Brier track record at /v1/oracle/track-record.";
-export const ENGINE_VERSION = "0.3-ts";
+export const ENGINE_VERSION = "0.3.1-ts";

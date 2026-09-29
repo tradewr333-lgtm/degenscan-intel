@@ -21,16 +21,18 @@ export function ensureOracleTables() {
       started_at TEXT, finished_at TEXT, error TEXT, board_slug TEXT
     );
   `);
+  try { getDb().exec("ALTER TABLE oracle_forecasts ADD COLUMN edge_vs_base REAL"); } catch { /* exists */ }
+  try { getDb().exec("ALTER TABLE oracle_forecasts ADD COLUMN legacy_id TEXT"); } catch { /* exists */ }
 }
 
 export function putForecast(f: Forecast, boardSlug: string | null = null) {
   ensureOracleTables();
   getDb().prepare(`INSERT OR REPLACE INTO oracle_forecasts (id, question, created_at, resolves_at, domain, method, probability, ci_lo, ci_hi, disagreement, confidence,
-    market_odds, edge, base_rate, commitment_hash, payload, engine_version, board_slug, outcome, resolved_at, brier, market_brier)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+    market_odds, edge, base_rate, commitment_hash, payload, engine_version, board_slug, outcome, resolved_at, brier, market_brier, edge_vs_base)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
     f.id, f.question, f.created_at, f.resolves_at, f.routing.domain, f.routing.method, f.probability, f.ci80[0], f.ci80[1], f.disagreement, f.confidence,
     f.market_odds, f.edge, f.base_rate, f.commitment_hash, JSON.stringify(f), f.engine_version, boardSlug,
-    f.outcome == null ? null : f.outcome ? 1 : 0, f.resolved_at ?? null, f.brier ?? null, f.market_brier ?? null);
+    f.outcome == null ? null : f.outcome ? 1 : 0, f.resolved_at ?? null, f.brier ?? null, f.market_brier ?? null, f.edge_vs_base ?? null);
 }
 
 export function getForecast(id: string): Forecast | null {
@@ -60,6 +62,8 @@ export function trackRecord() {
   const edges = (d.prepare("SELECT ABS(edge) AS e FROM oracle_forecasts WHERE edge IS NOT NULL").all() as any[]).map(r => r.e as number);
   const total = (d.prepare("SELECT COUNT(*) AS n FROM oracle_forecasts").get() as any).n as number;
   const pending = (d.prepare("SELECT COUNT(*) AS n FROM oracle_forecasts WHERE outcome IS NULL").get() as any).n as number;
+  const nextRes = (d.prepare("SELECT MIN(resolves_at) AS t FROM oracle_forecasts WHERE outcome IS NULL AND resolves_at > ?").get(new Date().toISOString()) as any)?.t ?? null;
+  const evb = d.prepare("SELECT engine_version AS v, AVG(ABS(edge_vs_base)) AS m, COUNT(edge_vs_base) AS n FROM oracle_forecasts WHERE edge_vs_base IS NOT NULL GROUP BY engine_version").all() as any[];
   const byDomain: Record<string, any> = {};
   const byVersion: Record<string, any> = {};
   for (const r of rows) {
@@ -71,7 +75,8 @@ export function trackRecord() {
   for (const map of [byDomain, byVersion]) for (const x of Object.values(map) as any[]) { x.brier = r4(x.brier_sum / x.n); x.hit_rate = Math.round((x.hits / x.n) * 1000) / 1000; delete x.brier_sum; }
   const n = rows.length;
   return {
-    forecasts_total: total, resolved: n, pending,
+    forecasts_total: total, resolved: n, pending, n_pending: pending, next_resolves_at: nextRes,
+    edge_vs_base_by_version: Object.fromEntries(evb.map(r => [r.v ?? "unknown", { mean_abs: r4(r.m), n: r.n }])),
     brier: n ? r4(rows.reduce((s, r) => s + r.brier, 0) / n) : null,
     brier_reference: { coin_flip: 0.25, good_human_forecaster: 0.15, superforecaster: 0.10 },
     vs_market: {  // the number an agent actually pays for
