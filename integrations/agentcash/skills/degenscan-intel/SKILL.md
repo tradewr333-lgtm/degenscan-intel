@@ -1,6 +1,6 @@
 ---
 name: degenscan-intel
-description: No key required — market-event intelligence for trading and research agents: SEC filings (8-K, Form 4, 13D), Fed/FOMC and central-bank releases, regulator actions, earthquakes and storms, Nasdaq halts, DeFi hacks, Polymarket odds and resolution-relevant events, Hyperliquid perp funding rate and open interest, whale-scale market pressure — normalized into one feed and scored per asset (stocks, ETFs, crypto, commodities, rates, FX). Use when the task involves "what is moving X", "what happened in the last 4 hours that affects my book", funding rate or open interest before a perp trade, a Polymarket question, an SEC filing on a ticker, or the macro calendar (FOMC, CPI, NFP). 100 free calls/day with no signup; then pays per call in USDC via x402 (Base or Solana) or API key.
+description: No key required — market-event intelligence for trading and research agents: SEC filings (8-K, Form 4, 13D), Fed/FOMC and central-bank releases, regulator actions, earthquakes and storms, Nasdaq halts, DeFi hacks, Polymarket odds and resolution-relevant events, Hyperliquid perp funding rate and open interest, whale-scale market pressure — normalized into one feed and scored per asset (stocks, ETFs, crypto, commodities, rates, FX). Use when the task involves "what is moving X", "what happened in the last 4 hours that affects my book", funding rate or open interest before a perp trade, a Polymarket question, an SEC filing on a ticker, or the macro calendar (FOMC, CPI, NFP) — or when the agent needs a calibrated probability / forecast for a yes-no question ("how likely is BTC above 120k by Oct 31", "will the Fed cut") with a base rate, 80% interval, edge vs the market and a public Brier track record. 100 free calls/day with no signup; then pays per call in USDC via x402 (Base or Solana) or API key.
 ---
 
 # Degenscan Intel
@@ -8,6 +8,8 @@ description: No key required — market-event intelligence for trading and resea
 **No API key required to start.** Send header `X-Free-Trial: 1` for 100 free calls/day per IP; after that any x402 client pays per call in USDC (Base `eip155:8453` or Solana) — no signup, no card. One normalized feed of price-moving events from ~40 primary sources (SEC EDGAR, Federal Reserve/FOMC, Federal Register, ECB/BoE/BoJ, FTC/DOJ/FDA/CFTC/FCC, USGS, NOAA/NHC, Nasdaq halts, DefiLlama hacks, Polymarket, Hyperliquid perps, press wires) scored against an exposure graph into per-asset impacts. Deterministic, sub-200 ms, auditable (`raw_ref` links to the source document).
 
 Covers the questions trading agents ask most: Polymarket odds vs fresh primary events · perp funding rate / open interest / premium (Hyperliquid, no key) · SEC 8-K and Form 4 by ticker · FOMC/CPI/NFP calendar · headlines with sentiment · cross-asset catalysts with exposure paths (quake → TSMC fab → TSM → NVDA).
+
+**Oracle (conclusion, not data).** `oracle_forecast(question)` returns a calibrated YES-probability for any binary market question: the engine assembles live context (spot, 30-day realized vol, funding, OI, Polymarket odds, calendar, recent primary events), computes a volatility base rate, simulates several LLM agent societies plus a five-forecaster panel anchored on that base rate, and aggregates with the rule that 0.5 is never a default. Async: 202 + `forecast_id`, poll `oracle_get` (free) for 1–3 min. Output: `probability`, `ci80`, `disagreement`, `base_rate`, `market_odds`, `edge`, drivers, failure modes, sha256 commitment hash. `oracle_board` ($0.002) is the daily set of standing forecasts with no waiting; `oracle_track_record` (free) is the public Brier score, overall and vs the market.
 
 - MCP (streamable HTTP): `POST https://intel.degenscan.io/mcp`
 - REST: `https://intel.degenscan.io/v1/...`
@@ -19,7 +21,14 @@ Covers the questions trading agents ask most: Polymarket odds vs fresh primary e
 | You need… | Call | Cost |
 |---|---|---|
 | Cheapest probe — anything new in the last hour? | `pulse` | $0.001 |
+| Price of one coin, no key (Hyperliquid mark + Coinbase spot, 24h change, basis) | `price_for(symbol)` | $0.001 |
+| Which perps have extreme funding right now (crowded longs/shorts, predicted per venue) | `funding_alerts()` | $0.001 |
+| Large USDC/USDT transfers to/from exchanges on Base & Ethereum, with labels | `whale_moves(min_usd)` | $0.002 |
+| Most active Polymarket markets now (odds, 24h change, volume) | `polymarket_top(sort)` | $0.002 |
 | Everything an operator reads before trading one asset, in one call | `brief(asset_id)` | $0.10 |
+| A calibrated probability (not a headline) for "will X happen by date?" — BTC above a target, Fed cut, Polymarket question | `oracle_forecast(question)` → poll `oracle_get(forecast_id)` (free, 1–3 min) | $0.25 |
+| Cheap calibrated priors for standing questions, refreshed daily, no waiting | `oracle_board()` / `oracle_board(slug)` | $0.002 |
+| How much to trust the oracle: public Brier score, oracle vs. market | `oracle_track_record()` | free |
 | Headlines on one asset with sentiment | `news_for(ticker, since)` | $0.002 |
 | Perp funding / open interest / premium / predicted funding by venue for one coin (Hyperliquid, no key) | `derivs_for(symbol)` | $0.003 |
 | SEC filings on one issuer (8-K, Form 4, 13D, S-1) | `filings_for(ticker, since)` | $0.002 |

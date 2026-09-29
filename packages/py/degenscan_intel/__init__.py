@@ -167,6 +167,41 @@ class AsyncIntel:
         """$0.10 — one-call pre-trade briefing for one asset."""
         return await self.request(f"/v1/brief/{asset_id}", query={"since": since})
 
+    # ---- oracle (2Realidade) --------------------------------------------------------
+    async def oracle_forecast(self, question: str, *, resolves_at: Optional[str] = None, context: str = "", runs: Optional[int] = None,
+                              population: Optional[int] = None, rounds: Optional[int] = None, interventions: Optional[list[dict[str, Any]]] = None,
+                              method: Optional[str] = None):
+        """$0.25 — calibrated YES-probability for a binary question (async). Returns {forecast_id, status, eta_s, poll}; then oracle_get / oracle_wait."""
+        body = {k: v for k, v in dict(question=question, resolves_at=resolves_at, context=context or None, runs=runs, population=population,
+                                       rounds=rounds, interventions=interventions, method=method).items() if v is not None}
+        return await self.request("/v1/oracle/forecast", method="POST", body=body)
+
+    async def oracle_get(self, forecast_id: str):
+        """Free — poll a forecast: {status: queued|running|failed} or the full Forecast when status == 'done'."""
+        return await self.request(f"/v1/oracle/forecast/{forecast_id}")
+
+    async def oracle_wait(self, forecast_id: str, *, interval_s: float = 20.0, timeout_s: float = 600.0):
+        """Free — poll until done. Returns the Forecast; raises IntelError on failed/timeout."""
+        import time
+        t0 = time.monotonic()
+        while True:
+            f = await self.oracle_get(forecast_id)
+            if f.get("status") == "done":
+                return f
+            if f.get("status") == "failed":
+                raise IntelError(f"forecast {forecast_id} failed: {f.get('error')}", 500)
+            if time.monotonic() - t0 > timeout_s:
+                raise IntelError(f"forecast {forecast_id} still {f.get('status')} after {timeout_s}s", 504)
+            await asyncio.sleep(interval_s)
+
+    async def oracle_board(self, slug: Optional[str] = None):
+        """$0.002 — daily board of standing forecasts (or one by slug). No waiting."""
+        return await self.request(f"/v1/oracle/board/{slug}" if slug else "/v1/oracle/board")
+
+    async def oracle_track_record(self):
+        """Free — public Brier track record overall, by domain and vs. market."""
+        return await self.request("/v1/oracle/track-record")
+
     # ---- keys -----------------------------------------------------------------------
     async def buy_pack(self, pack: str = "pack_1k"):
         """Buy a prepaid API key with USDC (needs private_key). pack_1k $5 · pack_10k $40 · pack_100k $300 -> {api_key, total_calls}."""

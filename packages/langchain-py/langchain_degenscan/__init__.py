@@ -57,7 +57,23 @@ class _MarketInput(BaseModel):
     since: str = Field("48h")
 
 
+class _OracleInput(BaseModel):
+    question: str = Field(..., description="Binary question, e.g. 'Will Bitcoin close above 120,000 USD on 2026-10-31?'")
+    resolves_at: Optional[str] = Field(None, description="ISO-8601 resolution time")
+
+
+class _OracleGetInput(BaseModel):
+    forecast_id: str = Field(..., description="forecast_id returned by degenscan_oracle_forecast")
+
+
+class _BoardInput(BaseModel):
+    slug: Optional[str] = Field(None, description="Optional board slug, e.g. btc-120k-oct31; omit for the whole board")
+
+
 _SPECS: list[tuple[str, str, Type[BaseModel], str]] = [
+    ("degenscan_oracle_forecast", "Calibrated YES-probability for a binary market question (Monte Carlo of LLM agent societies + base-rate-anchored expert panel on live data). ASYNC: returns {forecast_id, eta_s}; then call degenscan_oracle_get every ~20 s until status is done. $0.25/call.", _OracleInput, "oracle_forecast"),
+    ("degenscan_oracle_get", "Fetch/poll an oracle forecast by forecast_id (free). When done: probability, ci80, base_rate, market_odds, edge, drivers, failure_modes, commitment_hash.", _OracleGetInput, "oracle_get"),
+    ("degenscan_oracle_board", "Daily board of standing calibrated forecasts (BTC/ETH/SOL targets, FOMC, top Polymarket): probability, interval, base rate, edge — no waiting. $0.002/call.", _BoardInput, "oracle_board"),
     ("degenscan_market_pulse", "Cheapest probe ($0.001) of what happened in markets in the last hour: event counts by class, high-severity count, venues open. Call first, on a timer.", _PulseInput, "pulse"),
     ("degenscan_market_events", "Price-moving events since a window from ~40 primary sources (SEC filings, Fed/central banks, regulators, earthquakes, storms, Nasdaq halts, DeFi hacks, Polymarket), each with per-asset impacts: direction (-1/0/1), confidence (0..1), exposure path, tradable_now/next_open. $0.005/call.", _EventsInput, "events_since"),
     ("degenscan_asset_brief", "One-call pre-trade brief for one asset: net event pressure and drivers, headlines with sentiment, SEC filings, exposure map, related Polymarket markets, upcoming catalysts (FOMC, CPI, earnings), perp funding/OI flags (crypto), venue open now. $0.10/call.", _AssetInput, "brief"),

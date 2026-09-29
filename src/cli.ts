@@ -6,6 +6,7 @@ import { refreshUniverse, loadUniverse } from "./universe/index.js";
 import { invalidateGraph } from "./graph/graph.js";
 import { invalidateDict } from "./engine/entities.js";
 import { getDb } from "./store/db.js";
+import { startBoardScheduler } from "./oracle/board.js";
 
 const [cmd = "serve", ...rest] = process.argv.slice(2);
 const flag = (f: string) => rest.includes(f);
@@ -21,6 +22,7 @@ async function main() {
       setInterval(async () => { const et = new Date().toLocaleTimeString("en-US", { timeZone: "America/New_York", hour12: false }); if (et.startsWith("21:35")) { await refreshUniverse(); invalidateGraph(); invalidateDict(); } }, 60_000);
       const app = await buildHttp();
       await app.listen({ port, host: "0.0.0.0" });
+      if (!flag("--no-ingest")) startBoardScheduler();
       console.log(`degenscan-intel listening on :${port}  (MCP: POST /mcp, REST: /v1, universe ${loadUniverse().version}, ${CONNECTORS.length} connectors)`);
       break;
     }

@@ -11,6 +11,7 @@ import { ForecastRequest, DISCLAIMER } from "../oracle/schema.js";
 import { enqueueForecast, recoverJobs, _queue } from "../oracle/queue.js";
 import { boardLatest, getForecast, getJob, recentForecasts, resolveForecast, trackRecord, ensureOracleTables } from "../oracle/ledger.js";
 import { llmConfigured } from "../oracle/llm.js";
+import { refreshBoard, autoResolve, boardQuestions } from "../oracle/board.js";
 import { getDb } from "../store/db.js";
 
 /** Free-trial forecasts are real LLM spend on our side: cap them to a cheap configuration (~US$0.01). */
@@ -18,6 +19,7 @@ const TRIAL_LIMITS = { runs: 2, population: 8, rounds: 2 } as const;
 
 export function installOracleRoutes(app: FastifyInstance, billing: (req: any, tool: string) => any) {
   ensureOracleTables();
+  getDb().exec("CREATE TABLE IF NOT EXISTS oracle_board (slug TEXT PRIMARY KEY, question TEXT NOT NULL, resolves_at TEXT NOT NULL, resolution TEXT NOT NULL, source TEXT, updated_at TEXT NOT NULL)");
   recoverJobs();
 
   app.post("/v1/oracle/forecast", async (req: any, reply) => {
@@ -45,7 +47,8 @@ export function installOracleRoutes(app: FastifyInstance, billing: (req: any, to
 
   app.get("/v1/oracle/board", async (req: any) => {
     const items = boardLatest();
-    return { as_of: new Date().toISOString(), count: items.length, items: items.map(i => ({ ...i, outcome: i.outcome == null ? null : Boolean(i.outcome), detail: `/v1/oracle/board/${i.slug}` })), refresh: "daily (ORACLE_BOARD_CRON)", track_record: "/v1/oracle/track-record", _billing: billing(req, "oracle_board"), disclaimer: DISCLAIMER };
+    const meta = new Map<string, any>((getDb().prepare("SELECT slug, resolution, source FROM oracle_board").all() as any[]).map(r => [r.slug, { resolution: JSON.parse(r.resolution), source: r.source }]));
+    return { as_of: new Date().toISOString(), count: items.length, items: items.map(i => ({ ...i, outcome: i.outcome == null ? null : Boolean(i.outcome), ...(meta.get(i.slug) ?? {}), detail: `/v1/oracle/board/${i.slug}` })), refresh: "daily (ORACLE_BOARD_CRON)", track_record: "/v1/oracle/track-record", _billing: billing(req, "oracle_board"), disclaimer: DISCLAIMER };
   });
   app.get("/v1/oracle/board/:slug", async (req: any, reply) => {
     const slug = String(req.params.slug);
@@ -55,6 +58,17 @@ export function installOracleRoutes(app: FastifyInstance, billing: (req: any, to
     const history = getDb().prepare("SELECT id, created_at, probability, market_odds, commitment_hash FROM oracle_forecasts WHERE board_slug = ? ORDER BY created_at DESC LIMIT 30").all(slug);
     return { slug, ...f, history, _billing: billing(req, "oracle_board") };
   });
+
+  // Operator: force a board refresh (all or some slugs) / run automatic resolution now. Both need X-OPERATOR-KEY.
+  const operator = (req: any, reply: any) => { const key = process.env.ORACLE_OPERATOR_KEY; if (!key || String(req.headers["x-operator-key"] ?? "") !== key) { reply.code(401); return false; } return true; };
+  app.post("/v1/oracle/board/refresh", async (req: any, reply) => {
+    if (!operator(req, reply)) return { error: "operator key required" };
+    const b = req.body ?? {};
+    void refreshBoard({ force: Boolean(b.force), onlySlugs: Array.isArray(b.slugs) ? b.slugs.map(String) : undefined, runs: b.runs, population: b.population, rounds: b.rounds });
+    reply.code(202); return { status: "refreshing", questions: (await boardQuestions()).map(q => q.slug), note: "runs in background; poll GET /v1/oracle/board" };
+  });
+  app.post("/v1/oracle/board/resolve", async (req: any, reply) => { if (!operator(req, reply)) return { error: "operator key required" }; return autoResolve(); });
+  app.get("/v1/oracle/board/questions", async () => ({ items: await boardQuestions(), disclaimer: DISCLAIMER }));
 
   app.post("/v1/oracle/forecast/:id/resolve", async (req: any, reply) => {
     const key = process.env.ORACLE_OPERATOR_KEY;

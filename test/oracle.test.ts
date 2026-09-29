@@ -110,3 +110,36 @@ describe("oracle HTTP (async jobs, board, resolve, discovery)", () => {
     expect(names.length).toBe(22);
   });
 });
+
+describe("oracle board (scheduler logic, mocked sources)", () => {
+  it("refreshBoard forecasts Lote 1 + Polymarket questions once per day, board serves them with resolution rules, autoResolve settles closed markets", async () => {
+    const board = await import("../src/oracle/board.js");
+    const tools = await import("../src/server/tools.js");
+    tools._ext.reset(); tools._hl.reset();
+    tools._hl.post = (async () => { throw new Error("offline"); }) as any;   // no dynamic ±10/20% questions without a spot
+    tools._ext.get = (async (url: string) => {
+      if (url.includes("gamma-api.polymarket.com/markets?active=true")) return [{ id: "9", slug: "fed-cut-october-2026", question: "Will the Fed cut rates in October 2026?", outcomePrices: '["0.62","0.38"]', volume24hr: 5e6, liquidity: 1e6, endDate: "2026-10-29T00:00:00Z" }];
+      if (url.includes("gamma-api.polymarket.com/markets?slug=fed-cut-october-2026")) return [{ slug: "fed-cut-october-2026", closed: true, outcomePrices: '["1","0"]' }];
+      throw new Error("unexpected url " + url);
+    }) as any;
+    const qs = await board.boardQuestions();
+    expect(qs.map(q => q.slug)).toEqual(expect.arrayContaining(["btc-120k-oct31", "fed-cut-oct2026", "pm-fed-cut-october-2026"]));
+    const r1: any = await board.refreshBoard({ runs: 1, population: 8, rounds: 1 });
+    expect(r1.queued + r1.skipped.length).toBe(qs.length); expect(r1.queued).toBeGreaterThanOrEqual(qs.length - 1); // btc-120k-oct31 was already forecast today by the earlier test
+    const r2: any = await board.refreshBoard({ runs: 1, population: 8, rounds: 1 });   // same day → nothing new
+    expect(r2.queued).toBe(0); expect(r2.skipped.length).toBe(qs.length);
+    const app = await buildHttp();
+    const b = (await app.inject({ method: "GET", url: "/v1/oracle/board" })).json();
+    expect(b.count).toBeGreaterThanOrEqual(qs.length);
+    const pm = b.items.find((i: any) => i.slug === "pm-fed-cut-october-2026");
+    expect(pm.resolution.type).toBe("polymarket"); expect(pm.probability).toBeGreaterThan(0);
+    const res = await board.autoResolve();
+    expect(res.resolved.map(r => r.slug)).toContain("pm-fed-cut-october-2026"); expect(res.resolved.find(r => r.slug === "pm-fed-cut-october-2026")!.outcome).toBe(true);
+    const tr = (await app.inject({ method: "GET", url: "/v1/oracle/track-record" })).json();
+    expect(tr.vs_market.n).toBeGreaterThanOrEqual(0); expect(tr.resolved).toBeGreaterThanOrEqual(1);
+    // operator endpoints gated; questions list free
+    expect((await app.inject({ method: "POST", url: "/v1/oracle/board/refresh", payload: {} })).statusCode).toBe(401);
+    expect((await app.inject({ method: "GET", url: "/v1/oracle/board/questions" })).json().items.length).toBe(qs.length);
+    tools._ext.reset(); tools._hl.reset();
+  });
+});

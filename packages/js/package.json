@@ -1,6 +1,6 @@
 {
   "name": "@degenscan/intel",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Cross-asset market-event intelligence for AI trading agents (SEC, Fed, regulators, disasters, halts, hacks, Polymarket, Hyperliquid perps). Pays per call in USDC via x402 or uses an API key. MCP + REST client for intel.degenscan.io.",
   "keywords": ["x402", "ai-agents", "trading-bot", "market-data", "sec-edgar", "federal-reserve", "hyperliquid", "funding-rate", "polymarket", "mcp", "usdc", "base", "solana", "market-events", "news-api", "agentkit", "langchain"],
   "license": "MIT",

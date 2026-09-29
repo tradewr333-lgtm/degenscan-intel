@@ -28,6 +28,7 @@ export function toolForRequest(req: FastifyRequest): string | null {
     return String(b.params?.name ?? "");
   }
   if (url === "/v1/oracle/forecast" && req.method === "POST") return "oracle_forecast";
+  if (url === "/v1/oracle/board/questions" || (url.startsWith("/v1/oracle/board") && req.method === "POST")) return null;  // free list / operator actions
   if (url === "/v1/oracle/board" || url.startsWith("/v1/oracle/board/")) return "oracle_board";
   if (url.startsWith("/v1/oracle/")) return null;   // GET forecast/{id}, track-record, resolve (operator key): free
   if (url.startsWith("/v1/events")) return "events_since";

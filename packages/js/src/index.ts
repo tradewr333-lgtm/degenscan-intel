@@ -126,6 +126,29 @@ export class Intel {
   /** $0.10 — one-call pre-trade briefing: pressure, headlines, filings, exposure, prediction markets, catalysts, derivatives (crypto), venues. */
   brief(assetId: string, opts: { since?: string } = {}) { return this.request(`/v1/brief/${encodeURIComponent(assetId)}`, { query: opts }); }
 
+  // ---- oracle (2Realidade) ----------------------------------------------------------------
+  /** $0.25 — calibrated YES-probability for a binary question (async). Returns { forecast_id, status:"queued", eta_s, poll }; then oracleGet / oracleWait. */
+  oracleForecast(req: { question: string; resolves_at?: string; context?: string; runs?: number; population?: number; rounds?: number; interventions?: { round: number; news: string; audience?: "all" | "half" | "influencers" | "skeptics" }[]; method?: "social_sim" | "expert_panel" | "hybrid" }) {
+    return this.request<{ forecast_id: string; status: string; eta_s: number; poll: string }>("/v1/oracle/forecast", { method: "POST", body: req });
+  }
+  /** Free — poll a forecast: { status:"queued"|"running"|"failed" } or the full Forecast when status is "done". */
+  oracleGet(forecastId: string) { return this.request<any>(`/v1/oracle/forecast/${encodeURIComponent(forecastId)}`); }
+  /** Free — poll until done (default every 20 s, up to 10 min). Resolves with the Forecast; throws on failed/timeout. */
+  async oracleWait(forecastId: string, opts: { intervalMs?: number; timeoutMs?: number } = {}) {
+    const t0 = Date.now(); const every = opts.intervalMs ?? 20_000, max = opts.timeoutMs ?? 600_000;
+    for (;;) {
+      const f = await this.oracleGet(forecastId);
+      if (f.status === "done") return f;
+      if (f.status === "failed") throw new IntelError(`forecast ${forecastId} failed: ${f.error ?? "unknown"}`, 500);
+      if (Date.now() - t0 > max) throw new IntelError(`forecast ${forecastId} still ${f.status} after ${max / 1000}s`, 504);
+      await new Promise(r => setTimeout(r, every));
+    }
+  }
+  /** $0.002 — daily board of standing forecasts (or one by slug): probability, interval, base rate, market odds, edge, commitment hash. No waiting. */
+  oracleBoard(slug?: string) { return this.request<any>(slug ? `/v1/oracle/board/${encodeURIComponent(slug)}` : "/v1/oracle/board"); }
+  /** Free — public Brier track record overall, by domain and vs. market. */
+  oracleTrackRecord() { return this.request<any>("/v1/oracle/track-record"); }
+
   // ---- keys -------------------------------------------------------------------------------
   /** Buy a prepaid API key with USDC (requires privateKey). pack_1k $5 · pack_10k $40 · pack_100k $300. Returns { api_key, total_calls }. */
   async buyPack(pack: "pack_1k" | "pack_10k" | "pack_100k" = "pack_1k") {
