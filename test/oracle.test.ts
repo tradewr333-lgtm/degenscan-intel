@@ -28,6 +28,8 @@ describe("oracle context builder (port of context.py)", () => {
     expect(ctx.detectTarget("Will a new all-time high for Bitcoin be set between 2026-09-30 and 2026-10-31?")).toBeNull();
     expect(ctx.detectTarget("Will the Fed cut at the October 2026 FOMC?")).toBeNull();
     expect(ctx.detectTarget("Will BTC close above 91,500 USD on 2026-10-31?")).toBe(91_500);
+    expect(ctx.detectTarget("Will SOL close below 95 USD on 2026-10-31?")).toBe(95);
+    expect(ctx.detectTarget("Will BTC drop 15% before 2026-10-31?")).toBeNull();
     const above = await ctx.buildContext("Will BTC close above 100,000 USD on 2026-10-31?", ctx.mockProvider, new Date(Date.UTC(2026, 8, 29)));
     const below = await ctx.buildContext("Will BTC close below 100,000 USD on 2026-10-31?", ctx.mockProvider, new Date(Date.UTC(2026, 8, 29)));
     expect(above.base_rate! + below.base_rate!).toBeCloseTo(1, 2); expect(below.base_rate_note).toMatch(/complement/);

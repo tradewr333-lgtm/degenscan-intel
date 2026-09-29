@@ -52,7 +52,8 @@ export function detectTarget(q: string): number | null {
   const raw = m[1], unit = (m[2] ?? "").toLowerCase();
   let val = /^\d{1,3}(?:[,.]\d{3})+$/.test(raw) ? Number(raw.replace(/[,.]/g, "")) : Number(raw);
   if (unit === "k") val *= 1000;
-  return val >= 100 ? val : null; // ignore small numbers (dates, percentages)
+  // ignore small numbers (percentages, day numbers) — but accept e.g. "95 USD" / "$95" (SOL-scale prices). Deviation from context.py (min 100).
+  return val >= 100 || (unit && val >= 10) ? val : null;
 }
 export function detectHorizonDays(q: string, now: Date): number | null {
   const m = /(20\d{2})-(\d{2})-(\d{2})/.exec(q);

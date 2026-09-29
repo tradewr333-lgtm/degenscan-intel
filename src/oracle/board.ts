@@ -34,7 +34,12 @@ export async function dynamicPriceQuestions(now = new Date()): Promise<BoardQues
   let end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0, 23, 59, 59)); // last day of this month
   if (end.getTime() - now.getTime() < 7 * 86_400_000) end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 2, 0, 23, 59, 59)); // < 7 days left → next month-end
   const ym = end.toISOString().slice(0, 7).replace("-", "");
+  getDb().exec("CREATE TABLE IF NOT EXISTS oracle_board (slug TEXT PRIMARY KEY, question TEXT NOT NULL, resolves_at TEXT NOT NULL, resolution TEXT NOT NULL, source TEXT, updated_at TEXT NOT NULL)");
   for (const sym of ["BTC", "ETH", "SOL"]) {
+    // Targets are frozen for the month: once the four slugs for <sym>-<month> exist, reuse them (a moving spot must not
+    // rename questions mid-month — the daily re-forecast of the SAME question is the track record).
+    const frozen = getDb().prepare("SELECT slug, question, resolves_at, resolution, source FROM oracle_board WHERE slug LIKE ? ORDER BY slug").all(`${sym.toLowerCase()}-%-${ym}`) as any[];
+    if (frozen.length >= 4) { for (const f of frozen) out.push({ slug: f.slug, question: f.question, resolves_at: f.resolves_at, resolution: JSON.parse(f.resolution), source: f.source ?? undefined }); continue; }
     let spot: number | null = null;
     try { const p: any = await tools.priceFor({ symbol: sym }); spot = p.spot?.price ?? p.perp?.mark ?? null; } catch { spot = null; }
     if (!spot) continue;
