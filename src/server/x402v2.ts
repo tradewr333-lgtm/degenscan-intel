@@ -51,34 +51,34 @@ export function buildRoutes(): RoutesConfig {
         inputSchema: { properties: { since: { type: "string", description: "30m | 4h | 2d | ISO-8601" }, universe: { type: "string", description: "comma-separated asset ids" }, kinds: { type: "string" }, min_severity: { type: "number" }, min_confidence: { type: "number" }, q: { type: "string" }, limit: { type: "number" } } },
         output: { example: { since: "2026-09-27T10:00:00.000Z", count: 1, universe_version: "2026-09-27", events: [EVENT_EXAMPLE] } } }),
     },
-    "GET /v1/impact/*": {
+    "GET /v1/impact/:asset_id": {
       accepts: accept("impact_for"), description: "Net directional pressure on one asset from recent events, with the source events.", mimeType: "application/json", ...common,
-      extensions: declareDiscoveryExtension({ input: { since: "24h" }, inputSchema: { properties: { since: { type: "string" }, limit: { type: "number" } } },
+      extensions: declareDiscoveryExtension({ pathParams: { asset_id: "NVDA" }, pathParamsSchema: { properties: { asset_id: { type: "string", description: "Universe asset id, e.g. NVDA, BTC, CL" } }, required: ["asset_id"] }, input: { since: "24h" }, inputSchema: { properties: { since: { type: "string" }, limit: { type: "number" } } },
         output: { example: { asset: { id: "NVDA", class: "equity" }, n_events: 3, net_score: -0.42, bias: -0.7, top: [] } } }),
     },
-    "GET /v1/graph/*": {
+    "GET /v1/graph/:asset_id": {
       accepts: accept("exposure_graph"), description: "Exposure sub-graph around an asset: suppliers, customers, countries, commodities, regulators, correlated assets, critical facilities.", mimeType: "application/json", ...common,
-      extensions: declareDiscoveryExtension({ input: { depth: 2 }, inputSchema: { properties: { depth: { type: "number" } } }, output: { example: { root: "company:NVDA", nodes: ["company:TSM", "asset:NDX"], edges: [] } } }),
+      extensions: declareDiscoveryExtension({ pathParams: { asset_id: "NVDA" }, pathParamsSchema: { properties: { asset_id: { type: "string", description: "Universe asset id" } }, required: ["asset_id"] }, input: { depth: 2 }, inputSchema: { properties: { depth: { type: "number" } } }, output: { example: { root: "company:NVDA", nodes: ["company:TSM", "asset:NDX"], edges: [] } } }),
     },
     "GET /v1/regime": {
       accepts: accept("regime_snapshot"), description: "Market regime snapshot: venues open now, 24h event pressure by asset, high-severity events, prediction-market context.", mimeType: "application/json", ...common,
       extensions: declareDiscoveryExtension({ output: { example: { venues_open: { crypto: true, US: false }, events_24h: 43, pressure: [{ asset_id: "BA", n: 10, net: 0 }] } } }),
     },
-    "GET /v1/explain/*": {
+    "GET /v1/explain/:event_id": {
       accepts: accept("explain"), description: "Human-readable rationale for one event's impacts.", mimeType: "application/json", ...common,
-      extensions: declareDiscoveryExtension({ output: { example: { explanation: "…" } } }),
+      extensions: declareDiscoveryExtension({ pathParams: { event_id: "5e6b1f2c9a3d4e7f8a1b" }, pathParamsSchema: { properties: { event_id: { type: "string", description: "Event id from events_since" } }, required: ["event_id"] }, output: { example: { explanation: "…" } } }),
     },
     "GET /v1/pulse": {
       accepts: accept("pulse"), description: "Cheapest probe: last-hour event counts by class, top-3 severe events with impacts, venues open. Call hourly or as a health check before deeper calls.", mimeType: "application/json", ...common,
       extensions: declareDiscoveryExtension({ output: { example: { window: "1h", events: 42, by_class: { reg: 6, corp: 18, crypto: 4, media: 14 }, high_severity: 2, venues_open: { crypto: true, us_equities: false } } } }),
     },
-    "GET /v1/news/*": {
+    "GET /v1/news/:ticker": {
       accepts: accept("news_for"), description: "Headlines touching one asset (press wires, releases, halts, hacks, media) with source tier, corroboration and a heuristic sentiment score (-1..1). Links only, no bodies.", mimeType: "application/json", ...common,
-      extensions: declareDiscoveryExtension({ input: { since: "24h", limit: 25 }, inputSchema: { properties: { since: { type: "string" }, limit: { type: "number" } } }, output: { example: { asset: { id: "NVDA" }, count: 3, sentiment_avg: 0.25, sentiment_label: "positive", items: [{ title: "NVIDIA announces…", tier: "primary", sentiment: 0.5, url: "https://…" }] } } }),
+      extensions: declareDiscoveryExtension({ pathParams: { ticker: "NVDA" }, pathParamsSchema: { properties: { ticker: { type: "string", description: "Asset id / ticker" } }, required: ["ticker"] }, input: { since: "24h", limit: 25 }, inputSchema: { properties: { since: { type: "string" }, limit: { type: "number" } } }, output: { example: { asset: { id: "NVDA" }, count: 3, sentiment_avg: 0.25, sentiment_label: "positive", items: [{ title: "NVIDIA announces…", tier: "primary", sentiment: 0.5, url: "https://…" }] } } }),
     },
-    "GET /v1/price/*": {
+    "GET /v1/price/:symbol": {
       accepts: accept("price_for"), description: "Price probe for one coin, no key: Hyperliquid perp mark/mid/oracle + Coinbase spot, 24h change, basis, funding, plus links to our event pressure on the asset. ~1 KB, 30 s cache — made for polling.", mimeType: "application/json", ...common,
-      extensions: declareDiscoveryExtension({ output: { example: { symbol: "BTC", perp: { mark: 83102, change_24h_pct: -1.76, funding_1h: 0.0000125 }, spot: { venue: "coinbase", price: 83090 }, basis_pct: 0.0144 } } }),
+      extensions: declareDiscoveryExtension({ pathParams: { symbol: "BTC" }, pathParamsSchema: { properties: { symbol: { type: "string", description: "Coin, e.g. BTC, ETH, SOL" } }, required: ["symbol"] }, output: { example: { symbol: "BTC", perp: { mark: 83102, change_24h_pct: -1.76, funding_1h: 0.0000125 }, spot: { venue: "coinbase", price: 83090 }, basis_pct: 0.0144 } } }),
     },
     "GET /v1/funding/alerts": {
       accepts: accept("funding_alerts"), description: "Coins with extreme perp funding right now on Hyperliquid, sorted by |rate|, with annualized %, side paying, open interest and predicted funding per venue (Binance, Bybit, Hyperliquid). Poll every 5–15 min to catch crowded positioning.", mimeType: "application/json", ...common,
@@ -92,13 +92,13 @@ export function buildRoutes(): RoutesConfig {
       accepts: accept("polymarket_top"), description: "Most active Polymarket markets right now: YES odds, 24h change, 24h volume, liquidity, end date, and a link to our primary-source evidence pack per market. Sort by volume, liquidity or 24h change; optional tag filter (crypto, fed, politics).", mimeType: "application/json", ...common,
       extensions: declareDiscoveryExtension({ input: { sort: "volume_24h", limit: 20 }, inputSchema: { properties: { sort: { type: "string" }, limit: { type: "number" }, tag: { type: "string" } } }, output: { example: { count: 20, markets: [{ question: "Fed rate cut in October?", yes_prob: 0.62, change_24h: 0.03, volume_24h_usd: 1250000 }] } } }),
     },
-    "GET /v1/derivs/*": {
+    "GET /v1/derivs/:symbol": {
       accepts: accept("derivs_for"), description: "Perpetual-futures microstructure for one coin from Hyperliquid's public API: funding (1h, 8h-equivalent, annualized), predicted funding by venue, open interest (coins/USD, OI-to-volume), premium vs oracle, 24h volume, 24h change, flags, plus our primary-source event pressure on the same asset.", mimeType: "application/json", ...common,
-      extensions: declareDiscoveryExtension({ input: { since: "24h" }, inputSchema: { properties: { since: { type: "string" } } }, output: { example: { symbol: "BTC", funding: { rate_1h: 0.0000125, annualized_pct: 10.95 }, open_interest: { usd: 1250000000 }, price: { mark: 65000, premium_vs_oracle: 0.0002 }, flags: [], event_pressure: { bias: 0.2, n_events: 4 } } } }),
+      extensions: declareDiscoveryExtension({ pathParams: { symbol: "BTC" }, pathParamsSchema: { properties: { symbol: { type: "string", description: "Perp coin on Hyperliquid" } }, required: ["symbol"] }, input: { since: "24h" }, inputSchema: { properties: { since: { type: "string" } } }, output: { example: { symbol: "BTC", funding: { rate_1h: 0.0000125, annualized_pct: 10.95 }, open_interest: { usd: 1250000000 }, price: { mark: 65000, premium_vs_oracle: 0.0002 }, flags: [], event_pressure: { bias: 0.2, n_events: 4 } } } }),
     },
-    "GET /v1/filings/*": {
+    "GET /v1/filings/:ticker": {
       accepts: accept("filings_for"), description: "SEC EDGAR filings touching one US issuer: 8-K by item, Form 4 insider trades, 13D/G activist stakes, S-1 offerings, with impact direction and link. Public-domain source.", mimeType: "application/json", ...common,
-      extensions: declareDiscoveryExtension({ input: { since: "7d" }, inputSchema: { properties: { since: { type: "string" }, forms: { type: "string" } } }, output: { example: { asset: { id: "COIN" }, count: 1, filings: [{ kind: "corp.8k", title: "COINBASE GLOBAL files 8-K — Results of operations", url: "https://www.sec.gov/…" }] } } }),
+      extensions: declareDiscoveryExtension({ pathParams: { ticker: "NVDA" }, pathParamsSchema: { properties: { ticker: { type: "string", description: "Issuer ticker" } }, required: ["ticker"] }, input: { since: "7d" }, inputSchema: { properties: { since: { type: "string" }, forms: { type: "string" } } }, output: { example: { asset: { id: "COIN" }, count: 1, filings: [{ kind: "corp.8k", title: "COINBASE GLOBAL files 8-K — Results of operations", url: "https://www.sec.gov/…" }] } } }),
     },
     "GET /v1/calendar": {
       accepts: accept("calendar"), description: "Upcoming scheduled catalysts: US macro prints (CPI, jobs, PCE, GDP…) with ET times, FOMC decisions/minutes, Treasury auctions and earnings dates, each with the assets it usually moves.", mimeType: "application/json", ...common,
@@ -117,13 +117,13 @@ export function buildRoutes(): RoutesConfig {
       accepts: accept("oracle_board"), description: "One standing forecast from the daily oracle board by slug (e.g. btc-120k-oct31): probability, 80% interval, disagreement, drivers, failure modes, base rate, market odds, edge, commitment hash.", mimeType: "application/json", ...common,
       extensions: declareDiscoveryExtension({ input: {}, inputSchema: { properties: {} }, output: { example: { slug: "btc-120k-oct31", probability: 0.319, ci80: [0.24, 0.41], confidence: "medium" } } }),
     },
-    "GET /v1/brief/*": {
+    "GET /v1/brief/:asset_id": {
       accepts: accept("brief"), description: "Premium one-call pre-trade briefing for an asset: net pressure and drivers, headlines with sentiment, SEC filings, exposure map, related Polymarket odds, upcoming catalysts, venue status. Replaces six calls.", mimeType: "application/json", ...common,
-      extensions: declareDiscoveryExtension({ input: { since: "24h" }, inputSchema: { properties: { since: { type: "string" } } }, output: { example: { asset: { id: "MSTR" }, pressure: { bias: -0.4, n_events: 5 }, headlines: { sentiment_avg: -0.2 }, upcoming_catalysts: [{ name: "FOMC Rate Decision" }], tradable_now: ["crypto"] } } }),
+      extensions: declareDiscoveryExtension({ pathParams: { asset_id: "BTC" }, pathParamsSchema: { properties: { asset_id: { type: "string", description: "Universe asset id" } }, required: ["asset_id"] }, input: { since: "24h" }, inputSchema: { properties: { since: { type: "string" } } }, output: { example: { asset: { id: "MSTR" }, pressure: { bias: -0.4, n_events: 5 }, headlines: { sentiment_avg: -0.2 }, upcoming_catalysts: [{ name: "FOMC Rate Decision" }], tradable_now: ["crypto"] } } }),
     },
-    "GET /v1/polymarket/*": {
+    "GET /v1/polymarket/:market": {
       accepts: accept("polymarket_context"), description: "Evidence pack for one Polymarket market: current odds plus the primary-source events (Fed, SEC, agencies, disasters, hacks) in our feed that bear on the question, with relevance and corroboration. For agents trading or quoting prediction markets.", mimeType: "application/json", ...common,
-      extensions: declareDiscoveryExtension({ input: { since: "48h", limit: 15 }, inputSchema: { properties: { since: { type: "string" }, limit: { type: "number" } } }, output: { example: { market: { question: "Fed rate cut in October?", yes_prob: 0.62, change_24h: 0.03 }, n_related: 2, related: [{ kind: "cb.speech", title: "Fed Governor: inflation progress supports easing", tier: "primary", relevance: 0.5 }] } } }),
+      extensions: declareDiscoveryExtension({ pathParams: { market: "fed-rate-cut" }, pathParamsSchema: { properties: { market: { type: "string", description: "Polymarket market id, slug or question text" } }, required: ["market"] }, input: { since: "48h", limit: 15 }, inputSchema: { properties: { since: { type: "string" }, limit: { type: "number" } } }, output: { example: { market: { question: "Fed rate cut in October?", yes_prob: 0.62, change_24h: 0.03 }, n_related: 2, related: [{ kind: "cb.speech", title: "Fed Governor: inflation progress supports easing", tier: "primary", relevance: 0.5 }] } } }),
     },
     // Prepaid API keys for autonomous agents: one USDC payment → key with a lifetime call budget. One route per pack so the
     // price is static (the payment middleware runs before the body is parsed, so it must never depend on the body).

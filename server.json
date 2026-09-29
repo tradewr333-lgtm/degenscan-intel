@@ -3,7 +3,7 @@
   "name": "io.github.tradewr333-lgtm/degenscan-intel",
   "title": "Degenscan Intel",
   "description": "No key required: market-event intelligence for trading agents \u2014 SEC filings, Fed/FOMC, regulators, disasters, Nasdaq halts, DeFi hacks, Polymarket odds, Hyperliquid funding/OI \u2014 scored per asset. 100 free calls/day, then USDC per call (x402, Base/Solana) or API key.",
-  "version": "0.10.3",
+  "version": "0.10.4",
   "websiteUrl": "https://intel.degenscan.io",
   "repository": {
     "url": "https://github.com/tradewr333-lgtm/degenscan-intel",
