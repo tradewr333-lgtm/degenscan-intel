@@ -37,14 +37,21 @@ export async function selicFacts(): Promise<{ facts: Record<string, unknown>; ma
   return { facts, market_odds: odds, note };
 }
 
-/** S&P 500 daily closes from Stooq (CSV, no key): last close, prior month-end close, 30d realized vol. */
+/** S&P 500 daily closes: Yahoo Finance chart JSON (^GSPC, no key) first, Stooq CSV as fallback. Last close, prior month-end close, 30d realized vol. */
 export async function spxFacts(): Promise<{ facts: Record<string, unknown>; spot: number | null; vol: number | null; prevMonthClose: number | null }> {
-  const csv = await cached("spx:csv", 3_600_000, () => tools._ext.get<string>("https://stooq.com/q/d/l/?s=^spx&i=d", { timeoutMs: 10000, text: true }));
-  const lines = String(csv).trim().split(/\r?\n/).slice(1).map(l => l.split(",")).filter(c => c.length >= 5 && Number.isFinite(Number(c[4])));
-  const closes = lines.map(c => ({ d: c[0], c: Number(c[4]) }));
+  const closes: { d: string; c: number }[] = await cached("spx:closes", 3_600_000, async () => {
+    try {
+      const j = await tools._ext.get<any>("https://query1.finance.yahoo.com/v8/finance/chart/%5EGSPC?range=3mo&interval=1d", { timeoutMs: 10000 });
+      const r = j?.chart?.result?.[0]; const ts: number[] = r?.timestamp ?? []; const cl: (number | null)[] = r?.indicators?.quote?.[0]?.close ?? [];
+      const out = ts.map((t, i) => ({ d: new Date(t * 1000).toISOString().slice(0, 10), c: Number(cl[i]) })).filter(x => Number.isFinite(x.c));
+      if (out.length >= 25) return out;
+    } catch { /* fall through */ }
+    const csv = await tools._ext.get<string>("https://stooq.com/q/d/l/?s=^spx&i=d", { timeoutMs: 10000, text: true });
+    return String(csv).trim().split(/\r?\n/).slice(1).map(l => l.split(",")).filter(c => c.length >= 5 && Number.isFinite(Number(c[4]))).map(c => ({ d: c[0], c: Number(c[4]) }));
+  });
   if (closes.length < 25) return { facts: { spx: "unavailable" }, spot: null, vol: null, prevMonthClose: null };
   const last = closes[closes.length - 1];
-  const lr = closes.slice(-31).slice(1).map((x, i, arr) => Math.log(x.c / (i === 0 ? closes[closes.length - 31].c : arr[i - 1].c)));
+  const win = closes.slice(-31); const lr = win.slice(1).map((x, i) => Math.log(x.c / win[i].c));
   const mean = lr.reduce((a, b) => a + b, 0) / lr.length; const sd = Math.sqrt(lr.reduce((a, b) => a + (b - mean) ** 2, 0) / (lr.length - 1));
   const vol = r(sd * Math.sqrt(252));
   const ym = last.d.slice(0, 7);
@@ -52,17 +59,17 @@ export async function spxFacts(): Promise<{ facts: Record<string, unknown>; spot
   return { facts: { spx_close: last.c, spx_close_date: last.d, spx_prev_month_close: prevMonth?.c ?? null, spx_prev_month_close_date: prevMonth?.d ?? null, spx_realized_vol_30d_ann: vol, spx_mtd_pct: prevMonth ? r((last.c / prevMonth.c - 1) * 100, 2) : null }, spot: last.c, vol, prevMonthClose: prevMonth?.c ?? null };
 }
 
-/** Total crypto market cap (CoinGecko /global) + BTC 31d series as vol proxy. */
+/** Total crypto market cap: Coinlore /global (no key, generous limits) first, CoinGecko /global as fallback; BTC 30d realized vol from our own price_for as the vol proxy. */
 export async function mcapFacts(): Promise<{ facts: Record<string, unknown>; mcap: number | null; vol: number | null }> {
-  const g = await cached("cg:global", 3_600_000, () => tools._ext.get<any>("https://api.coingecko.com/api/v3/global", { timeoutMs: 10000 }));
-  const mcap = Number(g?.data?.total_market_cap?.usd); const chg24 = Number(g?.data?.market_cap_change_percentage_24h_usd);
-  let vol: number | null = null; let monthStart: number | null = null;
-  try {
-    const mc = await cached("cg:btc31", 3_600_000, () => tools._ext.get<any>("https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=31&interval=daily", { timeoutMs: 10000 }));
-    const caps: number[] = (mc?.market_caps ?? []).map((x: any) => Number(x[1])).filter(Number.isFinite);
-    if (caps.length >= 20) { const lr = caps.slice(1).map((c, i) => Math.log(c / caps[i])); const m = lr.reduce((a, b) => a + b, 0) / lr.length; vol = r(Math.sqrt(lr.reduce((a, b) => a + (b - m) ** 2, 0) / (lr.length - 1)) * Math.sqrt(365)); monthStart = caps[0]; }
-  } catch { /* optional */ }
-  return { facts: { total_crypto_mcap_usd: Number.isFinite(mcap) ? Math.round(mcap) : null, mcap_change_24h_pct: Number.isFinite(chg24) ? r(chg24, 2) : null, btc_share_pct: g?.data?.market_cap_percentage?.btc != null ? r(Number(g.data.market_cap_percentage.btc), 1) : null, mcap_vol_proxy_btc_30d_ann: vol, btc_mcap_31d_ago_usd: monthStart != null ? Math.round(monthStart) : null }, mcap: Number.isFinite(mcap) ? mcap : null, vol };
+  const g = await cached("mcap:global", 3_600_000, async () => {
+    try { const j = await tools._ext.get<any[]>("https://api.coinlore.net/api/global/", { timeoutMs: 10000 }); const x = Array.isArray(j) ? j[0] : null; if (x?.total_mcap) return { mcap: Number(x.total_mcap), chg24: Number(x.mcap_change), btc_d: Number(x.btc_d), src: "coinlore" }; } catch { /* fall through */ }
+    const j = await tools._ext.get<any>("https://api.coingecko.com/api/v3/global", { timeoutMs: 10000 });
+    return { mcap: Number(j?.data?.total_market_cap?.usd), chg24: Number(j?.data?.market_cap_change_percentage_24h_usd), btc_d: Number(j?.data?.market_cap_percentage?.btc), src: "coingecko" };
+  });
+  let vol: number | null = null;
+  try { const p: any = await tools.priceFor({ symbol: "BTC" }); vol = p.realized_vol_30d_ann ?? null; } catch { vol = null; }
+  const ok = Number.isFinite(g.mcap);
+  return { facts: { total_crypto_mcap_usd: ok ? Math.round(g.mcap) : null, mcap_change_24h_pct: Number.isFinite(g.chg24) ? r(g.chg24, 2) : null, btc_share_pct: Number.isFinite(g.btc_d) ? r(g.btc_d, 1) : null, mcap_vol_proxy_btc_30d_ann: vol, mcap_source: g.src }, mcap: ok ? g.mcap : null, vol };
 }
 
 /** Dispatcher: which extra facts a question needs. Returns grounded facts and, when possible, a synthetic market_odds or base_rate. */
@@ -90,16 +97,14 @@ export async function extraFactsFor(question: string, ctx: { asset: string | nul
   }
   if (/\b(market cap|mcap|total crypto|capitaliza)/.test(q)) {
     try {
-      const m = await mcapFacts(); Object.assign(facts, m.facts); sources.push("coingecko_global");
-      if (m.mcap && m.vol && typeof facts.btc_mcap_31d_ago_usd === "number" && ctx.horizon_days) {
-        // "higher on day X than on day Y": driftless walk from today → base rate ≈ 0.5 adjusted by MTD move already realised
-        const startShare = Number(facts.btc_share_pct) / 100 || 0.57;
-        const refMcap = (facts.btc_mcap_31d_ago_usd as number) / startShare; // total mcap ~31d ago (proxy)
-        const dist = (refMcap / m.mcap - 1) * 100; // how far the reference sits from today's level
-        const [br, note] = baseRateThreshold(dist, m.vol, ctx.horizon_days, false);
-        base_rate = br; base_rate_note = `total mcap vs reference level (~31d ago, BTC-share proxy); ${note}`;
+      const m = await mcapFacts(); Object.assign(facts, m.facts); sources.push(String(m.facts.mcap_source ?? "mcap"));
+      if (m.mcap && m.vol && ctx.horizon_days) {
+        // "higher on day X than on day Y": the reference level is (approximately) today's level → driftless walk gives ~0.5;
+        // the panel moves it with calendar/positioning. Distance 0 by construction until the reference date has passed.
+        const [br, note] = baseRateThreshold(0, m.vol, ctx.horizon_days, false);
+        base_rate = br; base_rate_note = `total mcap vs reference level ≈ today's (${Math.round(m.mcap / 1e9)}B USD); ${note}`;
       }
-    } catch (e) { unavailable.push(`coingecko: ${errName(e)}`); }
+    } catch (e) { unavailable.push(`mcap: ${errName(e)}`); }
   }
   if (/\b(realized vol|realised vol|volatility|rvol)\b/.test(q) && /\b(sol|solana)\b/.test(q) && /\b(eth|ethereum)\b/.test(q)) {
     try {

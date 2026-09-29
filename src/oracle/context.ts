@@ -174,7 +174,8 @@ const EVENT_TAGS = new Set(["fed", "ecb", "boj", "copom", "cpi", "gdp", "electio
 const MONTHS = new Set(["jan", "sep", "oct", "nov", "dec"]);
 function tokens(text: string): Set<string> {
   const out = new Set<string>();
-  for (const w of text.toLowerCase().match(/[a-z0-9]+/g) ?? []) { if (STOP.has(w) || w.length < 3) continue; out.add(CANON.get(w) ?? w); }
+  // numeric tokens ("25", "50") are kept whatever their length — they separate sibling outcomes (deviation from context.py, which drops <3 chars)
+  for (const w of text.toLowerCase().match(/[a-z0-9]+/g) ?? []) { if (STOP.has(w) || (w.length < 3 && !/^\d+$/.test(w))) continue; out.add(CANON.get(w) ?? w); }
   return out;
 }
 const inter = (a: Set<string>, b: Set<string>) => [...a].filter(x => b.has(x));
@@ -199,8 +200,25 @@ export function matchMarket(question: string, markets: { question?: string; titl
     const score = i / u + 0.15 * inter(qEvents, mt).length;
     if (score > bestScore) { best = m; bestScore = score; }
   }
-  if (best && bestScore >= 0.30) return { yes: best.yes ?? best.yes_prob ?? null, url: best.url ?? null, question: best.question, score: Math.round(bestScore * 1000) / 1000 };
-  return null;
+  if (!best || bestScore < 0.30) return null;
+  // Sibling outcomes of the same event (e.g. "decrease by 25 bps" / "decrease by 50 bps") tie on score and differ only in numeric
+  // tokens; for a generic question ("cut") they are mutually exclusive → sum their YES prices (Construtor 29/09, from board data).
+  const strip = (m: any) => [...tokens(m.question ?? m.title ?? "")].filter(t => !/^\d+$/.test(t)).sort().join("|");
+  const bestKey = strip(best);
+  const siblings = markets.filter(m => {
+    if (m === best) return false;
+    const mt = tokens(m.question ?? m.title ?? ""); if (!mt.size) return false;
+    const i = inter(qt, mt).length, u = new Set([...qt, ...mt]).size;
+    const score = i / u + 0.15 * inter(qEvents, mt).length;
+    return Math.abs(score - bestScore) < 1e-9 && strip(m) === bestKey;
+  });
+  const yesOf = (m: any) => m.yes ?? m.yes_prob ?? null;
+  if (siblings.length && yesOf(best) != null && siblings.every(m => yesOf(m) != null) && !/\b\d+\s*bps\b/i.test(question)) {
+    const sum = Math.min(1, [best, ...siblings].reduce((a, m) => a + Number(yesOf(m)), 0));
+    const top = [best, ...siblings].sort((a, b) => Number(yesOf(b)) - Number(yesOf(a)))[0];
+    return { yes: Math.round(sum * 10000) / 10000, url: top.url ?? null, question: `${[best, ...siblings].length} sibling outcomes summed: ${[best, ...siblings].map(m => m.question).join(" + ")}`, score: Math.round(bestScore * 1000) / 1000 };
+  }
+  return { yes: yesOf(best), url: best.url ?? null, question: best.question, score: Math.round(bestScore * 1000) / 1000 };
 }
 
 // ---------------------------------------------------------------- providers

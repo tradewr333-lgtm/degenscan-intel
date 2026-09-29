@@ -53,6 +53,11 @@ describe("oracle context builder (port of context.py)", () => {
     const m = ctx.matchMarket("Will the US Federal Reserve cut the federal funds rate at its October 2026 FOMC meeting?", markets);
     expect(m?.url).toBe("u1");
     expect(ctx.matchMarket("Will Brazil's Copom cut the Selic in November 2026?", markets)).toBeNull();
+    // generic "cut" question vs two sibling cut-size markets → YES prices summed; a "25 bps" question keeps the single market
+    const sibs = [{ question: "Will the Fed decrease interest rates by 50 bps after the October 2026 meeting?", yes: 0.0025, url: "s50" }, { question: "Will the Fed decrease interest rates by 25 bps after the October 2026 meeting?", yes: 0.0065, url: "s25" }, { question: "Will the Fed increase interest rates by 25 bps after the October 2026 meeting?", yes: 0.01, url: "h25" }];
+    const sum = ctx.matchMarket("Will the US Federal Reserve cut the federal funds rate at its October 2026 FOMC meeting?", sibs);
+    expect(sum?.yes).toBeCloseTo(0.009, 4); expect(sum?.url).toBe("s25");
+    expect(ctx.matchMarket("Will the Fed cut by 25 bps at the October 2026 FOMC meeting?", sibs)?.url).toBe("s25");
   });
   it("touch questions use the reflection principle (≈2× end-above)", () => {
     const [end] = ctx.baseRateThreshold(10, 0.5, 30, false); const [touch] = ctx.baseRateThreshold(10, 0.5, 30, true);
@@ -185,13 +190,13 @@ describe("oracle extra sources (Selic/Focus, SPX, market cap, SOL vs ETH vol) �
     tools._ext.get = (async (url: string, init: any) => {
       if (url.includes("bcdata.sgs.432")) return [{ data: "29/09/2026", valor: "15,00" }];
       if (url.includes("ExpectativasMercadoSelic")) return { value: [{ Data: "2026-09-26", Reuniao: "R7/2026", Mediana: 14.75, Minimo: 14.5, Maximo: 15.0, numeroRespondentes: 80 }, { Data: "2026-09-26", Reuniao: "R8/2026", Mediana: 14.5, Minimo: 14.25, Maximo: 15.0, numeroRespondentes: 78 }] };
+      if (url.includes("query1.finance.yahoo.com")) throw new Error("yahoo blocked in test → stooq fallback");
       if (url.includes("stooq.com")) { expect(init?.text).toBe(true); return csv; }
-      if (url.includes("coingecko.com/api/v3/global")) return { data: { total_market_cap: { usd: 2.9e12 }, market_cap_change_percentage_24h_usd: -1.2, market_cap_percentage: { btc: 57.1 } } };
-      if (url.includes("market_chart")) return { market_caps: Array.from({ length: 32 }, (_, i) => [now - (31 - i) * 86_400_000, 1.65e12 * (1 + 0.01 * Math.sin(i))]) };
+      if (url.includes("coinlore.net/api/global")) return [{ total_mcap: 2.9e12, mcap_change: "-1.2", btc_d: "57.1" }];
       throw new Error("unexpected " + url);
     }) as any;
     tools._hl.post = (async (body: any) => {
-      if (body.type === "metaAndAssetCtxs") return [{ universe: [{ name: "SOL" }, { name: "ETH" }] }, [{ funding: "0", openInterest: "1", prevDayPx: "100", dayNtlVlm: "1", premium: "0", oraclePx: "100", markPx: "100", midPx: "100" }, { funding: "0", openInterest: "1", prevDayPx: "3000", dayNtlVlm: "1", premium: "0", oraclePx: "3000", markPx: "3000", midPx: "3000" }]];
+      if (body.type === "metaAndAssetCtxs") return [{ universe: [{ name: "SOL" }, { name: "ETH" }, { name: "BTC" }] }, [{ funding: "0", openInterest: "1", prevDayPx: "100", dayNtlVlm: "1", premium: "0", oraclePx: "100", markPx: "100", midPx: "100" }, { funding: "0", openInterest: "1", prevDayPx: "3000", dayNtlVlm: "1", premium: "0", oraclePx: "3000", markPx: "3000", midPx: "3000" }, { funding: "0", openInterest: "1", prevDayPx: "83000", dayNtlVlm: "1", premium: "0", oraclePx: "83000", markPx: "83000", midPx: "83000" }]];
       if (body.type === "candleSnapshot") { const amp = body.req.coin === "SOL" ? 0.04 : 0.02; let px = 100; return Array.from({ length: 33 }, (_, i) => { px *= i % 2 ? 1 + amp : 1 - amp; return { t: now - (32 - i) * 86_400_000, T: now - (31 - i) * 86_400_000, c: String(px) }; }); }
       throw new Error("unexpected " + body.type);
     }) as any;
@@ -200,7 +205,7 @@ describe("oracle extra sources (Selic/Focus, SPX, market cap, SOL vs ETH vol) �
     const spx = await sources.extraFactsFor("Will the S&P 500 close October 2026 above its September 2026 close?", { asset: "SPX", horizon_days: 31 });
     expect(spx.facts.spx_close).toBeGreaterThan(6000); expect(spx.base_rate).toBeGreaterThan(0.2); expect(spx.base_rate).toBeLessThan(0.8);
     const mcap = await sources.extraFactsFor("Will total crypto market cap be higher on 2026-10-31 than on 2026-09-30 (CoinGecko)?", { asset: null, horizon_days: 31 });
-    expect(mcap.facts.total_crypto_mcap_usd).toBe(2.9e12); expect(mcap.base_rate).not.toBeNull();
+    expect(mcap.facts.total_crypto_mcap_usd).toBe(2.9e12); expect(mcap.facts.mcap_source).toBe("coinlore"); expect(mcap.base_rate).toBeCloseTo(0.5, 2);
     const rvol = await sources.extraFactsFor("Will Solana close above Ethereum in 30-day realized volatility on 2026-10-31?", { asset: "SOL", horizon_days: 31 });
     expect(rvol.facts.sol_realized_vol_30d_ann).toBeGreaterThan(rvol.facts.eth_realized_vol_30d_ann as number); expect(rvol.base_rate).toBe(0.78);
     // through buildContext with the real provider wiring (extra facts hook)
