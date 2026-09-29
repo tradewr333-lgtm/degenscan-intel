@@ -80,6 +80,21 @@ export function installOracleRoutes(app: FastifyInstance, billing: (req: any, to
     return { id: f.id, outcome: f.outcome, brier: f.brier, market_brier: f.market_brier, resolved_at: f.resolved_at, probability: f.probability, market_odds: f.market_odds };
   });
 
+  // Operator-managed well-known files (domain-proof tokens for directories such as x402-list), stored in the DB so no redeploy is needed.
+  getDb().exec("CREATE TABLE IF NOT EXISTS well_known (name TEXT PRIMARY KEY, body TEXT NOT NULL, content_type TEXT NOT NULL, updated_at TEXT NOT NULL)");
+  app.post("/v1/admin/well-known", async (req: any, reply) => {
+    if (!operator(req, reply)) return { error: "operator key required" };
+    const { name, body, content_type } = req.body ?? {};
+    if (typeof name !== "string" || !/^[a-z0-9._-]{1,64}$/i.test(name) || typeof body !== "string" || body.length > 4096) { reply.code(400); return { error: "body { name: 'x402list.txt', body: '<token>', content_type? }" }; }
+    getDb().prepare("INSERT OR REPLACE INTO well_known (name, body, content_type, updated_at) VALUES (?,?,?,?)").run(name, body, typeof content_type === "string" ? content_type : "text/plain; charset=utf-8", new Date().toISOString());
+    return { ok: true, url: `/.well-known/${name}` };
+  });
+  for (const name of ["x402list.txt", "x402-list.txt"]) app.get(`/.well-known/${name}`, async (_req, reply) => {
+    const row = (getDb().prepare("SELECT body, content_type FROM well_known WHERE name IN (?, 'x402list.txt', 'x402-list.txt') ORDER BY CASE WHEN name = ? THEN 0 ELSE 1 END LIMIT 1").get(name, name) as any);
+    if (!row) { reply.code(404); return "not set"; }
+    return reply.type(row.content_type).send(row.body);
+  });
+
   app.get("/v1/oracle/track-record", async () => ({ ...trackRecord(), recent: recentForecasts(20), disclaimer: DISCLAIMER }));
   app.get("/v1/oracle/forecasts", async (req: any) => ({ items: recentForecasts(Number(req.query?.limit ?? 20), String(req.query?.board ?? "") === "1"), disclaimer: DISCLAIMER }));
 }

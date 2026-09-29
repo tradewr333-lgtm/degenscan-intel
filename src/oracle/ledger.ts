@@ -97,7 +97,7 @@ export function recentForecasts(limit = 20, boardOnly = false) {
 export function boardLatest(): any[] {
   ensureOracleTables();
   return getDb().prepare(`SELECT f.id, f.board_slug AS slug, f.question, f.created_at, f.resolves_at, f.probability, f.ci_lo, f.ci_hi, f.disagreement, f.confidence, f.market_odds, f.edge, f.base_rate, f.commitment_hash, f.outcome, f.brier
-    FROM oracle_forecasts f JOIN (SELECT board_slug, MAX(created_at) AS mc FROM oracle_forecasts WHERE board_slug IS NOT NULL GROUP BY board_slug) m
+    FROM oracle_forecasts f JOIN (SELECT board_slug, MAX(created_at) AS mc FROM oracle_forecasts WHERE board_slug IS NOT NULL AND board_slug NOT LIKE 'retired:%' GROUP BY board_slug) m
     ON m.board_slug = f.board_slug AND m.mc = f.created_at ORDER BY f.resolves_at, f.board_slug`).all() as any[];
 }
 

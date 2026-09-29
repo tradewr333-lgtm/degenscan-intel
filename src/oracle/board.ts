@@ -30,7 +30,8 @@ export const LOTE_1: BoardQuestion[] = [
 /** Standing crypto targets regenerated from the live spot: ±10% and ±20% by month-end → four questions per coin. */
 export async function dynamicPriceQuestions(now = new Date()): Promise<BoardQuestion[]> {
   const out: BoardQuestion[] = [];
-  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0, 23, 59, 59)); // last day of this month
+  let end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0, 23, 59, 59)); // last day of this month
+  if (end.getTime() - now.getTime() < 7 * 86_400_000) end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 2, 0, 23, 59, 59)); // < 7 days left → next month-end
   const ym = end.toISOString().slice(0, 7).replace("-", "");
   for (const sym of ["BTC", "ETH", "SOL"]) {
     let spot: number | null = null;
@@ -47,12 +48,21 @@ export async function dynamicPriceQuestions(now = new Date()): Promise<BoardQues
 }
 
 /** Top Polymarket markets by 24h volume (ending within 60 days) → board questions with automatic resolution. */
+const PM_MARKET_RE = /\b(bitcoin|btc|ethereum|eth|solana|sol|crypto|stablecoin|etf|fed|fomc|rate cut|rates?|inflation|cpi|gdp|recession|tariff|oil|brent|gold|s&p|nasdaq|dow|treasury|yield|dollar|dxy|unemployment|jobs|nfp|debt ceiling|shutdown|sec\b|coinbase|binance|microstrategy|nvidia|tesla|apple)/i;
+const PM_EXCLUDE_RE = /\b(vs\.?|game ?\d|match|win on|score|nba|nfl|mlb|nhl|ufc|dota|league of legends|cs2|valorant|esports|premier league|la liga|serie a|bundesliga|champions league|world cup|wta|atp|grand prix|f1)\b/i;
+/** Top Polymarket markets by 24h volume that are about markets/macro/crypto (not sports/esports) and resolve in 3–60 days. */
 export async function polymarketQuestions(limit = 6): Promise<BoardQuestion[]> {
   try {
-    const j: any = await tools.polymarketTop({ sort: "volume_24h", limit: 40 });
-    const soon = Date.now() + 60 * 86_400_000;
-    return (j.markets ?? []).filter((m: any) => m.slug && m.question && m.end_date && new Date(m.end_date).getTime() < soon && new Date(m.end_date).getTime() > Date.now())
-      .slice(0, limit).map((m: any) => ({ slug: `pm-${String(m.slug).slice(0, 60)}`, question: String(m.question), resolves_at: new Date(m.end_date).toISOString(), resolution: { type: "polymarket", slug: String(m.slug) } as Resolution, source: m.url }));
+    const [all, crypto] = await Promise.all([tools.polymarketTop({ sort: "volume_24h", limit: 50 }), tools.polymarketTop({ sort: "volume_24h", limit: 30, tag: "crypto" }).catch(() => ({ markets: [] }))]);
+    const seen = new Set<string>(); const min = Date.now() + 3 * 86_400_000, max = Date.now() + 60 * 86_400_000;
+    const pick = [...((crypto as any).markets ?? []), ...((all as any).markets ?? [])].filter((m: any) => {
+      if (!m.slug || !m.question || !m.end_date || seen.has(m.slug)) return false;
+      const t = new Date(m.end_date).getTime(); if (t < min || t > max) return false;
+      if (PM_EXCLUDE_RE.test(m.question) || PM_EXCLUDE_RE.test(m.slug)) return false;
+      if (!PM_MARKET_RE.test(m.question)) return false;
+      seen.add(m.slug); return true;
+    });
+    return pick.slice(0, limit).map((m: any) => ({ slug: `pm-${String(m.slug).slice(0, 60)}`, question: String(m.question), resolves_at: new Date(m.end_date).toISOString(), resolution: { type: "polymarket", slug: String(m.slug) } as Resolution, source: m.url }));
   } catch { return []; }
 }
 
@@ -72,9 +82,16 @@ export async function refreshBoard(opts: { force?: boolean; onlySlugs?: string[]
   try {
     ensureOracleTables();
     const today = new Date().toISOString().slice(0, 10);
-    const qs = (await boardQuestions()).filter(q => !opts.onlySlugs || opts.onlySlugs.includes(q.slug));
+    const allQs = await boardQuestions();
+    // Retire unresolved board rows whose question left the board (e.g. a market that no longer qualifies): they stay in the
+    // append-only ledger (hash intact) but leave /v1/oracle/board and are no longer auto-resolved.
+    const live = new Set(allQs.map(q => q.slug));
+    const stale = (getDb().prepare("SELECT DISTINCT board_slug AS slug FROM oracle_forecasts WHERE board_slug IS NOT NULL AND board_slug NOT LIKE 'retired:%' AND outcome IS NULL").all() as any[]).map(r => r.slug).filter(sl => !live.has(sl));
+    for (const sl of stale) { getDb().prepare("UPDATE oracle_forecasts SET board_slug = ? WHERE board_slug = ? AND outcome IS NULL").run(`retired:${sl}`, sl); getDb().prepare("DELETE FROM oracle_board WHERE slug = ?").run(sl); }
+    if (stale.length) console.log(`[oracle/board] retired ${stale.length} question(s): ${stale.join(", ")}`);
+    const qs = allQs.filter(q => !opts.onlySlugs || opts.onlySlugs.includes(q.slug));
     for (const q of qs) {
-      if (new Date(q.resolves_at).getTime() < Date.now()) { skipped.push(`${q.slug}: expired`); continue; }
+      if (new Date(q.resolves_at).getTime() < Date.now() + 86_400_000) { skipped.push(`${q.slug}: resolves within 24h`); continue; }
       const last = getDb().prepare("SELECT created_at FROM oracle_forecasts WHERE board_slug = ? ORDER BY created_at DESC LIMIT 1").get(q.slug) as any;
       if (!opts.force && last && String(last.created_at).slice(0, 10) === today) { skipped.push(`${q.slug}: already today`); continue; }
       const job = enqueueForecast({ question: q.question, resolves_at: q.resolves_at, context: `Today is ${today}. Standing board question; resolution rule: ${JSON.stringify(q.resolution)}.`, runs: opts.runs ?? 6, population: opts.population ?? 20, rounds: opts.rounds ?? 3, interventions: [] }, "board", { boardSlug: q.slug });
