@@ -233,3 +233,25 @@ describe("Push D — legacy import", () => {
     expect(tr.forecasts_total).toBeGreaterThanOrEqual(1);
   });
 });
+
+describe("polymarketSearch pulls the whole event for sibling summing", () => {
+  it("Fed cut question: top-50 has only the 50 bps market; the event adds the 25 bps one → summed odds", async () => {
+    const tools = await import("../src/server/tools.js");
+    tools._ext.reset();
+    const ev = { title: "Fed Decision in October?", markets: [
+      { question: "Will the Fed decrease interest rates by 50+ bps after the October 2026 meeting?", outcomePrices: '["0.0025","0.9975"]', active: true, closed: false, slug: "fed-dec-50" },
+      { question: "Will the Fed decrease interest rates by 25 bps after the October 2026 meeting?", outcomePrices: '["0.0045","0.9955"]', active: true, closed: false, slug: "fed-dec-25" },
+      { question: "Will there be no change in Fed interest rates after the October 2026 meeting?", outcomePrices: '["0.555","0.445"]', active: true, closed: false, slug: "fed-hold" },
+      { question: "Will the Fed increase interest rates by 25 bps after the October 2026 meeting?", outcomePrices: '["0.435","0.565"]', active: true, closed: false, slug: "fed-inc-25" },
+    ] };
+    tools._ext.get = (async (url: string) => {
+      if (url.includes("gamma-api.polymarket.com/markets?active=true")) return [{ id: "1", slug: "fed-dec-50", question: ev.markets[0].question, outcomePrices: ev.markets[0].outcomePrices, volume24hr: 1e6, liquidity: 1e5, endDate: "2026-10-29T00:00:00Z" }, { id: "2", slug: "fed-hold", question: ev.markets[2].question, outcomePrices: ev.markets[2].outcomePrices, volume24hr: 9e6, liquidity: 1e6, endDate: "2026-10-29T00:00:00Z" }];
+      if (url.includes("gamma-api.polymarket.com/markets?slug=fed-dec-50")) return [{ slug: "fed-dec-50", events: [{ slug: "fed-decision-in-october" }] }];
+      if (url.includes("gamma-api.polymarket.com/events?slug=fed-decision-in-october")) return [ev];
+      throw new Error("unexpected " + url);
+    }) as any;
+    const m: any = await ctx.intelProvider.polymarketSearch("Will the US Federal Reserve cut the federal funds rate at its October 2026 FOMC meeting?");
+    expect(m.yes).toBeCloseTo(0.007, 4); expect(m.event).toBe("Fed Decision in October?"); expect(m.question).toMatch(/2 sibling outcomes/);
+    tools._ext.reset();
+  });
+});

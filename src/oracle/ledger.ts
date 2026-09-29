@@ -61,8 +61,10 @@ export function trackRecord() {
   const mkt = d.prepare("SELECT brier, market_brier FROM oracle_forecasts WHERE outcome IS NOT NULL AND market_brier IS NOT NULL").all() as any[];
   const edges = (d.prepare("SELECT ABS(edge) AS e FROM oracle_forecasts WHERE edge IS NOT NULL").all() as any[]).map(r => r.e as number);
   const total = (d.prepare("SELECT COUNT(*) AS n FROM oracle_forecasts").get() as any).n as number;
-  const pending = (d.prepare("SELECT COUNT(*) AS n FROM oracle_forecasts WHERE outcome IS NULL").get() as any).n as number;
-  const nextRes = (d.prepare("SELECT MIN(resolves_at) AS t FROM oracle_forecasts WHERE outcome IS NULL AND resolves_at > ?").get(new Date().toISOString()) as any)?.t ?? null;
+  // retired board rows (question left the board) stay in the ledger but are not "pending" scorecard items
+  const pending = (d.prepare("SELECT COUNT(*) AS n FROM oracle_forecasts WHERE outcome IS NULL AND (board_slug IS NULL OR board_slug NOT LIKE 'retired:%')").get() as any).n as number;
+  const nextRes = (d.prepare("SELECT MIN(resolves_at) AS t FROM oracle_forecasts WHERE outcome IS NULL AND (board_slug IS NULL OR board_slug NOT LIKE 'retired:%') AND resolves_at > ?").get(new Date().toISOString()) as any)?.t ?? null;
+  const retired = (d.prepare("SELECT COUNT(*) AS n FROM oracle_forecasts WHERE board_slug LIKE 'retired:%'").get() as any).n as number;
   const evb = d.prepare("SELECT engine_version AS v, AVG(ABS(edge_vs_base)) AS m, COUNT(edge_vs_base) AS n FROM oracle_forecasts WHERE edge_vs_base IS NOT NULL GROUP BY engine_version").all() as any[];
   const byDomain: Record<string, any> = {};
   const byVersion: Record<string, any> = {};
@@ -75,7 +77,7 @@ export function trackRecord() {
   for (const map of [byDomain, byVersion]) for (const x of Object.values(map) as any[]) { x.brier = r4(x.brier_sum / x.n); x.hit_rate = Math.round((x.hits / x.n) * 1000) / 1000; delete x.brier_sum; }
   const n = rows.length;
   return {
-    forecasts_total: total, resolved: n, pending, n_pending: pending, next_resolves_at: nextRes,
+    forecasts_total: total, resolved: n, pending, n_pending: pending, retired, next_resolves_at: nextRes,
     edge_vs_base_by_version: Object.fromEntries(evb.map(r => [r.v ?? "unknown", { mean_abs: r4(r.m), n: r.n }])),
     brier: n ? r4(rows.reduce((s, r) => s + r.brier, 0) / n) : null,
     brier_reference: { coin_flip: 0.25, good_human_forecaster: 0.15, superforecaster: 0.10 },

@@ -234,14 +234,29 @@ export const intelProvider: DataProvider = {
     return { funding_8h: d.funding?.rate_8h_equiv ?? null, open_interest_usd: d.open_interest?.usd ?? null };
   },
   async polymarketSearch(query) {
-    // Top by volume plus a tag pull for the question's event (fed, crypto…) so a relevant market is in the candidate set even
-    // when it is not in the top-50 by volume.
+    // Candidate pool: top-50 by volume + a tag pull for the question's event (fed, crypto…). Once a market matches, pull its whole
+    // EVENT from Gamma so sibling outcomes (e.g. "cut 25 bps" with low volume) are in the pool and can be summed for a generic question.
     const ql = query.toLowerCase();
     const tag = /\b(fed|fomc|federal reserve|powell)\b/.test(ql) ? "fed" : /\b(btc|bitcoin|eth|ethereum|sol|solana|crypto)\b/.test(ql) ? "crypto" : /\b(cpi|inflation|gdp|recession)\b/.test(ql) ? "economy" : null;
     const [top, tagged] = await Promise.all([tools.polymarketTop({ sort: "volume_24h", limit: 50 }), tag ? tools.polymarketTop({ sort: "volume_24h", limit: 50, tag }).catch(() => ({ markets: [] })) : Promise.resolve({ markets: [] } as any)]);
     const seen = new Set<string>(); const cands: any[] = [];
     for (const m of [...((tagged as any).markets ?? []), ...((top as any).markets ?? [])]) if (m.slug && !seen.has(m.slug)) { seen.add(m.slug); cands.push(m); }
-    return matchMarket(query, cands);
+    const first = matchMarket(query, cands);
+    if (!first) return null;
+    const bestSlug = cands.find(m => m.url === first.url)?.slug;
+    if (!bestSlug) return first;
+    try {
+      const ms = await tools._ext.get<any[]>(`https://gamma-api.polymarket.com/markets?slug=${encodeURIComponent(bestSlug)}`, { timeoutMs: 8000 });
+      const evSlug = ms?.[0]?.events?.[0]?.slug; if (!evSlug) return first;
+      const ev = await tools._ext.get<any[]>(`https://gamma-api.polymarket.com/events?slug=${encodeURIComponent(evSlug)}`, { timeoutMs: 8000 });
+      const evMarkets = (ev?.[0]?.markets ?? []).filter((m: any) => m.active !== false && m.closed !== true).map((m: any) => {
+        let yes: number | null = null; try { const p = typeof m.outcomePrices === "string" ? JSON.parse(m.outcomePrices) : m.outcomePrices; yes = p ? Number(p[0]) : null; } catch { yes = null; }
+        return { question: m.question, yes_prob: Number.isFinite(yes as number) ? yes : null, url: m.slug ? `https://polymarket.com/market/${m.slug}` : null, slug: m.slug };
+      });
+      if (!evMarkets.length) return first;
+      const again = matchMarket(query, evMarkets);
+      return again ? { ...again, event: ev?.[0]?.title ?? evSlug } : first;
+    } catch { return first; }
   },
   async calendar(days) {
     const c: any = tools.calendar({ days: Math.max(1, Math.min(60, days)) });
