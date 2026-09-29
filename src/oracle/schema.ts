@@ -58,9 +58,9 @@ export interface Forecast {
   config: { runs: number; population: number; rounds: number; capped: boolean }; // capped = free-trial reduced config
   context_used: Record<string, any>;
   engine_version: string;
-  outcome?: boolean | null; brier?: number | null; market_brier?: number | null; resolved_at?: string | null;
+  outcome?: boolean | null; brier?: number | null; market_brier?: number | null; resolved_at?: string | null; resolution_note?: string | null; // e.g. "spot fallback" when the official candle was unavailable
   disclaimer: string;
 }
 
 export const DISCLAIMER = "Information and analytics only — not investment advice. Probabilities are model outputs with a public Brier track record at /v1/oracle/track-record.";
-export const ENGINE_VERSION = "0.3.2-ts";
+export const ENGINE_VERSION = "0.3.3-ts";

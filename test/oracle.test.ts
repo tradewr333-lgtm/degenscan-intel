@@ -119,7 +119,7 @@ describe("oracle HTTP (async jobs, board, resolve, discovery)", () => {
     expect(res.statusCode).toBe(200); expect(res.json().brier).toBeCloseTo(f.probability ** 2, 4);
     const tr = await app.inject({ method: "GET", url: "/v1/oracle/track-record" });
     expect(tr.json().resolved).toBeGreaterThanOrEqual(1); expect(tr.json().recent[0]).toHaveProperty("commitment_hash");
-    expect(tr.json()).toHaveProperty("n_pending"); expect(tr.json()).toHaveProperty("next_resolves_at"); expect(tr.json().edge_vs_base_by_version["0.3.2-ts"]).toBeDefined(); expect(tr.json().edge_vs_base_by_version["0.3.2-ts"]).toHaveProperty("frac_positive"); expect(tr.json()).toHaveProperty("first_resolution");
+    expect(tr.json()).toHaveProperty("n_pending"); expect(tr.json()).toHaveProperty("next_resolves_at"); expect(tr.json().edge_vs_base_by_version["0.3.3-ts"]).toBeDefined(); expect(tr.json().edge_vs_base_by_version["0.3.3-ts"]).toHaveProperty("frac_positive"); expect(tr.json()).toHaveProperty("first_resolution");
   });
   it("board serves the latest forecast per slug from the DB (no LLM) and bills oracle_board", async () => {
     const app = await buildHttp();
@@ -279,6 +279,7 @@ describe("v0.10.5 — tail-bias fix and automatic resolvers", () => {
     const ids = {
       close: mk("t-close", "T close above 100?", { type: "price_close_above", symbol: "BTC", target: 100 }),
       touch: mk("t-touch", "T touch 150?", { type: "price_touch_above", symbol: "BTC", target: 150 }, "t-touch", "2027-01-01T00:00:00Z"),
+      touchLo: mk("t-touchlo", "T touch below 50?", { type: "price_touch_below", symbol: "BTC", target: 50 }, "t-touchlo", "2027-01-01T00:00:00Z"),
       spx: mk("t-spx", "T spx?", { type: "spx_month_above_prev", month: "2026-08" }),
       rvol: mk("t-rvol", "T rvol?", { type: "rvol_above", a: "SOL", b: "ETH", date: "2026-09-01" }),
       selic: mk("t-selic", "T selic?", { type: "selic_cut", meeting_date: "2026-08-15" }),
@@ -295,7 +296,7 @@ describe("v0.10.5 — tail-bias fix and automatic resolvers", () => {
     tools._hl.post = (async (body: any) => {
       if (body.type === "candleSnapshot") {
         const coin = body.req.coin; const amp = coin === "SOL" ? 0.05 : 0.01; let px = 100; const out: any[] = []; const end = body.req.endTime;
-        for (let i = 35; i >= 0; i--) { px *= i % 2 ? 1 + amp : 1 - amp; out.push({ t: end - (i + 1) * 86_400_000, T: end - i * 86_400_000, c: String(px), h: String(coin === "BTC" ? (i === 3 ? 160 : 120) : px) }); }
+        for (let i = 35; i >= 0; i--) { px *= i % 2 ? 1 + amp : 1 - amp; out.push({ t: end - (i + 1) * 86_400_000, T: end - i * 86_400_000, c: String(px), h: String(coin === "BTC" ? (i === 3 ? 160 : 120) : px), l: String(coin === "BTC" ? (i === 5 ? 40 : 110) : px) }); }
         return out;
       }
       throw new Error("unexpected " + body.type);
@@ -304,6 +305,8 @@ describe("v0.10.5 — tail-bias fix and automatic resolvers", () => {
     const got = Object.fromEntries(res.resolved.map(r => [r.id, r.outcome]));
     expect(got[ids.close]).toBe(true);   // Coinbase close 120 > 100
     expect(got[ids.touch]).toBe(true);   // a daily high of 160 ≥ 150
+    expect(got[ids.touchLo]).toBe(true); // a daily low of 40 ≤ 50 (touch below uses lows)
+    expect(ledger.getForecast(ids.close)!.resolution_note).toBeUndefined(); // official Coinbase candle → no fallback note
     expect(got[ids.spx]).toBe(true);     // Aug last close 6600 > Jul last close 6500
     expect(got[ids.rvol]).toBe(true);    // SOL swings 5 %/day vs ETH 1 %
     expect(got[ids.selic]).toBe(true);   // 15.00 → 14.75
@@ -325,8 +328,10 @@ describe("empirical rvol persistence (Architect §4.2)", () => {
     }) as any;
     tools._ext.get = (async () => { throw new Error("no coinbase in this test"); }) as any;
     const per = await sources.rvolPersistence("SOL", "ETH", 31);
+    expect(per.h_days).toBe(30); expect((await sources.rvolPersistence("SOL", "ETH", 33)).h_days).toBe(35); // cache/horizon rounded to 5 d
     expect(per.n).toBeGreaterThanOrEqual(60); expect(per.persistence).toBeCloseTo((per.n + 1) / (per.n + 2), 3);
     const x = await sources.extraFactsFor("Will Solana close above Ethereum in 30-day realized volatility on 2026-10-31?", { asset: "SOL", horizon_days: 31 });
+    expect((x.facts as any).rvol_persistence_n).toBe(per.n);
     expect(x.base_rate).toBe(per.persistence); expect(x.base_rate!).toBeLessThan(1); expect(x.base_rate_note).toMatch(/measured persistence/);
     tools._hl.reset(); tools._ext.reset(); sources._sources.reset();
   });

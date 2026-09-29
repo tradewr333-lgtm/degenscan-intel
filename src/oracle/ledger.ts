@@ -23,6 +23,7 @@ export function ensureOracleTables() {
   `);
   try { getDb().exec("ALTER TABLE oracle_forecasts ADD COLUMN edge_vs_base REAL"); } catch { /* exists */ }
   try { getDb().exec("ALTER TABLE oracle_forecasts ADD COLUMN legacy_id TEXT"); } catch { /* exists */ }
+  try { getDb().exec("ALTER TABLE oracle_forecasts ADD COLUMN resolution_note TEXT"); } catch { /* exists */ }
 }
 
 export function putForecast(f: Forecast, boardSlug: string | null = null) {
@@ -37,21 +38,21 @@ export function putForecast(f: Forecast, boardSlug: string | null = null) {
 
 export function getForecast(id: string): Forecast | null {
   ensureOracleTables();
-  const row = getDb().prepare("SELECT payload, outcome, resolved_at, brier, market_brier FROM oracle_forecasts WHERE id = ?").get(id) as any;
+  const row = getDb().prepare("SELECT payload, outcome, resolved_at, brier, market_brier, resolution_note FROM oracle_forecasts WHERE id = ?").get(id) as any;
   if (!row) return null;
   const f = JSON.parse(row.payload) as Forecast;
-  if (row.outcome != null) { f.outcome = Boolean(row.outcome); f.resolved_at = row.resolved_at; f.brier = row.brier; f.market_brier = row.market_brier; }
+  if (row.outcome != null) { f.outcome = Boolean(row.outcome); f.resolved_at = row.resolved_at; f.brier = row.brier; f.market_brier = row.market_brier; if (row.resolution_note) f.resolution_note = row.resolution_note; }
   return f;
 }
 
-export function resolveForecast(id: string, outcome: boolean): Forecast | null {
+export function resolveForecast(id: string, outcome: boolean, note: string | null = null): Forecast | null {
   const f = getForecast(id); if (!f) return null;
   const y = outcome ? 1 : 0;
   const brier = Math.round((f.probability - y) ** 2 * 10000) / 10000;
   const marketBrier = f.market_odds != null ? Math.round((f.market_odds - y) ** 2 * 10000) / 10000 : null;
   const at = new Date().toISOString();
-  getDb().prepare("UPDATE oracle_forecasts SET outcome = ?, resolved_at = ?, brier = ?, market_brier = ? WHERE id = ?").run(y, at, brier, marketBrier, id);
-  return { ...f, outcome, resolved_at: at, brier, market_brier: marketBrier };
+  getDb().prepare("UPDATE oracle_forecasts SET outcome = ?, resolved_at = ?, brier = ?, market_brier = ?, resolution_note = ? WHERE id = ?").run(y, at, brier, marketBrier, note, id);
+  return { ...f, outcome, resolved_at: at, brier, market_brier: marketBrier, ...(note ? { resolution_note: note } : {}) };
 }
 
 export function trackRecord() {

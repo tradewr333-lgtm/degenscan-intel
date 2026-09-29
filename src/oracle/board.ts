@@ -12,6 +12,7 @@ export type Resolution =
   | { type: "price_close_above"; symbol: string; target: number }          // spot at/after resolves_at > target
   | { type: "price_close_below"; symbol: string; target: number }          // spot at/after resolves_at < target
   | { type: "price_touch_above"; symbol: string; target: number }          // any daily high ≥ target before resolves_at (checked daily)
+  | { type: "price_touch_below"; symbol: string; target: number }          // any daily low ≤ target before resolves_at (checked daily)
   | { type: "polymarket"; slug: string }                                   // Gamma market closed → outcomePrices
   | { type: "polymarket_event_any"; event_slug: string; match: string }    // YES if any market of the event whose question matches /match/ resolves YES; NO once all matching markets closed NO
   | { type: "spx_month_above_prev"; month: string }                        // last close of `month` (YYYY-MM) > last close of the previous month (Yahoo ^GSPC)
@@ -28,7 +29,7 @@ export const LOTE_1: BoardQuestion[] = [
   { slug: "sol-vs-eth-rvol-oct31", question: "Will Solana close above Ethereum in 30-day realized volatility on 2026-10-31?", resolves_at: "2026-10-31T23:59:59Z", resolution: { type: "rvol_above", a: "SOL", b: "ETH", date: "2026-10-31" } },
   { slug: "crypto-mcap-up-oct2026", question: "Will total crypto market cap be higher on 2026-10-31 than on 2026-09-30 (CoinGecko)?", resolves_at: "2026-10-31T23:59:59Z", resolution: { type: "manual", note: "CoinGecko global market cap, 2026-10-31 vs 2026-09-30" } },
   { slug: "spx-oct-above-sep-2026", question: "Will the S&P 500 close October 2026 above its September 2026 close?", resolves_at: "2026-10-30T21:00:00Z", resolution: { type: "spx_month_above_prev", month: "2026-10" } },
-  { slug: "copom-cut-nov2026", question: "Will Brazil's central bank (Copom) cut the Selic rate at its November 2026 meeting?", resolves_at: "2026-11-05T21:30:00Z", resolution: { type: "selic_cut", meeting_date: "2026-11-04" } },
+  { slug: "copom-cut-nov2026", question: "Will Brazil's central bank (Copom) cut the Selic rate at its November 2026 meeting?", resolves_at: "2026-11-04T22:00:00Z", resolution: { type: "selic_cut", meeting_date: "2026-11-04" } },
   { slug: "btc-ath-oct2026", question: "Will a new all-time high for Bitcoin be set between 2026-09-30 and 2026-10-31?", resolves_at: "2026-10-31T23:59:59Z", resolution: { type: "manual", note: "prior ATH from Coinbase history; touch check daily" } },
 ];
 
@@ -145,16 +146,19 @@ export async function autoResolve(): Promise<{ resolved: { id: string; slug: str
   const now = Date.now(); const cache = new Map<string, any>();
   for (const r of rows) {
     const rule: Resolution = JSON.parse(r.resolution);
-    let outcome: boolean | null = null;
+    let outcome: boolean | null = null; let note: string | null = null;
     try {
       if (rule.type === "price_close_above" || rule.type === "price_close_below") {
         if (new Date(r.resolves_at).getTime() <= now) {
-          const close = cache.get(`close:${rule.symbol}:${r.resolves_at}`) ?? await dailyClose(rule.symbol, r.resolves_at); cache.set(`close:${rule.symbol}:${r.resolves_at}`, close);
-          if (close != null) outcome = rule.type === "price_close_above" ? close > rule.target : close < rule.target;
+          const ck = `close:${rule.symbol}:${r.resolves_at}`;
+          const close: { v: number; note: string | null } | null = cache.has(ck) ? cache.get(ck) : await dailyClose(rule.symbol, r.resolves_at); cache.set(ck, close);
+          if (close != null) { outcome = rule.type === "price_close_above" ? close.v > rule.target : close.v < rule.target; note = close.note; }
         }
-      } else if (rule.type === "price_touch_above") {
-        const hi = await highSince(rule.symbol, r.created_at, cache);
-        if (hi != null && hi >= rule.target) outcome = true; else if (new Date(r.resolves_at).getTime() <= now) outcome = false;
+      } else if (rule.type === "price_touch_above" || rule.type === "price_touch_below") {
+        const up = rule.type === "price_touch_above";
+        const x = await extremeSince(rule.symbol, r.created_at, up ? "high" : "low", cache);
+        if (x != null && (up ? x.v >= rule.target : x.v <= rule.target)) { outcome = true; note = x.note; }
+        else if (new Date(r.resolves_at).getTime() <= now && x != null) { outcome = false; note = x.note; }
       } else if (rule.type === "polymarket_event_any") {
         const ev = await tools._ext.get<any[]>(`https://gamma-api.polymarket.com/events?slug=${encodeURIComponent(rule.event_slug)}`, { timeoutMs: 8000 });
         const re = new RegExp(rule.match, "i");
@@ -189,8 +193,9 @@ export async function autoResolve(): Promise<{ resolved: { id: string; slug: str
           if (va != null && vb != null) outcome = va > vb;
         }
       } else if (rule.type === "selic_cut") {
+        // Copom decides at the end of day 2 (~21:30 UTC); the new target shows in SGS 432 from D+1. Window: D−2 vs D+1..D+7.
         const md = Date.parse(rule.meeting_date + "T12:00:00Z");
-        if (md + 2 * 86_400_000 <= now) {
+        if (md + 86_400_000 <= now) {
           const rows = await tools._ext.get<any[]>("https://api.bcb.gov.br/dados/serie/bcdata.sgs.432/dados/ultimos/40?formato=json", { timeoutMs: 8000 });
           const pts = (rows ?? []).map((x: any) => { const [d, m, y] = String(x.data).split("/").map(Number); return { t: Date.UTC(y, m - 1, d), v: Number(String(x.valor).replace(",", ".")) }; }).filter(x => Number.isFinite(x.v)).sort((a, b) => a.t - b.t);
           const before = [...pts].reverse().find(x => x.t <= md - 2 * 86_400_000);
@@ -204,33 +209,39 @@ export async function autoResolve(): Promise<{ resolved: { id: string; slug: str
       }
     } catch (e) { console.warn(`[oracle/board] resolve ${r.slug}: ${(e as Error).message}`); }
     if (outcome == null) { pending++; continue; }
-    resolveForecast(r.id, outcome); out.push({ id: r.id, slug: r.slug, outcome });
+    resolveForecast(r.id, outcome, note); out.push({ id: r.id, slug: r.slug, outcome });
   }
   if (out.length) console.log(`[oracle/board] auto-resolved ${out.length}: ${out.map(o => `${o.slug}=${o.outcome ? "YES" : "NO"}`).join(", ")}`);
   return { resolved: out, pending };
 }
 
 /** Coinbase daily close (UTC candle) for the calendar day of `at`; falls back to the current spot only within 6 h of that day's end. */
-async function dailyClose(symbol: string, at: string): Promise<number | null> {
+async function dailyClose(symbol: string, at: string): Promise<{ v: number; note: string | null } | null> {
   const day = at.slice(0, 10); const start = `${day}T00:00:00Z`; const end = `${day}T23:59:59Z`;
   try {
     const rows = await tools._ext.get<any[]>(`https://api.exchange.coinbase.com/products/${symbol}-USD/candles?granularity=86400&start=${start}&end=${end}`, { timeoutMs: 8000 });
     // [time, low, high, open, close, volume]
     const c = (rows ?? []).find((x: any) => new Date(Number(x[0]) * 1000).toISOString().slice(0, 10) === day);
-    if (c && Date.now() > Date.parse(end)) return Number(c[4]);
+    if (c && Date.now() > Date.parse(end)) return { v: Number(c[4]), note: null };
   } catch { /* fall back */ }
-  if (Date.now() - Date.parse(end) < 6 * 3_600_000) { const p: any = await tools.priceFor({ symbol }); return p.spot?.price ?? p.perp?.mark ?? null; }
+  if (Date.now() > Date.parse(end) && Date.now() - Date.parse(end) < 6 * 3_600_000) {
+    const p: any = await tools.priceFor({ symbol }); const v = p.spot?.price ?? p.perp?.mark ?? null;
+    return v == null ? null : { v, note: "spot fallback" };  // Architect 30/09 no.3 §3: an auditor must see when the official candle was not used
+  }
   return null;
 }
-/** Highest daily high since `from` (Hyperliquid 1d candles), for touch rules; includes today's live candle. */
-async function highSince(symbol: string, from: string, cache: Map<string, any>): Promise<number | null> {
-  const key = `hi:${symbol}:${from.slice(0, 10)}`; if (cache.has(key)) return cache.get(key);
-  let hi: number | null = null;
+/** Highest daily high (touch above) or lowest daily low (touch below) since `from` — Hyperliquid 1d candles, today's live candle
+ *  included. If the candle series is unavailable the live price is used and flagged "spot fallback". */
+async function extremeSince(symbol: string, from: string, side: "high" | "low", cache: Map<string, any>): Promise<{ v: number; note: string | null } | null> {
+  const key = `${side}:${symbol}:${from.slice(0, 10)}`; if (cache.has(key)) return cache.get(key);
+  let out: { v: number; note: string | null } | null = null;
   try {
-    const rows = await tools._hl.post<{ t: number; h: string }[]>({ type: "candleSnapshot", req: { coin: symbol, interval: "1d", startTime: Date.parse(from), endTime: Date.now() } });
-    const hs = (rows ?? []).map(x => Number(x.h)).filter(Number.isFinite); hi = hs.length ? Math.max(...hs) : null;
-  } catch { const p: any = await tools.priceFor({ symbol }).catch(() => null); hi = p?.perp?.mark ?? p?.spot?.price ?? null; }
-  cache.set(key, hi); return hi;
+    const rows = await tools._hl.post<{ t: number; h: string; l: string }[]>({ type: "candleSnapshot", req: { coin: symbol, interval: "1d", startTime: Date.parse(from), endTime: Date.now() } });
+    const xs = (rows ?? []).map(x => Number(side === "high" ? x.h : x.l)).filter(Number.isFinite);
+    if (xs.length) out = { v: side === "high" ? Math.max(...xs) : Math.min(...xs), note: null };
+  } catch { /* fall back */ }
+  if (!out) { const p: any = await tools.priceFor({ symbol }).catch(() => null); const v = p?.perp?.mark ?? p?.spot?.price ?? null; out = v == null ? null : { v, note: "spot fallback" }; }
+  cache.set(key, out); return out;
 }
 
 // ---------------------------------------------------------------- scheduler

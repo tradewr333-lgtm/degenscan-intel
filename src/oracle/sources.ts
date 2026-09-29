@@ -119,10 +119,11 @@ export async function extraFactsFor(question: string, ctx: { asset: string | nul
         const per = await rvolPersistence("SOL", "ETH", h).catch(() => null);
         if (per && per.n >= 60) {
           base_rate = vs > ve ? per.persistence : r(1 - per.persistence, 3);
-          base_rate_note = `measured persistence of sign(rvol30 SOL − rvol30 ETH) over ${h}d: ${per.persistence} (n=${per.n} overlapping samples, last ${per.window_days}d of Hyperliquid 1d candles); today SOL ${vs} vs ETH ${ve}`;
-          Object.assign(facts, { rvol_persistence: per.persistence, rvol_persistence_n: per.n, rvol_persistence_h_days: h });
+          base_rate_note = `measured persistence of sign(rvol30 SOL − rvol30 ETH) over ${per.h_days}d: ${per.persistence} (n=${per.n} overlapping samples, last ${per.window_days}d of Hyperliquid 1d candles); today SOL ${vs} vs ETH ${ve}`;
+          Object.assign(facts, { rvol_persistence: per.persistence, rvol_persistence_n: per.n, rvol_persistence_h_days: per.h_days });
         } else {
           base_rate = vs > ve ? 0.78 : 0.22;
+          Object.assign(facts, { rvol_persistence_n: per?.n ?? 0 });
           base_rate_note = `provisional: assumed persistence 0.78 (measured series unavailable); today SOL ${vs} vs ETH ${ve}`;
         }
       }
@@ -135,7 +136,9 @@ export async function extraFactsFor(question: string, ctx: { asset: string | nul
 /** Empirical persistence of the realized-vol ranking between two coins (Architect 30/09 §4.2): for each day t in the last
  *  `windowDays`, s(t) = sign(rvol30_A(t) − rvol30_B(t)); persistence = share of t with s(t) == s(t+h). Daily closes from
  *  Hyperliquid candleSnapshot 1d; cached 24 h per (A,B,h). */
-export async function rvolPersistence(a: string, b: string, h: number, windowDays = 180): Promise<{ persistence: number; n: number; window_days: number }> {
+export async function rvolPersistence(a: string, b: string, h0: number, windowDays = 180): Promise<{ persistence: number; n: number; window_days: number; h_days: number }> {
+  // Architect 30/09 no.3 §2.2(a): persistence depends on h → cache per horizon, h rounded to 5 days
+  const h = Math.max(5, Math.round(h0 / 5) * 5);
   return cached(`rvolpers:${a}:${b}:${h}:${windowDays}`, 24 * 3_600_000, async () => {
     const now = Date.now(); const start = now - (windowDays + h + 40) * 86_400_000;
     const load = async (coin: string) => {
@@ -152,6 +155,6 @@ export async function rvolPersistence(a: string, b: string, h: number, windowDay
     let same = 0, n = 0;
     for (let t = first; t + h < sign.length; t++) { if (sign[t] === 0 || sign[t + h] === 0) continue; n++; if (sign[t] === sign[t + h]) same++; }
     // Laplace smoothing (same+1)/(n+2): overlapping samples are not independent, never report certainty
-    return { persistence: r((same + 1) / (n + 2), 3), n, window_days: windowDays };
+    return { persistence: r((same + 1) / (n + 2), 3), n, window_days: windowDays, h_days: h };
   });
 }
