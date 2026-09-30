@@ -18,6 +18,7 @@ export const PRICES: Record<string, number> = {
   brief: 0.10,
   token_verdict: 0.01,
   oracle_board: 0.002,
+  polymarket_edge: 0.002,
   oracle_forecast: 0.25,
   oracle_get: 0,
   oracle_track_record: 0,

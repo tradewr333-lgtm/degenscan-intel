@@ -24,6 +24,21 @@ export function ensureOracleTables() {
   try { getDb().exec("ALTER TABLE oracle_forecasts ADD COLUMN edge_vs_base REAL"); } catch { /* exists */ }
   try { getDb().exec("ALTER TABLE oracle_forecasts ADD COLUMN legacy_id TEXT"); } catch { /* exists */ }
   try { getDb().exec("ALTER TABLE oracle_forecasts ADD COLUMN resolution_note TEXT"); } catch { /* exists */ }
+  try { getDb().exec("ALTER TABLE oracle_forecasts ADD COLUMN measurement_exclude TEXT"); } catch { /* exists */ }
+}
+
+/** Rows kept in the append-only ledger (hash intact) but left out of every public calibration metric (Architect 30/09 no.5 §1–2):
+ *  (a) the six 30/09 board rows anchored on a mismatched Polymarket market (bug fixed in v0.10.9);
+ *  (b) anything paid by an operator/test wallet — "nothing we paid for enters a public metric, no exceptions". */
+const OPERATOR_WALLETS = (process.env.EXCLUDED_WALLETS ?? "0x5344722b8D037827A9a5b7cD6312481D215d33BF,0x21f4A2DA07bccE60878cAb223358D11aD8F11a94").split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
+const MATCH_BUG_SLUGS = ["btc-120k-oct31", "spx-oct-above-sep-2026", "btc-below-73500-202610", "btc-below-78500-202610", "btc-touch-94500-202610", "btc-above-94500-202610"];
+export function applyMeasurementExclusions() {
+  ensureOracleTables(); const d = getDb();
+  d.prepare(`UPDATE oracle_forecasts SET measurement_exclude = 'market_match_bug_v0.10.8' WHERE measurement_exclude IS NULL AND engine_version = '0.3.3-ts'
+    AND created_at >= '2026-09-30T00:00:00Z' AND created_at < '2026-10-01T00:00:00Z' AND board_slug IN (${MATCH_BUG_SLUGS.map(() => "?").join(",")})`).run(...MATCH_BUG_SLUGS);
+  if (OPERATOR_WALLETS.length) d.prepare(`UPDATE oracle_forecasts SET measurement_exclude = 'operator_wallet' WHERE measurement_exclude IS NULL
+    AND id IN (SELECT id FROM oracle_jobs WHERE lower(payer) IN (${OPERATOR_WALLETS.map(() => "?").join(",")}))`).run(...OPERATOR_WALLETS);
+  d.prepare("UPDATE oracle_forecasts SET measurement_exclude = 'operator_wallet' WHERE measurement_exclude IS NULL AND id = 'fe7c74b7dddf'").run();
 }
 
 export function putForecast(f: Forecast, boardSlug: string | null = null) {
@@ -56,11 +71,11 @@ export function resolveForecast(id: string, outcome: boolean, note: string | nul
 }
 
 export function trackRecord() {
-  ensureOracleTables();
+  applyMeasurementExclusions();
   const d = getDb();
-  const rows = d.prepare("SELECT domain, method, probability, outcome, brier, engine_version FROM oracle_forecasts WHERE outcome IS NOT NULL").all() as any[];
-  const mkt = d.prepare("SELECT brier, market_brier FROM oracle_forecasts WHERE outcome IS NOT NULL AND market_brier IS NOT NULL").all() as any[];
-  const edges = (d.prepare("SELECT ABS(edge) AS e FROM oracle_forecasts WHERE edge IS NOT NULL").all() as any[]).map(r => r.e as number);
+  const rows = d.prepare("SELECT domain, method, probability, outcome, brier, engine_version FROM oracle_forecasts WHERE outcome IS NOT NULL AND measurement_exclude IS NULL").all() as any[];
+  const mkt = d.prepare("SELECT brier, market_brier FROM oracle_forecasts WHERE outcome IS NOT NULL AND market_brier IS NOT NULL AND measurement_exclude IS NULL").all() as any[];
+  const edges = (d.prepare("SELECT ABS(edge) AS e FROM oracle_forecasts WHERE edge IS NOT NULL AND measurement_exclude IS NULL").all() as any[]).map(r => r.e as number);
   const total = (d.prepare("SELECT COUNT(*) AS n FROM oracle_forecasts").get() as any).n as number;
   // retired board rows (question left the board) stay in the ledger but are not "pending" scorecard items
   const pending = (d.prepare("SELECT COUNT(*) AS n FROM oracle_forecasts WHERE outcome IS NULL AND (board_slug IS NULL OR board_slug NOT LIKE 'retired:%')").get() as any).n as number;
@@ -72,7 +87,7 @@ export function trackRecord() {
   // signed tail-bias metric (Architect 30/09): healthy = frac_positive 0.40–0.60; ~1.0 means a systematic upward artefact
   const evb = d.prepare(`SELECT engine_version AS v, AVG(ABS(edge_vs_base)) AS m, AVG(edge_vs_base) AS sm,
     AVG(CASE WHEN edge_vs_base > 0 THEN 1.0 ELSE 0.0 END) AS fp, COUNT(edge_vs_base) AS n
-    FROM oracle_forecasts WHERE edge_vs_base IS NOT NULL AND (board_slug IS NULL OR board_slug NOT LIKE 'retired:%') GROUP BY engine_version`).all() as any[];
+    FROM oracle_forecasts WHERE edge_vs_base IS NOT NULL AND measurement_exclude IS NULL AND (board_slug IS NULL OR board_slug NOT LIKE 'retired:%') GROUP BY engine_version`).all() as any[];
   const byDomain: Record<string, any> = {};
   const byVersion: Record<string, any> = {};
   for (const r of rows) {
@@ -90,6 +105,8 @@ export function trackRecord() {
       : nextDue ? { upcoming: true, id: nextDue.id, question: nextDue.question, slug: nextDue.board_slug, resolves_at: nextDue.resolves_at, probability: nextDue.probability, market_odds: nextDue.market_odds, link: `/v1/oracle/forecast/${nextDue.id}` } : null,
     edge_vs_base_by_version: Object.fromEntries(evb.map(r => [r.v ?? "unknown", { mean_abs: r4(r.m), mean_signed: r4(r.sm), frac_positive: Math.round(r.fp * 1000) / 1000, n: r.n }])),
     edge_vs_base_healthy_range: { frac_positive: [0.4, 0.6] },
+    measurement_excluded: Object.fromEntries((d.prepare("SELECT measurement_exclude AS r, COUNT(*) AS n FROM oracle_forecasts WHERE measurement_exclude IS NOT NULL GROUP BY measurement_exclude").all() as any[]).map(x => [x.r, x.n])),
+    measurement_exclusion_rule: "Rows stay in the append-only ledger (hash intact) but are excluded from calibration metrics: forecasts paid by operator/test wallets (/wallets.json) and board rows affected by a data-input bug (named by reason).",
     brier: n ? r4(rows.reduce((s, r) => s + r.brier, 0) / n) : null,
     brier_reference: { coin_flip: 0.25, good_human_forecaster: 0.15, superforecaster: 0.10 },
     vs_market: {  // the number an agent actually pays for
@@ -114,7 +131,7 @@ export function recentForecasts(limit = 20, boardOnly = false) {
 /** Latest forecast per board slug (the daily board). */
 export function boardLatest(): any[] {
   ensureOracleTables();
-  return getDb().prepare(`SELECT f.id, f.board_slug AS slug, f.question, f.created_at, f.resolves_at, f.probability, f.ci_lo, f.ci_hi, f.disagreement, f.confidence, f.market_odds, f.edge, f.base_rate, f.commitment_hash, f.outcome, f.brier
+  return getDb().prepare(`SELECT f.id, f.board_slug AS slug, f.question, f.created_at, f.resolves_at, f.probability, f.ci_lo, f.ci_hi, f.disagreement, f.confidence, f.market_odds, f.edge, f.base_rate, f.commitment_hash, f.outcome, f.brier, f.measurement_exclude, json_extract(f.payload, '$.market_ref') AS market_ref
     FROM oracle_forecasts f JOIN (SELECT board_slug, MAX(created_at) AS mc FROM oracle_forecasts WHERE board_slug IS NOT NULL AND board_slug NOT LIKE 'retired:%' GROUP BY board_slug) m
     ON m.board_slug = f.board_slug AND m.mc = f.created_at ORDER BY f.resolves_at, f.board_slug`).all() as any[];
 }

@@ -185,10 +185,20 @@ const inter = (a: Set<string>, b: Set<string>) => [...a].filter(x => b.has(x));
 export function matchMarket(question: string, markets: { question?: string; title?: string; yes?: number | null; yes_prob?: number | null; url?: string | null }[]): { yes: number | null; url: string | null; question?: string; score: number } | null {
   const qt = tokens(question);
   const qEvents = new Set(inter(qt, EVENT_TAGS)), qMonths = new Set(inter(qt, MONTHS));
+  // Bug fix 30/09 (Construtor, board data): an ISO resolution date ("2026-10-31") is the question's month when no month word is present.
+  if (!qMonths.size) { const iso = question.match(/\b20\d{2}-(\d{2})-\d{2}\b/); const mm = iso ? ({ "01": "jan", "09": "sep", "10": "oct", "11": "nov", "12": "dec" } as Record<string, string>)[iso[1]] : undefined; if (mm) qMonths.add(mm); }
+  // Bug fix 30/09: the asset must agree (an S&P question matched a Bitcoin market), and a price-target question only matches a market
+  // on the same level (±2 %) — "BTC > 120k on 31/10" matched "BTC reach 85k in September" and its siblings were summed to 0.243.
+  const qAsset = detectAsset(question), qTarget = detectTarget(question);
+  const mTargetOf = (text: string) => detectTarget(text.replace(/(\d)pt(\d)/gi, "$1.$2"));
   let best: any = null, bestScore = 0;
   for (const m of markets) {
     let mt = tokens(m.question ?? m.title ?? "");
     if (!mt.size) continue;
+    const mText = String(m.question ?? m.title ?? "");
+    const mAsset = detectAsset(mText);
+    if ((qAsset || mAsset) && qAsset !== mAsset) continue;
+    if (qTarget != null) { const mT = mTargetOf(mText); if (mT == null || Math.abs(mT - qTarget) / qTarget > 0.02) continue; }
     if (qEvents.size && !inter(qEvents, mt).length) continue;
     const mMonths = new Set(inter(mt, MONTHS));
     if (qMonths.size && mMonths.size && !inter(qMonths, mMonths).length) continue;
@@ -213,7 +223,7 @@ export function matchMarket(question: string, markets: { question?: string; titl
     return Math.abs(score - bestScore) < 1e-9 && strip(m) === bestKey;
   });
   const yesOf = (m: any) => m.yes ?? m.yes_prob ?? null;
-  if (siblings.length && yesOf(best) != null && siblings.every(m => yesOf(m) != null) && !/\b\d+\s*bps\b/i.test(question)) {
+  if (qTarget == null && siblings.length && yesOf(best) != null && siblings.every(m => yesOf(m) != null) && !/\b\d+\s*bps\b/i.test(question)) {
     const sum = Math.min(1, [best, ...siblings].reduce((a, m) => a + Number(yesOf(m)), 0));
     const top = [best, ...siblings].sort((a, b) => Number(yesOf(b)) - Number(yesOf(a)))[0];
     return { yes: Math.round(sum * 10000) / 10000, url: top.url ?? null, question: `${[best, ...siblings].length} sibling outcomes summed: ${[best, ...siblings].map(m => m.question).join(" + ")}`, score: Math.round(bestScore * 1000) / 1000 };

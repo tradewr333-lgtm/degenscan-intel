@@ -144,7 +144,7 @@ describe("oracle HTTP (async jobs, board, resolve, discovery)", () => {
     const s: any = buildMcpServer();
     const names = Object.keys(s._registeredTools ?? {});
     expect(names).toEqual(expect.arrayContaining(["oracle_forecast", "oracle_get", "oracle_board", "oracle_track_record"]));
-    expect(names.length).toBe(23);
+    expect(names.length).toBe(24);
   });
 });
 
@@ -368,6 +368,86 @@ describe("A2A JSON-RPC (message/send → tool)", () => {
     expect(r.result.status.state).toBe("completed"); expect(r.result.artifacts[0].parts[0].data).toHaveProperty("n_pending");
     const h = (await app.inject({ method: "POST", url: "/a2a", payload: { jsonrpc: "2.0", id: 2, method: "message/send", params: { message: { parts: [{ kind: "text", text: "hello" }] } } } })).json();
     expect(h.result.status.state).toBe("input-required");
+    await app.close();
+  });
+});
+
+describe("matchMarket guards (bug 30/09: wrong-asset / wrong-level matches from board data)", () => {
+  it("S&P question never matches a Bitcoin market; a 120k target never matches 85k/87.5k 'reach' markets nor sums them", async () => {
+    const { matchMarket } = await import("../src/oracle/context.js");
+    const mk = [
+      { question: "Will Bitcoin reach $85k in September 2026?", yes: 0.12, url: "a" },
+      { question: "Will Bitcoin reach $87.5k in September 2026?", yes: 0.07, url: "b" },
+      { question: "Will Bitcoin reach $87pt5k in September 2026?", yes: 0.05, url: "c" },
+    ];
+    expect(matchMarket("Will the S&P 500 close October 2026 above its September 2026 close?", mk)).toBeNull();
+    expect(matchMarket("Will Bitcoin close above 120,000 USD on 2026-10-31 (Coinbase daily close, UTC)?", mk)).toBeNull();
+    expect(matchMarket("Will Bitcoin close below 73,500 USD on 2026-10-31 (Coinbase daily close, UTC)?", mk)).toBeNull();
+    const ok = matchMarket("Will Bitcoin reach 120,000 USD in October 2026?", [...mk, { question: "Will Bitcoin reach $120k in October 2026?", yes: 0.03, url: "d" }]);
+    expect(ok?.url).toBe("d"); expect(ok?.yes).toBe(0.03);
+  });
+});
+
+describe("measurement exclusions + polymarket_edge + /oracle page", () => {
+  it("operator-paid and match-bug rows leave the metrics but stay in the ledger; edge list sorts by |p − odds| and skips excluded rows", async () => {
+    const { getDb } = await import("../src/store/db.js");
+    const routes = await import("../src/server/oracle-routes.js");
+    ledger.ensureOracleTables(); const d = getDb();
+    const base: any = { question: "Q", resolves_at: "2027-01-01T00:00:00Z", routing: { domain: "t", method: "hybrid", human_driven: true, binary: true, rationale: "" }, ci80: [0.1, 0.9], disagreement: 0, runs: [], panel: [], summary: "", drivers: [], failure_modes: [], confidence: "medium", cost: {}, commitment_hash: "h", market_ref: "https://polymarket.com/market/x", edge: null, config: { runs: 1, population: 1, rounds: 1, capped: false }, context_used: {}, engine_version: "0.3.3-ts", disclaimer: "" };
+    const put = (id: string, slug: string, p: number, odds: number, created = new Date().toISOString(), bb = 0.3) => ledger.putForecast({ ...base, id, question: "Q " + slug, created_at: created, probability: p, market_odds: odds, base_rate: bb, edge_vs_base: p - bb }, slug);
+    put("e-big", "edge-big", 0.60, 0.40); put("e-small", "edge-small", 0.50, 0.48);
+    put("e-bug", "btc-120k-oct31", 0.04, 0.243, "2026-09-30T06:10:00Z", 0.001);
+    d.prepare("INSERT INTO oracle_jobs (id, status, request, payer, created_at, board_slug) VALUES (?,?,?,?,?,?)").run("e-op", "done", "{}", "0x5344722b8d037827a9a5b7cd6312481d215d33bf", new Date().toISOString(), null);
+    ledger.putForecast({ ...base, id: "e-op", created_at: new Date().toISOString(), probability: 0.06, market_odds: null, base_rate: 0.067, edge_vs_base: -0.007 }, null);
+    const tr: any = ledger.trackRecord();
+    expect(tr.measurement_excluded.operator_wallet).toBeGreaterThanOrEqual(1);
+    expect(tr.measurement_excluded["market_match_bug_v0.10.8"]).toBeGreaterThanOrEqual(1);
+    expect(ledger.getForecast("e-op")).not.toBeNull();   // still in the ledger
+    const e = routes.polymarketEdge(0, 50);
+    const slugs = e.items.map((x: any) => x.slug);
+    expect(slugs).not.toContain("btc-120k-oct31");
+    expect(slugs.indexOf("edge-big")).toBeLessThan(slugs.indexOf("edge-small"));
+    const app = await buildHttp();
+    const page = await app.inject({ method: "GET", url: "/oracle" });
+    expect(page.statusCode).toBe(200); expect(page.body).toMatch(/public board/);
+    const unpaid = await app.inject({ method: "GET", url: "/v1/oracle/edge" });
+    expect([200, 402]).toContain(unpaid.statusCode);
+    await app.close();
+  });
+});
+
+describe("Oracle Edge paper bot", () => {
+  it("opens one position per market above the edge threshold, marks and settles from Gamma, reports P&L", async () => {
+    const tools = await import("../src/server/tools.js");
+    const bot = await import("../src/bot/paper.js");
+    tools._ext.reset();
+    const items = [
+      { slug: "s1", question: "Q1", probability: 0.60, market_odds: 0.40, edge: 0.20, market_ref: "https://polymarket.com/market/m-one", forecast_id: "f1", commitment_hash: "h1" },
+      { slug: "s2", question: "Q2", probability: 0.30, market_odds: 0.50, edge: -0.20, market_ref: "https://polymarket.com/market/m-two", forecast_id: "f2", commitment_hash: "h2" },
+      { slug: "s3", question: "Q3", probability: 0.51, market_odds: 0.50, edge: 0.01, market_ref: "https://polymarket.com/market/m-three", forecast_id: "f3", commitment_hash: "h3" },
+    ];
+    const o1 = await bot.openPositions(items); const o2 = await bot.openPositions(items);
+    expect(o1.map((o: any) => o.slug)).toEqual(["s1", "s2"]); expect(o2).toHaveLength(0);   // below-threshold skipped, never re-entered
+    tools._ext.get = (async (url: string) => {
+      if (url.includes("m-one")) return [{ closed: true, outcomePrices: '["1","0"]' }];   // YES won → our YES pays 1
+      if (url.includes("m-two")) return [{ closed: false, outcomePrices: '["0.45","0.55"]' }];  // NO now 0.55
+      throw new Error("unexpected " + url);
+    }) as any;
+    await bot.markAndSettle();
+    const r: any = bot.botReport();
+    const p1 = r.positions.find((p: any) => p.board_slug === "s1"), p2 = r.positions.find((p: any) => p.board_slug === "s2");
+    expect(p1.status).toBe("settled"); expect(p1.pnl).toBeGreaterThan(0);
+    expect(p2.side).toBe("NO"); expect(p2.mark_price).toBeCloseTo(0.55, 5);
+    expect(r.summary.positions).toBe(2); expect(r.paper).toBe(true);
+    tools._ext.reset();
+  });
+});
+
+describe("/bot page", () => {
+  it("renders a friendly page in PT by default and EN on request", async () => {
+    const app = await buildHttp();
+    const pt = await app.inject({ method: "GET", url: "/bot" }); const en = await app.inject({ method: "GET", url: "/bot?lang=en" });
+    expect(pt.statusCode).toBe(200); expect(pt.body).toMatch(/SIMULAÇÃO/); expect(en.body).toMatch(/PAPER/);
     await app.close();
   });
 });

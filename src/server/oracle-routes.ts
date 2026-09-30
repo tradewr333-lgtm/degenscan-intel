@@ -51,6 +51,23 @@ export function installOracleRoutes(app: FastifyInstance, billing: (req: any, to
     const meta = new Map<string, any>((getDb().prepare("SELECT slug, resolution, source FROM oracle_board").all() as any[]).map(r => [r.slug, { resolution: JSON.parse(r.resolution), source: r.source }]));
     return { as_of: new Date().toISOString(), count: items.length, items: items.map(i => ({ ...i, outcome: i.outcome == null ? null : Boolean(i.outcome), ...(meta.get(i.slug) ?? {}), detail: `/v1/oracle/board/${i.slug}` })), refresh: "daily (ORACLE_BOARD_CRON)", track_record: "/v1/oracle/track-record", _billing: billing(req, "oracle_board"), disclaimer: DISCLAIMER };
   });
+  // polymarket_edge (Architect 30/09 no.5 / PLANO-RECEITA Frente B): where the oracle disagrees most with the listed market, from the
+  // daily board cache — no LLM, $0.002. Rows excluded from measurement (bad market match) are left out: their odds are not the market.
+  app.get("/v1/oracle/edge", async (req: any) => {
+    const minAbs = Math.max(0, Number(req.query.min_abs ?? 0) || 0), limit = Math.min(50, Math.max(1, Number(req.query.limit ?? 20) || 20));
+    return { as_of: new Date().toISOString(), ...polymarketEdge(minAbs, limit), _billing: billing(req, "polymarket_edge"), disclaimer: DISCLAIMER };
+  });
+  // Human scorecard page (PLANO-RECEITA Frente A.4): the same board and track record as HTML. Free.
+  app.get("/oracle", async (_req, reply) => reply.type("text/html; charset=utf-8").send(oraclePage()));
+  // Oracle Edge paper bot: public ledger (free) + operator trigger.
+  app.get("/v1/bot", async () => { const { botReport } = await import("../bot/paper.js"); return botReport(); });
+  app.get("/bot", async (_req, reply) => { const { botReport } = await import("../bot/paper.js"); return reply.type("text/html; charset=utf-8").send(botPage(botReport(), (_req as any).query?.lang === "en" ? "en" : "pt")); });
+  app.post("/v1/admin/bot/open", async (req: any, reply) => {
+    if (!operator(req, reply)) return { error: "operator key required" };
+    const { openPositions, markAndSettle } = await import("../bot/paper.js");
+    const opened = await openPositions(polymarketEdge(0, 50).items); await markAndSettle();
+    return { ok: true, opened };
+  });
   app.get("/v1/oracle/board/:slug", async (req: any, reply) => {
     const slug = String(req.params.slug);
     const row = getDb().prepare("SELECT id FROM oracle_forecasts WHERE board_slug = ? ORDER BY created_at DESC LIMIT 1").get(slug) as any;
@@ -136,4 +153,82 @@ export function installOracleRoutes(app: FastifyInstance, billing: (req: any, to
 
   app.get("/v1/oracle/track-record", async () => ({ ...trackRecord(), recent: recentForecasts(20), disclaimer: DISCLAIMER }));
   app.get("/v1/oracle/forecasts", async (req: any) => ({ items: recentForecasts(Number(req.query?.limit ?? 20), String(req.query?.board ?? "") === "1"), disclaimer: DISCLAIMER }));
+}
+
+export function polymarketEdge(minAbs = 0, limit = 20) {
+  const rows = boardLatest().filter(r => r.market_odds != null && r.probability != null && !r.measurement_exclude && r.outcome == null);
+  const items = rows.map(r => ({ slug: r.slug, question: r.question, probability: r.probability, ci80: [r.ci_lo, r.ci_hi], market_odds: r.market_odds, edge: Math.round((r.probability - r.market_odds) * 10000) / 10000,
+      side: r.probability > r.market_odds ? "oracle_above_market (YES looks cheap)" : "oracle_below_market (NO looks cheap)", base_rate: r.base_rate, confidence: r.confidence, resolves_at: r.resolves_at,
+      market_ref: r.market_ref ?? null, forecast_id: r.id, commitment_hash: r.commitment_hash, forecast_at: r.created_at, detail: `/v1/oracle/board/${r.slug}` }))
+    .filter(x => Math.abs(x.edge) >= minAbs).sort((a, b) => Math.abs(b.edge) - Math.abs(a.edge)).slice(0, limit);
+  return { count: items.length, items, method: "Latest daily-board forecast per question minus the matched Polymarket YES price at forecast time; sorted by |edge|. Cached, refreshed daily 06:00 UTC.", track_record: "/v1/oracle/track-record" };
+}
+
+function esc(s: unknown) { return String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" } as any)[c]); }
+function oraclePage() {
+  const rows = boardLatest(); const tr: any = trackRecord();
+  const pct = (x: any) => x == null ? "—" : (Number(x) * 100).toFixed(1) + "%";
+  const body = rows.map(r => `<tr${r.measurement_exclude ? ' class="ex" title="excluded from measurement: ' + esc(r.measurement_exclude) + '"' : ""}><td>${esc(r.question)}</td><td class="n"><b>${pct(r.probability)}</b></td><td class="n">${pct(r.base_rate)}</td><td class="n">${pct(r.market_odds)}</td><td>${esc(String(r.resolves_at).slice(0, 10))}</td><td class="h"><a href="/v1/oracle/forecast/${esc(r.id)}">${esc(String(r.commitment_hash).slice(0, 10))}…</a></td></tr>`).join("");
+  const fr = tr.first_resolution;
+  return `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Degenscan Oracle — public board</title>
+<style>body{font-family:system-ui,sans-serif;max-width:1100px;margin:0 auto;padding:24px 16px;background:#0b0d10;color:#e8eaed}a{color:#7cc4ff}table{width:100%;border-collapse:collapse;font-size:14px}th,td{padding:8px 6px;border-bottom:1px solid #22272e;text-align:left;vertical-align:top}td.n{text-align:right;white-space:nowrap}td.h{font-family:ui-monospace,monospace;font-size:12px}tr.ex{opacity:.45}.k{display:inline-block;margin:0 16px 8px 0;padding:10px 14px;border:1px solid #2a2f36;border-radius:10px;background:#12161b}.k b{font-size:20px;display:block}.m{color:#9aa0a6}.wrap{overflow-x:auto}</style>
+<h1>Degenscan Oracle — public board</h1>
+<p class="m">Calibrated probabilities for standing market questions, recomputed daily at 06:00 UTC. Every forecast is committed with a sha256 hash before it resolves, and scored with Brier against the Polymarket price at forecast time. Nothing is edited after the fact.</p>
+<div><span class="k"><b>${tr.n_pending}</b>pending</span><span class="k"><b>${tr.resolved}</b>resolved</span><span class="k"><b>${tr.brier ?? "—"}</b>Brier (0.25 = coin flip)</span><span class="k"><b>${fr ? esc(String(fr.resolved_at ?? fr.resolves_at).slice(0, 10)) : "—"}</b>${fr?.upcoming ? "first resolution due" : "first resolution"}</span></div>
+<div class="wrap"><table><thead><tr><th>Question</th><th>Oracle</th><th>Base rate</th><th>Market</th><th>Resolves</th><th>Commitment</th></tr></thead><tbody>${body}</tbody></table></div>
+<p class="m">Faded rows are kept in the ledger but excluded from calibration metrics (reason on hover). Machine-readable: <a href="/v1/oracle/board">/v1/oracle/board</a> · <a href="/v1/oracle/edge">/v1/oracle/edge</a> · <a href="/v1/oracle/track-record">/v1/oracle/track-record</a> · <a href="/docs/oracle-methodology">methodology</a> · API plans from $9/month: <a href="/pricing">/pricing</a></p>
+<p class="m">Operator: Marbella Collins LLC · contact@degenscan.io · Information and analytics only — not investment advice.</p></html>`;
+}
+
+function botPage(r: any, lang: "pt" | "en" = "pt") {
+  const T = lang === "pt" ? {
+    title: "Oracle Edge — robô de previsão (simulação)", lead: "Um robô que opera no Polymarket usando só a nossa API de previsões. Regras fixas e públicas; toda posição fica registrada — as que ganham e as que perdem — ligada ao hash da previsão que a originou. <b>Simulação: sem dinheiro real.</b>",
+    pnl: "Resultado", staked: "apostado (simulado)", pos: "posições", open: "abertas", settled: "encerradas", won: "ganhas",
+    how: "Como ele decide", s1: "Todo dia às 06:00 UTC o oráculo recalcula a probabilidade de cada pergunta do board.", s2: "Às 08:00 UTC o robô compara com o preço do Polymarket. Se a diferença for de 3 pontos ou mais, compra o lado que o oráculo acha barato (US$10 por mercado, uma única vez).", s3: "Segura até o mercado resolver. O valor é atualizado de hora em hora com o preço real.",
+    table: "Todas as posições", h: ["Aberta em", "Mercado", "Posição", "Oráculo × mercado", "Preço agora", "Resultado", "Status", "Prova"],
+    empty: "Nenhuma posição ainda. O robô abre posições todo dia às 08:00 UTC, quando o oráculo discorda do mercado em 3 pontos ou mais.",
+    curve: "Evolução do resultado", nocurve: "A curva aparece depois das primeiras posições.", st: { open: "aberta", settled: "encerrada" },
+    foot: "Dados em JSON: <a href=\"/v1/bot\">/v1/bot</a> · Placar do oráculo: <a href=\"/oracle\">/oracle</a> · API a partir de US$9/mês: <a href=\"/pricing\">/pricing</a> · <a href=\"/bot?lang=en\">English</a>",
+    disc: "Simulação com regras fixas publicadas — sem dinheiro real, não é retorno real. Informação e análise, não é recomendação de investimento.",
+  } : {
+    title: "Oracle Edge — forecasting bot (paper)", lead: "A bot that trades Polymarket using only our forecasting API. Fixed public rules; every position is kept — winners and losers — linked to the hash of the forecast it was opened on. <b>Paper trading: no real money.</b>",
+    pnl: "P&L", staked: "staked (paper)", pos: "positions", open: "open", settled: "settled", won: "won",
+    how: "How it decides", s1: "Every day at 06:00 UTC the oracle recomputes the probability of each board question.", s2: "At 08:00 UTC the bot compares it with the Polymarket price. If they differ by 3 points or more, it buys the side the oracle thinks is cheap ($10 per market, once).", s3: "It holds to resolution. Value is marked hourly at the live price.",
+    table: "All positions", h: ["Opened", "Market", "Position", "Oracle vs market", "Price now", "P&L", "Status", "Proof"],
+    empty: "No positions yet. The bot opens daily at 08:00 UTC when the oracle disagrees with the market by 3 points or more.",
+    curve: "P&L over time", nocurve: "The curve appears after the first positions.", st: { open: "open", settled: "settled" },
+    foot: "JSON: <a href=\"/v1/bot\">/v1/bot</a> · Oracle board: <a href=\"/oracle\">/oracle</a> · API from $9/month: <a href=\"/pricing\">/pricing</a> · <a href=\"/bot?lang=pt\">Português</a>",
+    disc: "Paper trading with fixed published rules — no real money, not real returns. Information and analytics only — not investment advice.",
+  };
+  const money = (x: number) => (x >= 0 ? "+" : "−") + "US$" + Math.abs(x).toFixed(2);
+  const s = r.summary; const up = s.pnl_usd >= 0;
+  const curve = r.equity_curve as { at: string; pnl_usd: number }[];
+  let svg = `<p class="m">${T.nocurve}</p>`;
+  if (curve.length >= 2) {
+    const W = 800, H = 160, xs = curve.map((_, i) => (i / (curve.length - 1)) * W), vals = curve.map(c => c.pnl_usd);
+    const lo = Math.min(0, ...vals), hi = Math.max(0, ...vals), span = hi - lo || 1, y = (v: number) => H - ((v - lo) / span) * H;
+    const pts = vals.map((v, i) => `${xs[i].toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+    svg = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="width:100%;height:160px;display:block"><line x1="0" x2="${W}" y1="${y(0)}" y2="${y(0)}" stroke="#3a414a" stroke-dasharray="4 4"/><polyline fill="none" stroke="${up ? "#5fd38d" : "#ff7b72"}" stroke-width="2.5" points="${pts}"/></svg><p class="m">${esc(curve[0].at.slice(0, 10))} → ${esc(curve[curve.length - 1].at.slice(0, 16).replace("T", " "))} UTC</p>`;
+  }
+  const rows = r.positions.map((p: any) => `<tr><td>${esc(String(p.opened_at).slice(0, 10))}</td><td><a href="${esc(p.polymarket)}" target="_blank" rel="noopener">${esc(p.question)}</a></td><td><span class="pill ${p.side === "YES" ? "y" : "n"}">${p.side === "YES" ? (lang === "pt" ? "SIM" : "YES") : (lang === "pt" ? "NÃO" : "NO")}</span> ${(p.entry_price * 100).toFixed(1)}¢</td><td class="num">${(p.oracle_p * 100).toFixed(1)}% × ${(p.market_odds_at_entry * 100).toFixed(1)}%</td><td class="num">${p.mark_price == null ? "—" : (p.mark_price * 100).toFixed(1) + "¢"}</td><td class="num ${p.pnl >= 0 ? "g" : "r"}"><b>${money(p.pnl)}</b></td><td>${esc((T.st as any)[p.status] ?? p.status)}</td><td class="h"><a href="${esc(p.forecast)}">${esc(String(p.forecast_commitment_hash).slice(0, 8))}…</a></td></tr>`).join("");
+  return `<!doctype html><html lang="${lang}"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Oracle Edge</title>
+<style>
+:root{--bg:#0b0d10;--card:#12161b;--line:#22272e;--txt:#e8eaed;--mut:#9aa0a6;--g:#5fd38d;--r:#ff7b72;--a:#7cc4ff}
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,Segoe UI,sans-serif;background:var(--bg);color:var(--txt)}
+.wrap{max-width:1100px;margin:0 auto;padding:28px 16px}a{color:var(--a)}h1{font-size:28px;margin:0 0 8px}h2{font-size:18px;margin:28px 0 12px}
+.lead{color:var(--mut);max-width:760px;line-height:1.5}.hero{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin:22px 0}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px}.big{font-size:30px;font-weight:700}.g{color:var(--g)}.r{color:var(--r)}.m{color:var(--mut);font-size:13px}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}.step b{display:inline-block;width:26px;height:26px;border-radius:50%;background:#1f2a36;color:var(--a);text-align:center;line-height:26px;margin-right:8px}
+.tw{overflow-x:auto;border:1px solid var(--line);border-radius:14px}table{width:100%;border-collapse:collapse;font-size:14px}th{background:#10141a;color:var(--mut);font-weight:600;text-align:left}th,td{padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+td.num{text-align:right;white-space:nowrap}td.h{font-family:ui-monospace,monospace;font-size:12px}.pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:700}.pill.y{background:#123524;color:var(--g)}.pill.n{background:#3a1717;color:var(--r)}
+.empty{padding:22px;color:var(--mut);text-align:center}.badge{display:inline-block;background:#2a2410;color:#f2cc60;border:1px solid #4a3f14;border-radius:999px;padding:3px 10px;font-size:12px;font-weight:700;margin-left:8px;vertical-align:middle}
+</style><div class="wrap">
+<h1>${T.title.split(" — ")[0]} <span class="badge">${lang === "pt" ? "SIMULAÇÃO" : "PAPER"}</span></h1><p class="lead">${T.lead}</p>
+<div class="hero"><div class="card"><div class="m">${T.pnl}</div><div class="big ${up ? "g" : "r"}">${money(s.pnl_usd)}</div><div class="m">${s.pnl_pct}% · US$${s.staked_usd.toFixed(0)} ${T.staked}</div></div>
+<div class="card"><div class="m">${T.pos}</div><div class="big">${s.positions}</div><div class="m">${s.open} ${T.open} · ${s.settled} ${T.settled}</div></div>
+<div class="card"><div class="m">${T.won}</div><div class="big">${s.settled ? s.wins + "/" + s.settled : "—"}</div><div class="m">${T.settled}</div></div></div>
+<div class="card"><h2 style="margin-top:0">${T.curve}</h2>${svg}</div>
+<h2>${T.how}</h2><div class="steps"><div class="card step"><b>1</b>${T.s1}</div><div class="card step"><b>2</b>${T.s2}</div><div class="card step"><b>3</b>${T.s3}</div></div>
+<h2>${T.table}</h2><div class="tw"><table><thead><tr>${T.h.map(x => `<th>${x}</th>`).join("")}</tr></thead><tbody>${rows || `<tr><td colspan="8" class="empty">${T.empty}</td></tr>`}</tbody></table></div>
+<p class="m" style="margin-top:18px">${T.foot}</p><p class="m">${T.disc} Marbella Collins LLC.</p></div></html>`;
 }

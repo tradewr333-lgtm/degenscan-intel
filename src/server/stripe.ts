@@ -45,7 +45,7 @@ export function installStripe(app: FastifyInstance) {
     const price = PRICE[plan];
     if (!price) throw new Error(`plan ${plan} not configured`);
     const session = await stripe.checkout.sessions.create({
-      mode: "subscription", line_items: [{ price, quantity: 1 }], customer_email: email || undefined,
+      mode: "subscription", line_items: [{ price, quantity: 1 }], customer_email: email || undefined, allow_promotion_codes: true,
       success_url: `${PUBLIC_URL}/v1/keys/claim?session_id={CHECKOUT_SESSION_ID}`, cancel_url: `${PUBLIC_URL}/v1/plans`,
       metadata: { plan }, subscription_data: { metadata: { plan } },
     });

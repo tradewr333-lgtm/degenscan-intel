@@ -22,7 +22,7 @@ async function main() {
       setInterval(async () => { const et = new Date().toLocaleTimeString("en-US", { timeZone: "America/New_York", hour12: false }); if (et.startsWith("21:35")) { await refreshUniverse(); invalidateGraph(); invalidateDict(); } }, 60_000);
       const app = await buildHttp();
       await app.listen({ port, host: "0.0.0.0" });
-      if (!flag("--no-ingest")) startBoardScheduler();
+      if (!flag("--no-ingest")) { startBoardScheduler(); const { startPaperBot } = await import("./bot/paper.js"); const { polymarketEdge } = await import("./server/oracle-routes.js"); startPaperBot(() => polymarketEdge(0, 50).items); }
       console.log(`degenscan-intel listening on :${port}  (MCP: POST /mcp, REST: /v1, universe ${loadUniverse().version}, ${CONNECTORS.length} connectors)`);
       break;
     }
