@@ -182,6 +182,10 @@ const inter = (a: Set<string>, b: Set<string>) => [...a].filter(x => b.has(x));
 /** Best Polymarket market for the question: canonical-token Jaccard, with a hard requirement that the EVENT tag (fed, btc,
  *  copom…) and the month agree when both sides have one; direction words (cut/hike/hold) are decisive. Returns null below
  *  the threshold — a wrong match is worse than no match. */
+/** question text → Polymarket market slug, registered by the board for curated event questions (exact match only). */
+export const PINNED_MARKETS = new Map<string, string>();
+export function pinMarket(question: string, slug: string) { PINNED_MARKETS.set(question.trim(), slug); }
+
 export function matchMarket(question: string, markets: { question?: string; title?: string; yes?: number | null; yes_prob?: number | null; url?: string | null }[]): { yes: number | null; url: string | null; question?: string; score: number } | null {
   const qt = tokens(question);
   const qEvents = new Set(inter(qt, EVENT_TAGS)), qMonths = new Set(inter(qt, MONTHS));
@@ -244,6 +248,16 @@ export const intelProvider: DataProvider = {
     return { funding_8h: d.funding?.rate_8h_equiv ?? null, open_interest_usd: d.open_interest?.usd ?? null };
   },
   async polymarketSearch(query) {
+    // Curated event questions (board LOTE_EVENTOS) name their Polymarket market explicitly: use it instead of a fuzzy search.
+    const pinned = PINNED_MARKETS.get(query.trim());
+    if (pinned) {
+      try {
+        const ms = await tools._ext.get<any[]>(`https://gamma-api.polymarket.com/markets?slug=${encodeURIComponent(pinned)}`, { timeoutMs: 8000 });
+        const m = ms?.[0];
+        if (m) { let yes: number | null = null; try { const p = typeof m.outcomePrices === "string" ? JSON.parse(m.outcomePrices) : m.outcomePrices; yes = p ? Number(p[0]) : null; } catch { yes = null; }
+          if (yes != null && Number.isFinite(yes)) return { yes, url: `https://polymarket.com/market/${pinned}`, question: m.question }; }
+      } catch { /* fall through to search */ }
+    }
     // Candidate pool: top-50 by volume + a tag pull for the question's event (fed, crypto…). Once a market matches, pull its whole
     // EVENT from Gamma so sibling outcomes (e.g. "cut 25 bps" with low volume) are in the pool and can be summed for a generic question.
     const ql = query.toLowerCase();

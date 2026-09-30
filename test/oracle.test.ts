@@ -451,3 +451,19 @@ describe("/bot page", () => {
     await app.close();
   });
 });
+
+describe("Lote Eventos (Brazil election, 30/09)", () => {
+  it("board carries the curated election questions with pinned Polymarket markets", async () => {
+    const board = await import("../src/oracle/board.js");
+    const ctx = await import("../src/oracle/context.js");
+    const qs = board.eventQuestions();
+    expect(qs.map(q => q.slug)).toEqual(expect.arrayContaining(["br-1t-outright-2026", "br-1t-lula-most-votes-2026", "br-president-lula-2026", "br-president-flavio-2026"]));
+    for (const q of qs) { expect(q.resolution.type).toBe("polymarket"); expect(ctx.PINNED_MARKETS.get(q.question)).toBe((q.resolution as any).slug); expect(ctx.detectTarget(q.question)).toBeNull(); }
+    const tools = await import("../src/server/tools.js");
+    const prev = tools._ext.get;
+    tools._ext.get = (async (url: string) => { if (url.includes("markets?slug=will-lula-win-the-most-votes")) return [{ slug: "x", question: "q", outcomePrices: '["0.71","0.29"]' }]; throw new Error("unexpected " + url); }) as any;
+    const r = await ctx.intelProvider.polymarketSearch("Will Lula win the most votes in the first round of the 2026 Brazil presidential election?");
+    expect(r?.yes).toBeCloseTo(0.71); expect(r?.url).toContain("will-lula-win-the-most-votes");
+    tools._ext.get = prev;
+  });
+});

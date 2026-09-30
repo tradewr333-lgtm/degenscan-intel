@@ -7,6 +7,7 @@ import { getDb } from "../store/db.js";
 import { enqueueForecast, waitFor } from "./queue.js";
 import { ensureOracleTables, resolveForecast } from "./ledger.js";
 import { llmConfigured } from "./llm.js";
+import { pinMarket } from "./context.js";
 
 export type Resolution =
   | { type: "price_close_above"; symbol: string; target: number }          // spot at/after resolves_at > target
@@ -32,6 +33,29 @@ export const LOTE_1: BoardQuestion[] = [
   { slug: "copom-cut-nov2026", question: "Will Brazil's central bank (Copom) cut the Selic rate at its November 2026 meeting?", resolves_at: "2026-11-04T22:00:00Z", resolution: { type: "selic_cut", meeting_date: "2026-11-04" } },
   { slug: "btc-ath-oct2026", question: "Will a new all-time high for Bitcoin be set between 2026-09-30 and 2026-10-31?", resolves_at: "2026-10-31T23:59:59Z", resolution: { type: "manual", note: "prior ATH from Coinbase history; touch check daily" } },
 ];
+
+/** Lote Eventos (30/09/2026, Renato): curated event questions with a named Polymarket market — first case, Brazil's presidential
+ *  election (1st round 2026-10-04, runoff 2026-10-25). Question text = the Polymarket question, so market_odds come from that exact
+ *  market (pinned, no fuzzy match). Resolution = the market's own resolution. Extra questions can be added by the operator at runtime
+ *  (POST /v1/admin/board/questions → table oracle_board_extra) without a deploy. Source tag "Lote Eventos" keeps them separable in
+ *  the calibration series. */
+export const LOTE_EVENTOS: BoardQuestion[] = [
+  { slug: "br-1t-outright-2026", question: "Will any presidential candidate win outright in the first round of the Brazil election?", resolves_at: "2026-10-05T03:59:00Z", resolution: { type: "polymarket", slug: "will-any-presidential-candidate-win-outright-in-the-first-round-of-the-brazil-election" }, source: "Lote Eventos · Polymarket" },
+  { slug: "br-1t-lula-most-votes-2026", question: "Will Lula win the most votes in the first round of the 2026 Brazil presidential election?", resolves_at: "2026-10-05T03:59:00Z", resolution: { type: "polymarket", slug: "will-lula-win-the-most-votes-in-the-first-round-of-the-2026-brazil-presidential-election" }, source: "Lote Eventos · Polymarket" },
+  { slug: "br-1t-flavio-second-2026", question: "Will Flávio Bolsonaro finish in second place in the first round of the 2026 Brazilian presidential election?", resolves_at: "2026-10-05T03:59:00Z", resolution: { type: "polymarket", slug: "will-flvio-bolsonaro-finish-in-second-place-in-the-first-round-of-the-2026-brazilian-presidential-election" }, source: "Lote Eventos · Polymarket" },
+  { slug: "br-president-lula-2026", question: "Will Luiz Inácio Lula da Silva win the 2026 Brazilian presidential election?", resolves_at: "2026-10-26T03:59:00Z", resolution: { type: "polymarket", slug: "will-luiz-incio-lula-da-silva-win-the-2026-brazilian-presidential-election" }, source: "Lote Eventos · Polymarket" },
+  { slug: "br-president-flavio-2026", question: "Will Flávio Bolsonaro win the 2026 Brazilian presidential election?", resolves_at: "2026-10-26T03:59:00Z", resolution: { type: "polymarket", slug: "will-flvio-bolsonaro-win-the-2026-brazilian-presidential-election" }, source: "Lote Eventos · Polymarket" },
+];
+export function extraQuestions(): BoardQuestion[] {
+  getDb().exec("CREATE TABLE IF NOT EXISTS oracle_board_extra (slug TEXT PRIMARY KEY, question TEXT NOT NULL, resolves_at TEXT NOT NULL, resolution TEXT NOT NULL, source TEXT, added_at TEXT NOT NULL)");
+  return (getDb().prepare("SELECT slug, question, resolves_at, resolution, source FROM oracle_board_extra ORDER BY slug").all() as any[])
+    .map(r => ({ slug: r.slug, question: r.question, resolves_at: r.resolves_at, resolution: JSON.parse(r.resolution), source: r.source ?? "Lote Eventos" }));
+}
+export function eventQuestions(): BoardQuestion[] {
+  const qs = [...LOTE_EVENTOS, ...extraQuestions()];
+  for (const q of qs) if (q.resolution.type === "polymarket") pinMarket(q.question, q.resolution.slug);
+  return qs;
+}
 
 /** Standing crypto targets regenerated from the live spot: ±10% and ±20% by month-end → four questions per coin. */
 /** Lote 2 (Architect 29/09 §4) — generated, not hand-written: for BTC/ETH/SOL, targets at ±0.5σ and ±1σ of the spot at freeze
@@ -91,7 +115,7 @@ export async function polymarketQuestions(limit = 15): Promise<BoardQuestion[]> 
 }
 
 export async function boardQuestions(): Promise<BoardQuestion[]> {
-  const seen = new Set<string>(); const all = [...LOTE_1, ...(await dynamicPriceQuestions()), ...(await polymarketQuestions())];
+  const seen = new Set<string>(); const all = [...LOTE_1, ...eventQuestions(), ...(await dynamicPriceQuestions()), ...(await polymarketQuestions())];
   return all.filter(q => { if (seen.has(q.slug)) return false; seen.add(q.slug); return true; });
 }
 

@@ -11,7 +11,7 @@ import { ForecastRequest, DISCLAIMER } from "../oracle/schema.js";
 import { enqueueForecast, recoverJobs, _queue } from "../oracle/queue.js";
 import { boardLatest, getForecast, getJob, recentForecasts, resolveForecast, trackRecord, ensureOracleTables, putForecast } from "../oracle/ledger.js";
 import { llmConfigured } from "../oracle/llm.js";
-import { refreshBoard, autoResolve, boardQuestions } from "../oracle/board.js";
+import { refreshBoard, autoResolve, boardQuestions, eventQuestions } from "../oracle/board.js";
 import { getDb } from "../store/db.js";
 
 /** Free-trial forecasts are real LLM spend on our side: cap them to a cheap configuration (~US$0.01). */
@@ -84,6 +84,24 @@ export function installOracleRoutes(app: FastifyInstance, billing: (req: any, to
     const b = req.body ?? {};
     void refreshBoard({ force: Boolean(b.force), onlySlugs: Array.isArray(b.slugs) ? b.slugs.map(String) : undefined, runs: b.runs, population: b.population, rounds: b.rounds });
     reply.code(202); return { status: "refreshing", questions: (await boardQuestions()).map(q => q.slug), note: "runs in background; poll GET /v1/oracle/board" };
+  });
+  // Operator: curated event questions (Lote Eventos) added at runtime, no deploy. Resolution must be machine-checkable.
+  eventQuestions(); // registers pinned Polymarket markets at boot
+  app.post("/v1/admin/board/questions", async (req: any, reply) => {
+    if (!operator(req, reply)) return { error: "operator key required" };
+    const { slug, question, resolves_at, resolution, source } = req.body ?? {};
+    const okRes = resolution && typeof resolution === "object" && typeof resolution.type === "string";
+    if (typeof slug !== "string" || !/^[a-z0-9-]{3,64}$/.test(slug) || typeof question !== "string" || question.length < 10 || question.length > 400 || !resolves_at || isNaN(Date.parse(resolves_at)) || !okRes) {
+      reply.code(400); return { error: "body { slug:'a-z0-9-', question, resolves_at: ISO, resolution: { type:'polymarket', slug } | ..., source? }" };
+    }
+    getDb().prepare("INSERT OR REPLACE INTO oracle_board_extra (slug, question, resolves_at, resolution, source, added_at) VALUES (?,?,?,?,?,?)").run(slug, question, new Date(resolves_at).toISOString(), JSON.stringify(resolution), typeof source === "string" ? source : "Lote Eventos", new Date().toISOString());
+    eventQuestions();
+    return { ok: true, slug, next: "POST /v1/oracle/board/refresh { slugs: [slug] }" };
+  });
+  app.delete("/v1/admin/board/questions/:slug", async (req: any, reply) => {
+    if (!operator(req, reply)) return { error: "operator key required" };
+    const r = getDb().prepare("DELETE FROM oracle_board_extra WHERE slug = ?").run(String(req.params.slug));
+    return { ok: true, removed: Number((r as any).changes ?? 0), note: "existing forecasts stay in the ledger; the row retires at the next refresh" };
   });
   app.post("/v1/oracle/board/resolve", async (req: any, reply) => { if (!operator(req, reply)) return { error: "operator key required" }; return autoResolve(); });
   app.get("/v1/oracle/board/questions", async () => ({ items: await boardQuestions(), disclaimer: DISCLAIMER }));
