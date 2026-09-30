@@ -76,7 +76,7 @@ export const defaultFetcher: Fetcher = async (url, params) => {
   if (wd) { const c = cache.get(key); if (c && Date.now() - c.at < CACHE_MS) return c.v; }
   const headers: Record<string, string> = { "user-agent": process.env.R2_UA ?? "2Realidade-oracle/0.3 (contact@degenscan.io)", accept: url === WIKIDATA_SPARQL ? "application/sparql-results+json" : "application/json" };
   if (url.includes("brave.com") && process.env.BRAVE_API_KEY) headers["x-subscription-token"] = process.env.BRAVE_API_KEY;
-  const r = await fetch(key, { headers, signal: AbortSignal.timeout(8000) });
+  const r = await fetch(key, { headers, signal: AbortSignal.timeout(url.includes("gdeltproject") ? 15000 : 8000) });  // GDELT is slow (01/10: 8 s timed out)
   if (r.status === 404) return null;
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   const text = await r.text();
@@ -132,14 +132,11 @@ export async function wikidataPerson(fetch: Fetcher, name: string): Promise<Reco
   const s = await fetch(WIKIDATA_API, { action: "wbsearchentities", search: name, language: "en", format: "json", limit: 7 });
   const hits: any[] = s?.search ?? [];
   if (!hits.length) return null;
-  let qid = hits[0].id; let label = hits[0].label ?? name;
-  if (hits.length > 1) {
-    try {
-      const pick = await fetch(WIKIDATA_SPARQL, { query: `SELECT ?p ?sl WHERE { VALUES ?p { ${hits.map(h => "wd:" + h.id).join(" ")} } ?p wdt:P31 wd:Q5 . ?p wikibase:sitelinks ?sl . } ORDER BY DESC(?sl) LIMIT 1`, format: "json" });
-      const b = pick?.results?.bindings?.[0];
-      if (b) { qid = (val(b, "p") ?? "").split("/").pop() ?? qid; label = hits.find(h => h.id === qid)?.label ?? label; }
-    } catch { /* keep first hit */ }
-  }
+  // Only HUMANS count as a person match (live case 01/10: "Atlântida" matched "Atlántida Department", a Uruguayan region).
+  const pick = await fetch(WIKIDATA_SPARQL, { query: `SELECT ?p ?sl WHERE { VALUES ?p { ${hits.map(h => "wd:" + h.id).join(" ")} } ?p wdt:P31 wd:Q5 . ?p wikibase:sitelinks ?sl . } ORDER BY DESC(?sl) LIMIT 1`, format: "json" });
+  const b = pick?.results?.bindings?.[0];
+  if (!b) return null;
+  const qid = (val(b, "p") ?? "").split("/").pop() ?? hits[0].id; const label = hits.find(h => h.id === qid)?.label ?? name;
   const sparql = `SELECT ?birth ?death ?posLabel ?start WHERE {
   OPTIONAL { wd:${qid} wdt:P569 ?birth . }
   OPTIONAL { wd:${qid} wdt:P570 ?death . }

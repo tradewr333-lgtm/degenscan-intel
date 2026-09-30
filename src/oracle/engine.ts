@@ -233,7 +233,7 @@ export async function forecast(req0: ForecastRequest, opts: { baseSeed?: number;
   const p = clamp(num(agg?.probability, pNaive), 0.01, 0.99);
   let conf = String(agg?.confidence ?? "medium");
   if (routing.method === "expert_panel" && !routing.human_driven) conf = "low";  // honesty: no data-backed model behind it
-  if (on && (grd!.status === "unverified" || grd!.status === "partial")) conf = "low";  // a premise the answer depends on could not be verified live
+  if (on && (grd!.status === "unverified" || grd!.status === "partial" || grd!.premises.some(x => x.verified === false))) conf = "low";  // any premise left unverified → low (Construtor 01/10, Atlântida case)  // a premise the answer depends on could not be verified live
   if (!["low", "medium", "high"].includes(conf)) conf = "medium";
 
   const fid = opts.id ?? randomUUID().replace(/-/g, "").slice(0, 12);
