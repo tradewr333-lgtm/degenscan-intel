@@ -59,6 +59,9 @@ export function installOracleRoutes(app: FastifyInstance, billing: (req: any, to
   });
   // Human scorecard page (PLANO-RECEITA Frente A.4): the same board and track record as HTML. Free.
   app.get("/oracle", async (_req, reply) => reply.type("text/html; charset=utf-8").send(oraclePage()));
+  // Market-style prediction cards for humans (Renato 30/09): pt at /previsoes, en at /predictions. Free, same data as the board.
+  app.get("/previsoes", async (_req, reply) => { const { predictionsPage } = await import("./predictions-page.js"); return reply.type("text/html; charset=utf-8").send(predictionsPage("pt")); });
+  app.get("/predictions", async (_req, reply) => { const { predictionsPage } = await import("./predictions-page.js"); return reply.type("text/html; charset=utf-8").send(predictionsPage("en")); });
   // Oracle Edge paper bot: public ledger (free) + operator trigger.
   app.get("/v1/bot", async () => { const { botReport } = await import("../bot/paper.js"); return botReport(); });
   app.get("/bot", async (_req, reply) => { const { botReport } = await import("../bot/paper.js"); return reply.type("text/html; charset=utf-8").send(botPage(botReport(), (_req as any).query?.lang === "en" ? "en" : "pt")); });
@@ -194,6 +197,7 @@ function oraclePage() {
 <p class="m">Calibrated probabilities for standing market questions, recomputed daily at 06:00 UTC. Every forecast is committed with a sha256 hash before it resolves, and scored with Brier against the Polymarket price at forecast time. Nothing is edited after the fact.</p>
 <div><span class="k"><b>${tr.n_pending}</b>pending</span><span class="k"><b>${tr.resolved}</b>resolved</span><span class="k"><b>${tr.brier ?? "—"}</b>Brier (0.25 = coin flip)</span><span class="k"><b>${fr ? esc(String(fr.resolved_at ?? fr.resolves_at).slice(0, 10)) : "—"}</b>${fr?.upcoming ? "first resolution due" : "first resolution"}</span></div>
 <div class="wrap"><table><thead><tr><th>Question</th><th>Oracle</th><th>Base rate</th><th>Market</th><th>Resolves</th><th>Commitment</th></tr></thead><tbody>${body}</tbody></table></div>
+<p><a href="/previsoes"><b>→ Visual version (cards, Portuguese): /previsoes</b></a> · <a href="/predictions">English cards</a></p>
 <p class="m">Faded rows are kept in the ledger but excluded from calibration metrics (reason on hover). Machine-readable: <a href="/v1/oracle/board">/v1/oracle/board</a> · <a href="/v1/oracle/edge">/v1/oracle/edge</a> · <a href="/v1/oracle/track-record">/v1/oracle/track-record</a> · <a href="/docs/oracle-methodology">methodology</a> · API plans from $9/month: <a href="/pricing">/pricing</a></p>
 <p class="m">Operator: Marbella Collins LLC · contact@degenscan.io · Information and analytics only — not investment advice.</p></html>`;
 }

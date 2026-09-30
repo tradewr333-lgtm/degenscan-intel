@@ -467,3 +467,37 @@ describe("Lote Eventos (Brazil election, 30/09)", () => {
     tools._ext.get = prev;
   });
 });
+
+describe("/previsoes page (30/09)", () => {
+  it("renders prediction cards in Portuguese and English", async () => {
+    const { buildHttp } = await import("../src/server/http.js");
+    const app = await buildHttp();
+    const pt = await app.inject({ method: "GET", url: "/previsoes" });
+    expect(pt.statusCode).toBe(200); expect(pt.body).toContain("Previsões do Oráculo"); expect(pt.body).toContain('class="card"');
+    expect(pt.body).toContain("não é recomendação de investimento");
+    const en = await app.inject({ method: "GET", url: "/predictions" });
+    expect(en.statusCode).toBe(200); expect(en.body).toContain("Oracle predictions");
+    const { categoryOf } = await import("../src/server/predictions-page.js");
+    expect(categoryOf("br-president-lula-2026", "Will Lula win the 2026 Brazilian presidential election?")).toBe("eleicoes");
+    expect(categoryOf("fed-cut-oct2026", "Will the US Federal Reserve cut the federal funds rate at its October 2026 FOMC meeting?")).toBe("juros");
+    expect(categoryOf("btc-above-1-202610", "Will BTC close above 90,000 USD on 2026-10-31?")).toBe("cripto");
+  });
+});
+
+describe("/app human product (30/09)", () => {
+  it("serves app, help and pricing pages; /v1/me needs a key and reports forecasts left", async () => {
+    const { buildHttp } = await import("../src/server/http.js");
+    const keys = await import("../src/server/keys.js");
+    const app = await buildHttp();
+    for (const [u, t] of [["/app", "Pergunte ao Oráculo"], ["/app?lang=en", "Ask the Oracle"], ["/ajuda", "Ajuda"], ["/help", "Help"], ["/pricing", "Planos"], ["/pricing?lang=en", "Pricing"]]) {
+      const r = await app.inject({ method: "GET", url: u }); expect(r.statusCode).toBe(200); expect(r.body).toContain(t);
+    }
+    expect((await app.inject({ method: "GET", url: "/pricing" })).body).not.toMatch(/token verdict/i);
+    expect((await app.inject({ method: "GET", url: "/v1/me" })).statusCode).toBe(401);
+    const { key } = keys.createKey({ plan: "hobby", label: "test" });
+    const me = (await app.inject({ method: "GET", url: "/v1/me", headers: { "x-api-key": key } })).json();
+    expect(me.plan).toBe("hobby"); expect(me.forecasts_left).toBe(16); expect(me.credits_per_forecast).toBe(125);
+    const h = (await app.inject({ method: "GET", url: "/v1/me/forecasts", headers: { "x-api-key": key } })).json();
+    expect(Array.isArray(h.items)).toBe(true);
+  });
+});
