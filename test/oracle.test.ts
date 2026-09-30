@@ -144,7 +144,7 @@ describe("oracle HTTP (async jobs, board, resolve, discovery)", () => {
     const s: any = buildMcpServer();
     const names = Object.keys(s._registeredTools ?? {});
     expect(names).toEqual(expect.arrayContaining(["oracle_forecast", "oracle_get", "oracle_board", "oracle_track_record"]));
-    expect(names.length).toBe(22);
+    expect(names.length).toBe(23);
   });
 });
 
@@ -334,5 +334,26 @@ describe("empirical rvol persistence (Architect §4.2)", () => {
     expect((x.facts as any).rvol_persistence_n).toBe(per.n);
     expect(x.base_rate).toBe(per.persistence); expect(x.base_rate!).toBeLessThan(1); expect(x.base_rate_note).toMatch(/measured persistence/);
     tools._hl.reset(); tools._ext.reset(); sources._sources.reset();
+  });
+});
+
+describe("token_verdict (GoPlus + DexScreener, mocked)", () => {
+  it("honeypot → DANGER; clean liquid token → LOW_RISK; bad input → 400", async () => {
+    const tools = await import("../src/server/tools.js");
+    const tv = await import("../src/server/token-verdict.js");
+    tools._ext.reset(); tv._tv.reset();
+    const bad = "0x1111111111111111111111111111111111111111", good = "0x2222222222222222222222222222222222222222";
+    tools._ext.get = (async (url: string) => {
+      if (url.includes("gopluslabs") && url.includes(bad)) return { code: 1, result: { [bad]: { token_symbol: "SCAM", is_honeypot: "1", sell_tax: "0.99", buy_tax: "0", is_open_source: "0", is_mintable: "1", holder_count: "40", holders: [{ address: "0xa", percent: "0.8", is_contract: 0, is_locked: 0 }], lp_holders: [{ address: "0xb", percent: "1", is_locked: 0 }] } } };
+      if (url.includes("gopluslabs") && url.includes(good)) return { code: 1, result: { [good]: { token_symbol: "GOOD", is_honeypot: "0", sell_tax: "0", buy_tax: "0", is_open_source: "1", is_mintable: "0", owner_address: "", holder_count: "50000", holders: [{ address: "0xc", percent: "0.05", is_contract: 0, is_locked: 0 }], lp_holders: [{ address: "0x000000000000000000000000000000000000dead", percent: "0.9", is_locked: 1 }], is_in_cex: { listed: "1" } } } };
+      if (url.includes("dexscreener")) return { pairs: [{ chainId: "base", dexId: "uniswap", pairAddress: "0xp", url: "https://dexscreener.com/base/0xp", liquidity: { usd: url.includes(good) ? 2_000_000 : 3_000 }, volume: { h24: 100_000 }, priceUsd: "1.0", fdv: 1e8, pairCreatedAt: Date.now() - 400 * 86_400_000, baseToken: { symbol: "X", name: "X" } }] };
+      throw new Error("unexpected " + url);
+    }) as any;
+    const b = await tv.tokenVerdict({ address: bad });
+    expect(b.verdict).toBe("DANGER"); expect(b.flags.map((f: any) => f.id)).toEqual(expect.arrayContaining(["honeypot", "sell_tax_extreme", "not_verified", "thin_liquidity"]));
+    const g = await tv.tokenVerdict({ address: good, chain: "base" });
+    expect(g.verdict).toBe("LOW_RISK"); expect(g.score).toBeGreaterThanOrEqual(80); expect(g.market?.liquidity_usd).toBe(2_000_000);
+    await expect(tv.tokenVerdict({ address: "nope" })).rejects.toThrow(/invalid address/);
+    tools._ext.reset(); tv._tv.reset();
   });
 });

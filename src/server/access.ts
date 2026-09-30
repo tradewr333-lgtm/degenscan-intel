@@ -47,6 +47,7 @@ export function toolForRequest(req: FastifyRequest): string | null {
   if (url.startsWith("/v1/filings/")) return "filings_for";
   if (url === "/v1/calendar") return "calendar";
   if (url.startsWith("/v1/brief/")) return "brief";
+  if (url.startsWith("/v1/token/verdict/")) return "token_verdict";
   return null;
 }
 

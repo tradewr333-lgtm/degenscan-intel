@@ -4,6 +4,7 @@ import { getDb } from "../store/db.js";
 
 /** Subscription plans for operators that pay in fiat (Stripe) instead of USDC. */
 export const PLANS = {
+  hobby: { name: "Hobby", usd_month: 9, monthly_calls: 2_000 },
   starter: { name: "Starter", usd_month: 29, monthly_calls: 10_000 },
   pro: { name: "Pro", usd_month: 199, monthly_calls: 200_000 },
   enterprise: { name: "Enterprise", usd_month: 0, monthly_calls: 10_000_000 },

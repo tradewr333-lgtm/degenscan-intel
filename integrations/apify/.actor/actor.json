@@ -1,0 +1,11 @@
+{
+  "actorSpecification": 1,
+  "name": "degenscan-intel",
+  "title": "Degenscan Intel — crypto market events, token risk verdicts & calibrated forecasts",
+  "description": "For AI trading agents: token contract risk verdict (honeypot, taxes, mint/pause/blacklist, owner, holders, LP lock, liquidity), price & perp funding, whale stablecoin flows, Polymarket top markets, primary-source market events with per-asset impact, and calibrated probability forecasts with a public Brier track record. Information and analytics only — not investment advice.",
+  "version": "0.1",
+  "buildTag": "latest",
+  "input": "./input_schema.json",
+  "dockerfile": "../Dockerfile",
+  "storages": { "dataset": { "actorSpecification": 1, "views": { "overview": { "title": "Results", "transformation": { "fields": ["tool", "ok", "result", "error"] }, "display": { "component": "table" } } } } }
+}

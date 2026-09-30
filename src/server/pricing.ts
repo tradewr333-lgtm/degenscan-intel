@@ -16,6 +16,7 @@ export const PRICES: Record<string, number> = {
   filings_for: 0.002,
   calendar: 0.002,
   brief: 0.10,
+  token_verdict: 0.01,
   oracle_board: 0.002,
   oracle_forecast: 0.25,
   oracle_get: 0,

@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { TokenVerdictArgs, tokenVerdict } from "./token-verdict.js";
 import { EventsSinceArgs, ImpactForArgs, ExposureGraphArgs, PolymarketContextArgs, NewsArgs, FilingsArgs, CalendarArgs, BriefArgs, DerivsArgs, PriceArgs, FundingAlertsArgs, WhaleArgs, PolyTopArgs, eventsSince, impactFor, exposureGraph, universe, sources, regimeSnapshot, explain, polymarketContext, pulse, newsFor, filingsFor, calendar, brief, derivsFor, priceFor, fundingAlerts, whaleMoves, polymarketTop } from "./tools.js";
 import { PRICES } from "./pricing.js";
 import { ForecastRequest, DISCLAIMER } from "../oracle/schema.js";
@@ -12,7 +13,7 @@ const fail = (e: unknown) => ({ content: [{ type: "text" as const, text: `error:
 
 /** Build the MCP server. One instance per stateless HTTP request is fine (cheap). */
 export function buildMcpServer() {
-  const s = new McpServer({ name: "degenscan-intel", version: "0.10.6" }, {
+  const s = new McpServer({ name: "degenscan-intel", version: "0.10.7" }, {
     instructions: [
       "Degenscan Intel: cross-asset event feed for trading agents. Events are normalized from ~40 primary sources (SEC, Fed, Federal Register, USGS, NHC, Nasdaq halts, DefiLlama, Polymarket…) and scored against an exposure graph into per-asset impacts.",
       "Cheapest probe: pulse ($0.001). One-call briefing per asset: brief ($0.10). Typical loop: regime_snapshot → events_since(since='4h', universe=[your book]) → impact_for(asset_id) for anything with confidence ≥ 0.4 → check tradable_now / next_open before acting. For prediction markets: polymarket_context(market) → compare yes_prob with fresh primary-source events.",
@@ -63,6 +64,11 @@ export function buildMcpServer() {
     title: "Price probe", description: `Cheapest price check for ONE coin, no key: Hyperliquid perp mark/mid/oracle, Coinbase spot, 24h change, perp-spot basis, current funding, plus links to our event pressure on that asset. ~1 KB, cached 30 s — made for polling loops. $${PRICES.price_for}/call.`,
     inputSchema: PriceArgs.shape, annotations: { readOnlyHint: true },
   }, async (a) => { try { return json(await priceFor(PriceArgs.parse(a))); } catch (e) { return fail(e); } });
+
+  s.registerTool("token_verdict", {
+    title: "Token risk verdict", description: `Before buying, sniping or routing a swap: send a token contract address (EVM: base default, ethereum, bsc, arbitrum, polygon, optimism, avalanche; or a Solana mint) and get a deterministic risk verdict — DANGER / HIGH_RISK / CAUTION / LOW_RISK with a 0–100 score and named flags: honeypot, sell/buy tax, mintable, pausable, blacklist, hidden or reclaimable owner, unverified source, proxy, holder concentration, creator share, unlocked LP, thin or brand-new liquidity. Sources: GoPlus + DexScreener, 5-min cache. $${PRICES.token_verdict}/call.`,
+    inputSchema: TokenVerdictArgs.shape, annotations: { readOnlyHint: true },
+  }, async (a) => { try { return json(await tokenVerdict(TokenVerdictArgs.parse(a))); } catch (e) { return fail(e); } });
 
   s.registerTool("funding_alerts", {
     title: "Funding alerts", description: `Which perps have extreme funding RIGHT NOW on Hyperliquid: sorted by |hourly rate| with annualized %, which side is paying (crowded longs vs shorts), open interest and predicted next funding per venue (Hyperliquid, Binance, Bybit). Use every 5–15 min to detect crowded positioning or to pick a side to receive funding. $${PRICES.funding_alerts}/call.`,

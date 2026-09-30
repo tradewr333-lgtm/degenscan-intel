@@ -9,12 +9,12 @@ import { createKey, findBySession, revokeBySubscription, PLANS, PACKS, type Plan
  * GET /v1/keys/claim?session_id=… which mints the API key (once) and returns it.
  * Webhook: customer.subscription.deleted → key revoked.
  *
- * Env: STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, STRIPE_PRICE_STARTER, STRIPE_PRICE_PRO, PUBLIC_URL
+ * Env: STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, STRIPE_PRICE_HOBBY, STRIPE_PRICE_STARTER, STRIPE_PRICE_PRO, PUBLIC_URL
  */
 export function installStripe(app: FastifyInstance) {
   const secret = process.env.STRIPE_SECRET_KEY;
   const PUBLIC_URL = process.env.PUBLIC_URL ?? "https://intel.degenscan.io";
-  const PRICE: Partial<Record<Plan, string | undefined>> = { starter: process.env.STRIPE_PRICE_STARTER, pro: process.env.STRIPE_PRICE_PRO };
+  const PRICE: Partial<Record<Plan, string | undefined>> = { hobby: process.env.STRIPE_PRICE_HOBBY, starter: process.env.STRIPE_PRICE_STARTER, pro: process.env.STRIPE_PRICE_PRO };
 
   app.get("/v1/plans", async () => ({
     plans: Object.entries(PLANS).filter(([k]) => k !== "enterprise").map(([id, p]) => ({ id, ...p, checkout: secret && PRICE[id as Plan] ? `${PUBLIC_URL}/v1/keys/checkout?plan=${id}` : null })),
@@ -22,6 +22,21 @@ export function installStripe(app: FastifyInstance) {
     pay_per_call: "x402 (USDC on Base) — call any priced endpoint without a key to receive payment requirements",
     stripe_enabled: !!secret,
   }));
+
+  // Human pricing page (card via Stripe; agents use x402 or prepaid packs).
+  app.get("/pricing", async (_req, reply) => {
+    const rows = Object.entries(PLANS).filter(([k]) => k !== "enterprise").map(([id, p]) => {
+      const url = secret && PRICE[id as Plan] ? `${PUBLIC_URL}/v1/keys/checkout?plan=${id}` : null;
+      return `<div class="card"><h3>${p.name}</h3><div class="price">$${p.usd_month}<small>/month</small></div><p>${p.monthly_calls.toLocaleString("en-US")} calls/month · all tools incl. token verdicts, oracle board and forecasts (a forecast = 125 calls)</p>${url ? `<a class="btn" href="${url}">Subscribe with card</a>` : `<span class="soon">coming soon</span>`}</div>`;
+    }).join("");
+    return reply.type("text/html; charset=utf-8").send(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Degenscan Intel — pricing</title>
+<style>body{font-family:system-ui,sans-serif;max-width:920px;margin:0 auto;padding:24px 16px;background:#0b0d10;color:#e8eaed}a{color:#7cc4ff}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}.card{border:1px solid #2a2f36;border-radius:12px;padding:18px;background:#12161b}.price{font-size:32px;font-weight:700}.price small{font-size:14px;color:#9aa0a6}.btn{display:inline-block;margin-top:8px;padding:10px 14px;border-radius:8px;background:#2f7cf6;color:#fff;text-decoration:none}.soon{color:#9aa0a6}code{background:#1c2128;padding:2px 6px;border-radius:4px}</style>
+<h1>Degenscan Intel pricing</h1><p>Market-event intelligence, token risk verdicts and calibrated forecasts for trading bots and AI agents. You get an <code>X-API-KEY</code> right after checkout.</p>
+<div class="grid">${rows}</div>
+<h2>Agents (no account)</h2><p>Pay per call with x402 (USDC on Base or Solana): just call any route and answer the 402. Prices: <a href="/.well-known/x402">/.well-known/x402</a>. Or buy a prepaid key with USDC: <a href="/v1/keys/packs">/v1/keys/packs</a> ($5 = 1,000 calls).</p>
+<p><a href="/llms.txt">Docs</a> · <a href="/v1/oracle/track-record">Public forecast track record</a> · <a href="/v1/metrics">Public usage metrics</a></p>
+<p style="color:#9aa0a6">Operator: Marbella Collins LLC · contact@degenscan.io · Information and analytics only — not investment advice.</p></html>`);
+  });
 
   if (!secret) { console.log("[stripe] STRIPE_SECRET_KEY not set — fiat plans disabled (x402 still works)"); return; }
   const stripe = new Stripe(secret);

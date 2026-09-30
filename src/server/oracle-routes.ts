@@ -96,6 +96,16 @@ export function installOracleRoutes(app: FastifyInstance, billing: (req: any, to
     return reply.type(row.content_type).send(row.body);
   });
 
+  // Channel keys for resale marketplaces (Apify Store, etc.): operator-minted, labelled "channel:<name>", shown once.
+  app.post("/v1/admin/keys", async (req: any, reply) => {
+    if (!operator(req, reply)) return { error: "operator key required" };
+    const { plan, label } = req.body ?? {};
+    if (!["hobby", "starter", "pro", "enterprise"].includes(plan) || typeof label !== "string" || !/^channel:[a-z0-9._-]{2,40}$/i.test(label)) { reply.code(400); return { error: "body { plan: 'starter'|'pro'|'enterprise', label: 'channel:apify' }" }; }
+    const { createKey } = await import("./keys.js");
+    const { id, key } = createKey({ plan, label });
+    return { ok: true, key_id: id, api_key: key, note: "Shown once. Use as X-API-KEY." };
+  });
+
   // Push D — import legacy forecasts (Lote 1, Python v0.2) preserving id, commitment_hash, created_at, probability. Operator only.
   app.post("/v1/admin/oracle/import", async (req: any, reply) => {
     if (!operator(req, reply)) return { error: "operator key required" };

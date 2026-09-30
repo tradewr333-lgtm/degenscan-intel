@@ -21,6 +21,7 @@ Covers the questions trading agents ask most: Polymarket odds vs fresh primary e
 | You need… | Call | Cost |
 |---|---|---|
 | Cheapest probe — anything new in the last hour? | `pulse` | $0.001 |
+| Is this token contract safe to buy/snipe/route? (honeypot, taxes, mint/pause/blacklist, owner, holders, LP lock, liquidity; EVM + Solana) | `token_verdict(address, chain)` | $0.01 |
 | Price of one coin, no key (Hyperliquid mark + Coinbase spot, 24h change, basis) | `price_for(symbol)` | $0.001 |
 | Which perps have extreme funding right now (crowded longs/shorts, predicted per venue) | `funding_alerts()` | $0.001 |
 | Large USDC/USDT transfers to/from exchanges on Base & Ethereum, with labels | `whale_moves(min_usd)` | $0.002 |

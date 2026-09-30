@@ -1,0 +1,19 @@
+{
+  "title": "Degenscan Intel",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "tool": { "title": "Tool", "type": "string", "editor": "select", "default": "token_verdict",
+      "enum": ["token_verdict", "price_for", "funding_alerts", "whale_moves", "polymarket_top", "derivs_for", "events_since", "impact_for", "oracle_board", "oracle_forecast"],
+      "enumTitles": ["Token risk verdict ($0.02)", "Price probe", "Funding alerts", "Whale moves", "Polymarket top", "Perp derivatives", "Market events since", "Impact for asset", "Oracle board (daily forecasts)", "Oracle forecast ($0.40)"],
+      "description": "Which Degenscan Intel tool to run." },
+    "address": { "title": "Token address (token_verdict)", "type": "string", "editor": "textfield", "prefill": "0x4ed4e862860bed51a9570b96d89af5e1b0efefed", "description": "0x… EVM contract or Solana mint." },
+    "chain": { "title": "Chain (token_verdict)", "type": "string", "editor": "textfield", "default": "base", "description": "base, ethereum, bsc, arbitrum, polygon, optimism, avalanche, solana" },
+    "symbol": { "title": "Symbol / asset (price_for, derivs_for, impact_for)", "type": "string", "editor": "textfield", "prefill": "BTC" },
+    "since": { "title": "Since (events_since, impact_for)", "type": "string", "editor": "textfield", "default": "4h" },
+    "universe": { "title": "Universe (events_since)", "type": "string", "editor": "textfield", "prefill": "BTC,ETH,NVDA" },
+    "question": { "title": "Question (oracle_forecast)", "type": "string", "editor": "textarea", "description": "Binary question with a date, e.g. 'Will Bitcoin close above 100,000 USD on 2026-10-31?'" },
+    "resolves_at": { "title": "Resolves at (oracle_forecast, ISO)", "type": "string", "editor": "textfield" }
+  },
+  "required": ["tool"]
+}

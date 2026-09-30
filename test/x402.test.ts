@@ -77,7 +77,7 @@ describe("x402 v2 paid mode", () => {
     const free = await app.inject({ method: "GET", url: "/v1/universe" });
     expect(free.statusCode).toBe(200);
     const plans = await app.inject({ method: "GET", url: "/v1/plans" });
-    expect(plans.json().plans.map((p: any) => p.id)).toEqual(["starter", "pro"]);
+    expect(plans.json().plans.map((p: any) => p.id)).toEqual(["hobby", "starter", "pro"]);
   });
 
   it("MCP: handshake and tools/list are free; tools/call on a priced tool returns 402 after quota; paid call settles", async () => {
