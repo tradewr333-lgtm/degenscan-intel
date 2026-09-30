@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import Fastify from "fastify";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { buildMcpServer } from "./mcp.js";
@@ -28,7 +29,7 @@ const EXCLUDED_WALLETS = (process.env.EXCLUDED_WALLETS ?? "0x5344722b8D037827A9a
 const REST_FOR: Record<string, string> = { events_since: "/v1/events?since=4h&universe=NVDA,BTC", impact_for: "/v1/impact/{asset_id}?since=24h", exposure_graph: "/v1/graph/{asset_id}?depth=2", regime_snapshot: "/v1/regime", explain: "/v1/explain/{event_id}", polymarket_context: "/v1/polymarket/{market}?since=48h", pulse: "/v1/pulse", news_for: "/v1/news/{ticker}?since=24h", derivs_for: "/v1/derivs/{symbol}", price_for: "/v1/price/{symbol}", funding_alerts: "/v1/funding/alerts", whale_moves: "/v1/whales?min_usd=1000000", polymarket_top: "/v1/polymarket/top?sort=volume_24h", filings_for: "/v1/filings/{ticker}?since=7d", calendar: "/v1/calendar?days=7", brief: "/v1/brief/{asset_id}", token_verdict: "/v1/token/verdict/{address}?chain=base", oracle_board: "/v1/oracle/board", oracle_forecast: "/v1/oracle/forecast" };
 const OPENAPI = (base: string) => ({
   openapi: "3.1.0",
-  info: { title: "Degenscan Intel", version: "0.10.7", description: "Cross-asset market event intelligence for AI trading agents. Priced routes return HTTP 402 with x402 v2 payment requirements (USDC on Base) unless X-API-KEY is sent or the free trial header X-Free-Trial: 1 is present (100 calls/day/IP). Information and analytics only — not investment advice.", contact: { name: "Marbella Collins LLC", email: "contact@degenscan.io" }, license: { name: "MIT" } },
+  info: { title: "Degenscan Intel", version: "0.10.8", description: "Cross-asset market event intelligence for AI trading agents. Priced routes return HTTP 402 with x402 v2 payment requirements (USDC on Base) unless X-API-KEY is sent or the free trial header X-Free-Trial: 1 is present (100 calls/day/IP). Information and analytics only — not investment advice.", contact: { name: "Marbella Collins LLC", email: "contact@degenscan.io" }, license: { name: "MIT" } },
   servers: [{ url: base }],
   components: { securitySchemes: { apiKey: { type: "apiKey", in: "header", name: "X-API-KEY" }, freeTrial: { type: "apiKey", in: "header", name: "X-Free-Trial", description: "Send the value 1 for 100 free calls/day per IP." }, x402: { type: "apiKey", in: "header", name: "PAYMENT-SIGNATURE", description: "x402 v2 payment payload (base64). Obtain requirements from the 402 response header PAYMENT-REQUIRED." } } },
   paths: {
@@ -105,7 +106,7 @@ export async function buildHttp() {
   const billing = (req: any, tool: string) => req.x402Context ? { tool, price_usd: PRICES[tool] ?? 0.005, method: "x402" } : { tool, price_usd: req.intelAccess?.price ?? 0, method: req.intelAccess?.method ?? "free" };
 
   app.get("/", async () => ({
-    name: "degenscan-intel", version: "0.10.7",
+    name: "degenscan-intel", version: "0.10.8",
     description: "No key required: market-event intelligence for trading agents — SEC filings, Fed/FOMC, regulators, disasters, Nasdaq halts, DeFi hacks, Polymarket odds, Hyperliquid funding/OI — scored per asset. 100 free calls/day, then USDC per call (x402, Base/Solana) or API key.",
     mcp: `${PUBLIC_URL}/mcp`, rest: `${PUBLIC_URL}/v1`, pricing: TOOL_DOCS, skill: `${PUBLIC_URL}/skill.md`, openapi: `${PUBLIC_URL}/openapi.json`, x402: `${PUBLIC_URL}/.well-known/x402`, plans: `${PUBLIC_URL}/v1/plans`, prepaid_keys: `${PUBLIC_URL}/v1/keys/packs`, metrics: `${PUBLIC_URL}/v1/metrics`, docs: `${PUBLIC_URL}/docs`, sdks: { js: "npm i @degenscan/intel", python: "pip install degenscan-intel" }, github: "https://github.com/tradewr333-lgtm/degenscan-intel", contact: "contact@degenscan.io",
     operator: OPERATOR, disclaimer: DISCLAIMER, license: "MIT",
@@ -146,10 +147,10 @@ export async function buildHttp() {
   // A2A Agent Card (a2a-protocol.org): lets A2A registries (a2aregistry.org, a2a-registry.org) and agents discover what we offer.
   // We expose HTTP+JSON (REST) and MCP; payment is x402 on each call. No A2A JSON-RPC task endpoint is claimed.
   const AGENT_CARD = () => ({
-    protocolVersion: "0.3.0", name: "Degenscan Intel", version: "0.10.7",
+    protocolVersion: "0.3.0", name: "Degenscan Intel", version: "0.10.8",
     description: "Market-event intelligence and calibrated probability forecasts for AI trading agents: ~40 primary sources (SEC, Fed, Polymarket, Hyperliquid, on-chain) scored into per-asset impacts; token contract risk verdicts; public Brier track record. Pay per call with x402 (USDC on Base or Solana) or an API key. Information and analytics only — not investment advice.",
-    url: `${PUBLIC_URL}/v1`, preferredTransport: "HTTP+JSON",
-    additionalInterfaces: [{ url: `${PUBLIC_URL}/v1`, transport: "HTTP+JSON" }, { url: `${PUBLIC_URL}/mcp`, transport: "MCP (streamable HTTP)" }],
+    url: `${PUBLIC_URL}/a2a`, preferredTransport: "JSONRPC",
+    additionalInterfaces: [{ url: `${PUBLIC_URL}/a2a`, transport: "JSONRPC" }, { url: `${PUBLIC_URL}/v1`, transport: "HTTP+JSON" }],
     provider: { organization: OPERATOR, url: PUBLIC_URL },
     documentationUrl: `${PUBLIC_URL}/llms.txt`, iconUrl: `${PUBLIC_URL}/favicon.ico`,
     capabilities: { streaming: false, pushNotifications: false, stateTransitionHistory: false,
@@ -157,6 +158,54 @@ export async function buildHttp() {
     defaultInputModes: ["application/json"], defaultOutputModes: ["application/json"],
     securitySchemes: { apiKey: { type: "apiKey", in: "header", name: "X-API-KEY" } },
     skills: TOOL_DOCS.filter(t => t.price_usd > 0 && t.tool !== "health").map(t => ({ id: t.tool, name: t.tool.replace(/_/g, " "), description: `${REST_FOR[t.tool] ? `${t.tool === "oracle_forecast" ? "POST" : "GET"} ${PUBLIC_URL}${REST_FOR[t.tool]}` : `MCP tools/call ${t.tool}`} — $${t.price_usd}/call (x402 USDC)`, tags: ["crypto", "markets", "trading", ...(t.tool.startsWith("oracle") ? ["forecast", "prediction"] : []), ...(t.tool === "token_verdict" ? ["security", "token-risk"] : [])], inputModes: ["application/json"], outputModes: ["application/json"] })),
+  });
+  // Minimal A2A JSON-RPC endpoint: message/send with a data part {skill, input} runs one tool through the same REST route
+  // (same billing: X-API-KEY, x402 PAYMENT-SIGNATURE, or X-Free-Trial are forwarded). Stateless: every task completes in one call.
+  const A2A_ROUTE: Record<string, (i: any) => { method: "GET" | "POST"; url: string; body?: any }> = {
+    token_verdict: i => ({ method: "GET", url: `/v1/token/verdict/${encodeURIComponent(i.address ?? "")}?chain=${encodeURIComponent(i.chain ?? "base")}` }),
+    price_for: i => ({ method: "GET", url: `/v1/price/${encodeURIComponent(i.symbol ?? "BTC")}` }),
+    derivs_for: i => ({ method: "GET", url: `/v1/derivs/${encodeURIComponent(i.symbol ?? "BTC")}` }),
+    funding_alerts: () => ({ method: "GET", url: "/v1/funding/alerts" }),
+    whale_moves: i => ({ method: "GET", url: `/v1/whales${i.min_usd ? `?min_usd=${Number(i.min_usd)}` : ""}` }),
+    polymarket_top: () => ({ method: "GET", url: "/v1/polymarket/top" }),
+    polymarket_context: i => ({ method: "GET", url: `/v1/polymarket/${encodeURIComponent(i.market ?? "")}` }),
+    pulse: () => ({ method: "GET", url: "/v1/pulse" }),
+    events_since: i => ({ method: "GET", url: `/v1/events?since=${encodeURIComponent(i.since ?? "4h")}${i.universe ? `&universe=${encodeURIComponent([].concat(i.universe).join(","))}` : ""}` }),
+    impact_for: i => ({ method: "GET", url: `/v1/impact/${encodeURIComponent(i.asset_id ?? i.symbol ?? "BTC")}?since=${encodeURIComponent(i.since ?? "24h")}` }),
+    exposure_graph: i => ({ method: "GET", url: `/v1/graph/${encodeURIComponent(i.asset_id ?? "NVDA")}` }),
+    regime_snapshot: () => ({ method: "GET", url: "/v1/regime" }),
+    explain: i => ({ method: "GET", url: `/v1/explain/${encodeURIComponent(i.event_id ?? "")}` }),
+    news_for: i => ({ method: "GET", url: `/v1/news/${encodeURIComponent(i.ticker ?? i.symbol ?? "BTC")}` }),
+    filings_for: i => ({ method: "GET", url: `/v1/filings/${encodeURIComponent(i.ticker ?? "NVDA")}` }),
+    calendar: i => ({ method: "GET", url: `/v1/calendar?days=${Number(i.days ?? 7)}` }),
+    brief: i => ({ method: "GET", url: `/v1/brief/${encodeURIComponent(i.asset_id ?? i.symbol ?? "BTC")}` }),
+    oracle_board: () => ({ method: "GET", url: "/v1/oracle/board" }),
+    oracle_forecast: i => ({ method: "POST", url: "/v1/oracle/forecast", body: i }),
+    oracle_track_record: () => ({ method: "GET", url: "/v1/oracle/track-record" }),
+  };
+  app.post("/a2a", async (req: any, reply) => {
+    const rpc = req.body ?? {}; const id = rpc.id ?? null;
+    const err = (code: number, message: string, data?: any) => ({ jsonrpc: "2.0", id, error: { code, message, ...(data ? { data } : {}) } });
+    if (rpc.method === "agent/getCard" || rpc.method === "agent/getAuthenticatedExtendedCard") return { jsonrpc: "2.0", id, result: AGENT_CARD() };
+    if (rpc.method !== "message/send") return err(-32601, `method ${rpc.method} not supported; use message/send`);
+    const msg = rpc.params?.message ?? {}; const parts: any[] = msg.parts ?? [];
+    const data = parts.find(p => p.kind === "data" || p.type === "data")?.data ?? null;
+    const text = parts.filter(p => p.kind === "text" || p.type === "text").map(p => p.text).join(" ").trim();
+    const skill = data?.skill ?? (text && A2A_ROUTE[text.split(/\s+/)[0]] ? text.split(/\s+/)[0] : null);
+    const ctx = msg.contextId ?? randomBytes(8).toString("hex"); const taskId = randomBytes(8).toString("hex");
+    const agentMsg = (partsOut: any[]) => ({ kind: "message", role: "agent", messageId: randomBytes(8).toString("hex"), contextId: ctx, taskId, parts: partsOut });
+    if (!skill || !A2A_ROUTE[skill]) {
+      return { jsonrpc: "2.0", id, result: { kind: "task", id: taskId, contextId: ctx, status: { state: "input-required", timestamp: new Date().toISOString(), message: agentMsg([{ kind: "text", text: `Send a data part {"skill": "<id>", "input": {...}}. Skills: ${Object.keys(A2A_ROUTE).join(", ")}. Example: {"skill":"token_verdict","input":{"address":"0x…","chain":"base"}}. Prices: ${PUBLIC_URL}/.well-known/x402` }]) } } };
+    }
+    const r = A2A_ROUTE[skill](data?.input ?? {});
+    const fwd: Record<string, string> = {};
+    for (const h of ["x-api-key", "payment-signature", "x-payment", "x-free-trial"]) if (req.headers[h]) fwd[h] = String(req.headers[h]);
+    const res = await app.inject({ method: r.method, url: r.url, headers: { ...fwd, ...(r.body ? { "content-type": "application/json" } : {}) }, payload: r.body ? JSON.stringify(r.body) : undefined });
+    let out: any; try { out = res.json(); } catch { out = { raw: res.body }; }
+    if (res.statusCode === 402) { reply.header("payment-required", String(res.headers["payment-required"] ?? "")); return err(402, "payment required: resend with PAYMENT-SIGNATURE (x402 v2), X-API-KEY, or X-Free-Trial: 1", { payment_required: res.headers["payment-required"] ?? null, accepts: out?.accepts ?? null, pricing: `${PUBLIC_URL}/.well-known/x402` }); }
+    if (res.headers["payment-response"]) reply.header("payment-response", String(res.headers["payment-response"]));
+    const state = res.statusCode < 400 ? "completed" : "failed";
+    return { jsonrpc: "2.0", id, result: { kind: "task", id: taskId, contextId: ctx, status: { state, timestamp: new Date().toISOString() }, artifacts: [{ artifactId: randomBytes(6).toString("hex"), name: skill, parts: [{ kind: "data", data: out }] }], history: [msg, agentMsg([{ kind: "text", text: state === "completed" ? `${skill} done (HTTP ${res.statusCode})` : `${skill} failed (HTTP ${res.statusCode}): ${out?.error ?? ""}` }])] } };
   });
   app.get("/.well-known/agent-card.json", async () => AGENT_CARD());
   app.get("/.well-known/agent.json", async () => AGENT_CARD());

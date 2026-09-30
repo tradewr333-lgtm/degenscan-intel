@@ -357,3 +357,17 @@ describe("token_verdict (GoPlus + DexScreener, mocked)", () => {
     tools._ext.reset(); tv._tv.reset();
   });
 });
+
+describe("A2A JSON-RPC (message/send → tool)", () => {
+  it("agent card declares JSONRPC at /a2a; message/send runs a skill on the free trial; unknown → input-required", async () => {
+    const { buildHttp } = await import("../src/server/http.js");
+    const app = await buildHttp();
+    const card = (await app.inject({ method: "GET", url: "/.well-known/agent-card.json" })).json();
+    expect(card.preferredTransport).toBe("JSONRPC"); expect(card.url).toMatch(/\/a2a$/);
+    const r = (await app.inject({ method: "POST", url: "/a2a", headers: { "content-type": "application/json", "x-free-trial": "1" }, payload: { jsonrpc: "2.0", id: 1, method: "message/send", params: { message: { role: "user", messageId: "m1", parts: [{ kind: "data", data: { skill: "oracle_track_record", input: {} } }] } } } })).json();
+    expect(r.result.status.state).toBe("completed"); expect(r.result.artifacts[0].parts[0].data).toHaveProperty("n_pending");
+    const h = (await app.inject({ method: "POST", url: "/a2a", payload: { jsonrpc: "2.0", id: 2, method: "message/send", params: { message: { parts: [{ kind: "text", text: "hello" }] } } } })).json();
+    expect(h.result.status.state).toBe("input-required");
+    await app.close();
+  });
+});

@@ -102,7 +102,9 @@ export async function tokenVerdict(a: z.infer<typeof TokenVerdictArgs>) {
   add(creatorPct != null && creatorPct > 0.05, "creator_holds", "medium", `creator holds ${Math.round((creatorPct ?? 0) * 100)}%`);
   const lp: any[] = sec?.lp_holders ?? [];
   const lpLocked = lp.reduce((s, h) => s + (one(h.is_locked) || /dead|0x0{40}|burn/i.test(String(h.address ?? "") + String(h.tag ?? "")) ? (numOr(h.percent, 0) ?? 0) : 0), 0);
-  add(lp.length > 0 && lpLocked < 0.5, "lp_unlocked", "medium", `only ${Math.round(lpLocked * 100)}% of LP locked or burned`);
+  // LP-lock only means something for fungible V2-style LP tokens; V3/V4 positions are NFTs and Solana pools report differently
+  const v2Pools = (sec?.dex ?? []).some((d: any) => !/v3|v4|cl|concentrated/i.test(String(d.liquidity_type ?? d.name ?? "")));
+  add(!isSol && v2Pools && lp.length > 0 && lpLocked < 0.5, "lp_unlocked", "medium", `only ${Math.round(lpLocked * 100)}% of LP locked or burned`);
 
   // market structure from DexScreener
   const best = pairs.sort((x, y) => (y.liquidity?.usd ?? 0) - (x.liquidity?.usd ?? 0))[0] ?? null;
