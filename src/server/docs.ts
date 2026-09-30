@@ -6,6 +6,8 @@
  */
 import type { FastifyInstance } from "fastify";
 import { PRICES } from "./pricing.js";
+import { getForecast } from "../oracle/ledger.js";
+import { getDb } from "../store/db.js";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -14,7 +16,29 @@ import { dirname, join } from "node:path";
 const LONGFORM: { slug: string; file: string; title: string }[] = [
   { slug: "oracle-methodology", file: "oracle-methodology.md", title: "How the Degenscan Intel Oracle produces a probability — methodology" },
 ];
-function readLongform(file: string): string { try { return readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../docs", file), "utf8"); } catch { return "# Not available\n"; } }
+function readLongform(file: string): string { try { return withLiveBlocks(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../docs", file), "utf8")); } catch { return "# Not available\n"; } }
+/** {{GROUNDING_BEFORE_AFTER}}: the pope case from the public ledger (Architect no.6 §5) — before = 24be779bfd42 (0.3.3-ts, memory),
+ *  after = the latest 0.3.5-ts forecast of the same question. Rendered live, so the page never shows a number that is not in the ledger. */
+function withLiveBlocks(md: string): string {
+  if (!md.includes("{{GROUNDING_BEFORE_AFTER}}")) return md;
+  let block = "- (the grounded re-run is not in the ledger yet)";
+  try {
+    const before: any = getForecast("24be779bfd42");
+    const after: any = before ? (getDb().prepare("SELECT id FROM oracle_forecasts WHERE engine_version = '0.3.5-ts' AND lower(question) = lower(?) ORDER BY created_at DESC LIMIT 1").get(before.question) as any) : null;
+    const a: any = after ? getForecast(after.id) : null;
+    const pct = (x: number) => (x * 100).toFixed(1) + "%";
+    if (before) {
+      const lines = [`- **Before** (\`${before.id}\`, engine ${before.engine_version ?? "0.3.3-ts"}, ${String(before.created_at).slice(0, 10)}): **${pct(before.probability)}**. The panel assumed "a man of ~89" — Pope Francis, who died on 2025-04-21. Context sources: ${(before.context_used?.sources ?? []).join(", ") || "none"}. No live fact was checked.`];
+      if (a) {
+        const p0: any = (a.premises ?? [])[0];
+        lines.push(`- **After** (\`${a.id}\`, engine ${a.engine_version}, ${String(a.created_at).slice(0, 10)}): **${pct(a.probability)}**, grounding \`${a.grounding}\`. Verified fact: ${p0?.fact ?? "—"} (source: ${p0?.source_url ?? "—"}). Actuarial base rate: ${a.base_rate != null ? pct(a.base_rate) : "—"}.`);
+      } else lines.push("- **After**: the grounded re-run is not in the ledger yet.");
+      lines.push("- Both rows stay in the append-only ledger with their hashes; the first one is excluded from calibration metrics (`operator_key`).");
+      block = lines.join("\n");
+    }
+  } catch { /* keep placeholder text */ }
+  return md.replace("{{GROUNDING_BEFORE_AFTER}}", block);
+}
 function mdToHtml(md: string): string {
   const inline = (t: string) => esc(t).replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>").replace(/\*([^*]+)\*/g, "<em>$1</em>");
   const out: string[] = []; let list: string[] = [], para: string[] = [];
@@ -22,7 +46,7 @@ function mdToHtml(md: string): string {
   const flushL = () => { if (list.length) { out.push(`<ul>${list.map(li => `<li>${inline(li)}</li>`).join("")}</ul>`); list = []; } };
   for (const line of md.split(/\r?\n/)) {
     const h = /^(#{1,3})\s+(.*)$/.exec(line);
-    if (h) { flushP(); flushL(); out.push(`<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`); continue; }
+    if (h) { flushP(); flushL(); const idm = /\{#([a-z0-9-]+)\}\s*$/.exec(h[2]); const txt = idm ? h[2].slice(0, idm.index).trim() : h[2]; out.push(`<h${h[1].length}${idm ? ` id="${idm[1]}"` : ""}>${inline(txt)}</h${h[1].length}>`); continue; }
     if (/^\s*[-*]\s+/.test(line)) { flushP(); list.push(line.replace(/^\s*[-*]\s+/, "")); continue; }
     if (!line.trim()) { flushP(); flushL(); continue; }
     para.push(line.trim());

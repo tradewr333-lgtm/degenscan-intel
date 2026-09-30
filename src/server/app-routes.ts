@@ -76,11 +76,17 @@ export function appPage(lang: "pt" | "en" = "pt"): string {
     keyH: "Sua chave de acesso", keyP: "Cole a chave que apareceu depois da assinatura (começa com <code>dsi_</code>). Ela fica salva só neste navegador.", keySave: "Salvar chave", noKey: "Ainda não assina?", sub: "Ver planos",
     plan: "Plano", left: "perguntas restantes este mês", change: "trocar chave",
     qL: "Sua pergunta", qPh: "Ex.: O Bitcoin fecha outubro de 2026 acima de US$ 100.000?", dL: "Resolve em (data)", ask: "Perguntar ao oráculo",
-    tips: ["Faça perguntas com resposta clara de sim ou não e uma data.", "Bons exemplos: “O Fed corta os juros em dezembro de 2026?”, “O Ibovespa fecha 2026 acima de 150 mil pontos?”, “O Flamengo é campeão brasileiro de 2026?”", "Cada pergunta usa 1 das suas perguntas do mês."],
+    tips: ["Faça perguntas com resposta clara de sim ou não e uma data.", "O oráculo tem dados ao vivo para cripto (BTC, ETH, SOL), juros (Fed, Copom/Selic), S&P 500 e mercados do Polymarket (ex.: eleições). Fora desses temas ele pode usar informação desatualizada.", "Cada pergunta usa 1 das suas perguntas do mês."],
     running: "O oráculo está analisando… (leva de 1 a 4 minutos; pode deixar esta página aberta)", queued: "Na fila…", failed: "Não foi possível concluir. Tente de novo ou escreva para contact@degenscan.io com o código:",
     prob: "Probabilidade de SIM", range: "faixa provável", market: "Polymarket", nomarket: "Sem mercado equivalente no Polymarket", why: "Por que", risks: "O que pode fazer errar", proof: "Prova (hash)", conf: { low: "confiança baixa", medium: "confiança média", high: "confiança alta" },
     hist: "Suas perguntas", histEmpty: "Você ainda não fez perguntas.", pend: "aguardando resultado", see: "ver",
-    errKey: "Chave inválida ou sem saldo este mês.", errQ: "Escreva uma pergunta (mín. 8 letras) e escolha uma data futura.", errQuota: "Suas perguntas deste mês acabaram. Elas renovam no dia 1º.",
+    errKey: "Chave inválida ou sem saldo este mês.",
+    facts: "Fatos verificados ao vivo", src: "fonte",
+    checking: "Verificando os fatos da pergunta ao vivo (Wikidata, notícias)…",
+    unver: "Não consigo verificar os fatos de que esta pergunta depende, então não vou dar um número. Esta pergunta NÃO foi descontada do seu plano. Tente reformular citando nomes, cargos ou valores concretos.",
+    stale: "⚠️ Tema sem dados ao vivo: o oráculo não encontrou preço, mercado do Polymarket nem dado oficial para esta pergunta e pode ter usado informação desatualizada (por exemplo, sobre quem ocupa um cargo hoje). Use com cautela.", errQ: "A caixa da pergunta está vazia — o texto cinza é só um exemplo. Clique num dos exemplos azuis acima ou escreva a sua pergunta.",
+    exH: "Toque num exemplo para preencher (depois é só clicar em Perguntar):",
+    ex: [["Bitcoin acima de US$ 100 mil em 31/10?", "O Bitcoin fecha em 31/10/2026 acima de US$ 100.000?", "2026-10-31"], ["Selic cai em dezembro?", "O Copom corta a taxa Selic na reunião de dezembro de 2026?", "2026-12-10"], ["Fed corta em dezembro?", "O Federal Reserve corta os juros na reunião de dezembro de 2026?", "2026-12-10"], ["S&P 500 sobe em outubro?", "O S&P 500 fecha outubro de 2026 acima do fechamento de setembro?", "2026-10-30"], ["Ethereum acima de US$ 5.000?", "O Ethereum passa de US$ 5.000 antes de 31/12/2026?", "2026-12-31"]], errQuota: "Suas perguntas deste mês acabaram. Elas renovam no dia 1º.",
     links: `Placar público: <a href="/previsoes">/previsoes</a> · Robô (simulação): <a href="/bot">/bot</a> · Dúvidas: <a href="/ajuda">/ajuda</a> · <a href="/app?lang=en">English</a>`,
     disc: "Informação e análise, não é recomendação de investimento nem de aposta. O Degenscan não opera, não aposta e não acessa carteira em seu nome. Operado por Marbella Collins LLC.",
   } : {
@@ -89,11 +95,17 @@ export function appPage(lang: "pt" | "en" = "pt"): string {
     keyH: "Your access key", keyP: "Paste the key shown after you subscribed (starts with <code>dsi_</code>). It is stored only in this browser.", keySave: "Save key", noKey: "Not subscribed yet?", sub: "See plans",
     plan: "Plan", left: "questions left this month", change: "change key",
     qL: "Your question", qPh: "E.g. Will Bitcoin close October 2026 above $100,000?", dL: "Resolves on (date)", ask: "Ask the oracle",
-    tips: ["Ask questions with a clear yes/no answer and a date.", "Good examples: “Will the Fed cut rates in December 2026?”, “Will the S&P 500 close 2026 above 7,000?”", "Each question uses 1 of your monthly questions."],
+    tips: ["Ask questions with a clear yes/no answer and a date.", "Live data covers crypto (BTC, ETH, SOL), rates (Fed, Copom/Selic), the S&P 500 and Polymarket markets (e.g. elections). Outside these topics it may rely on outdated information.", "Each question uses 1 of your monthly questions."],
     running: "The oracle is working… (1–4 minutes; you can keep this page open)", queued: "Queued…", failed: "Could not finish. Try again or email contact@degenscan.io with this id:",
     prob: "Probability of YES", range: "likely range", market: "Polymarket", nomarket: "No matching Polymarket market", why: "Why", risks: "What could make it wrong", proof: "Proof (hash)", conf: { low: "low confidence", medium: "medium confidence", high: "high confidence" },
     hist: "Your questions", histEmpty: "No questions yet.", pend: "awaiting outcome", see: "view",
-    errKey: "Invalid key or no quota left this month.", errQ: "Write a question (8+ characters) and pick a future date.", errQuota: "You used all questions for this month. They renew on the 1st.",
+    errKey: "Invalid key or no quota left this month.",
+    facts: "Facts verified live", src: "source",
+    checking: "Checking the question's facts live (Wikidata, news)…",
+    unver: "I cannot verify the facts this question depends on, so I will not give a number. This question was NOT charged. Try rephrasing with concrete names, offices or values.",
+    stale: "⚠️ No live data for this topic: the oracle found no price, Polymarket market or official data for this question and may have used outdated information (e.g. who holds an office today). Use with care.", errQ: "The question box is empty — the grey text is only an example. Tap one of the blue examples above or write your own.",
+    exH: "Tap an example to fill it in (then click Ask):",
+    ex: [["Bitcoin above $100k on Oct 31?", "Will Bitcoin close above $100,000 on 2026-10-31?", "2026-10-31"], ["Fed cuts in December?", "Will the Federal Reserve cut rates at its December 2026 meeting?", "2026-12-10"], ["S&P 500 above 7,000?", "Will the S&P 500 close 2026 above 7,000?", "2026-12-31"], ["Ethereum above $5,000?", "Will Ethereum trade above $5,000 before 2026-12-31?", "2026-12-31"]], errQuota: "You used all questions for this month. They renew on the 1st.",
     links: `Public board: <a href="/predictions">/predictions</a> · Paper bot: <a href="/bot?lang=en">/bot</a> · Help: <a href="/ajuda?lang=en">/help</a> · <a href="/app">Português</a>`,
     disc: "Information and analytics only — not investment or betting advice. Degenscan does not trade, bet or access any wallet on your behalf. Operated by Marbella Collins LLC.",
   };
@@ -112,14 +124,14 @@ ul.tips{margin:10px 0 0;padding-left:18px;color:var(--mute);font-size:13px;line-
 .res h3{margin:0 0 12px;font-size:17px;line-height:1.35}.res ul{color:var(--mute);line-height:1.5;padding-left:18px}.hash{font-family:ui-monospace,Menlo,monospace;font-size:12px;word-break:break-all;color:var(--mute)}
 .spin{display:inline-block;width:14px;height:14px;border:2px solid var(--line);border-top-color:var(--acc);border-radius:50%;animation:s 1s linear infinite;vertical-align:-2px;margin-right:8px}@keyframes s{to{transform:rotate(360deg)}}
 .hist a{display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-top:1px solid var(--line);color:var(--text);text-decoration:none}.hist a:first-child{border-top:0}.hist b{white-space:nowrap}
-.small{color:var(--mute);font-size:13px;line-height:1.6;margin-top:14px}.hide{display:none}
+.small{color:var(--mute);font-size:13px;line-height:1.6;margin-top:14px}.chips{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 4px}.chip{background:#1b2230;color:#aac4ff;border:1px solid #2b3a55;border-radius:999px;padding:8px 12px;font-weight:500;margin:0;font-size:14px}.chip:hover{background:#243049}.hide{display:none}
 </style>
 <div class="wrap">
 <h1>${T.h1}</h1><p class="lead">${T.lead}</p>
 <section class="card hide" id="keyBox"><h2>${T.keyH}</h2><p class="m">${T.keyP}</p><input id="key" placeholder="dsi_..." autocomplete="off"><button id="saveKey">${T.keySave}</button><div class="err hide" id="keyErr"></div><p class="m" style="margin-top:12px">${T.noKey} <a href="/pricing">${T.sub}</a></p></section>
 <section class="hide" id="main">
 <div class="card"><div class="row"><div><span class="m">${T.plan}</span> <b id="plan">—</b></div><div><b id="left">—</b> <span class="m">${T.left}</span></div><button class="ghost" id="chg">${T.change}</button></div></div>
-<div class="card"><label for="q">${T.qL}</label><textarea id="q" maxlength="500" placeholder="${T.qPh}"></textarea><label for="d">${T.dL}</label><input type="date" id="d"><button id="ask">${T.ask}</button><div class="err hide" id="askErr"></div><ul class="tips">${T.tips.map(t => `<li>${t}</li>`).join("")}</ul></div>
+<div class="card"><div class="m">${T.exH}</div><div class="chips">${T.ex.map((e, i) => `<button type="button" class="chip" data-i="${i}">${e[0]}</button>`).join("")}</div><label for="q">${T.qL}</label><textarea id="q" maxlength="500" placeholder="${T.qPh}"></textarea><label for="d">${T.dL}</label><input type="date" id="d"><button id="ask">${T.ask}</button><div class="err hide" id="askErr"></div><ul class="tips">${T.tips.map(t => `<li>${t}</li>`).join("")}</ul></div>
 <div class="card res hide" id="out"></div>
 <div class="card"><h2>${T.hist}</h2><div class="hist" id="hist"><p class="m">${T.histEmpty}</p></div></div>
 </section>
@@ -136,19 +148,22 @@ function showKey(msg){$("main").classList.add("hide");$("keyBox").classList.remo
 function me(){return api("/v1/me").then(function(j){if(j._s!==200){showKey(T.errKey);return false}$("keyBox").classList.add("hide");$("main").classList.remove("hide");$("plan").textContent=j.plan_name||j.plan;$("left").textContent=j.forecasts_left;$("ask").disabled=j.forecasts_left<1;if(j.forecasts_left<1){$("askErr").textContent=T.errQuota;$("askErr").classList.remove("hide")}return true})}
 function hist(){api("/v1/me/forecasts").then(function(j){var it=(j.items||[]);if(!it.length)return;$("hist").innerHTML=it.map(function(f){var r=f.status!=="done"?'<span class="m">'+(f.status==="failed"?"✖":"…")+'</span>':f.outcome==null?'<b>'+pct(f.probability)+'</b>':'<b>'+pct(f.probability)+' '+(f.outcome?"✅":"❌")+'</b>';return '<a href="#" data-id="'+esc(f.id)+'"><span>'+esc(f.question)+'<br><span class="m">'+esc(String(f.created_at).slice(0,10))+(f.resolves_at?' → '+esc(String(f.resolves_at).slice(0,10)):'')+'</span></span>'+r+'</a>'}).join("");[].forEach.call($("hist").querySelectorAll("a"),function(a){a.onclick=function(e){e.preventDefault();poll(a.dataset.id)}})})}
 function render(f,tr){var o=$("out");var t=tr||f;var c=T.conf[f.confidence]||"";
-o.innerHTML='<h3>'+esc(t.question||f.question)+'</h3><div class="m">'+T.prob+'</div><div class="big">'+pct(f.probability)+'</div><div class="bar"><i style="width:'+Math.round(f.probability*100)+'%"></i></div><div class="m">'+T.range+': '+pct(f.ci80&&f.ci80[0])+' – '+pct(f.ci80&&f.ci80[1])+(c?' · '+c:'')+'</div>'+
+var src=((f.context_used||{}).sources||[]).filter(function(x){return x!=="calendar"&&x!=="impact_for"});if(f.grounding==="verified"||f.grounding==="contradicted")src=[1];
+var facts=(f.premises||[]).map(function(p){return '<li>'+(p.verified===true?'✅ ':p.verified==="contradicted"?'⚠️ ':'❔ ')+esc(p.fact||p.claim)+(p.source_url?' — <a href="'+esc(p.source_url)+'" target="_blank" rel="noopener">'+T.src+'</a>':'')+'</li>'}).join("");
+o.innerHTML=(src.length?'':'<p class="err" style="margin:0 0 12px">'+T.stale+'</p>')+'<h3>'+esc(t.question||f.question)+'</h3><div class="m">'+T.prob+'</div><div class="big">'+pct(f.probability)+'</div><div class="bar"><i style="width:'+Math.round(f.probability*100)+'%"></i></div><div class="m">'+T.range+': '+pct(f.ci80&&f.ci80[0])+' – '+pct(f.ci80&&f.ci80[1])+(c?' · '+c:'')+'</div>'+
 (f.market_odds!=null?'<div class="mk" style="margin-top:12px"><div class="m">'+(f.market_ref?'<a href="'+esc(f.market_ref)+'" target="_blank" rel="noopener">'+T.market+'</a>':T.market)+': <b>'+pct(f.market_odds)+'</b></div><div class="bar"><i style="width:'+Math.round(f.market_odds*100)+'%"></i></div></div>':'<p class="m">'+T.nomarket+'</p>')+
-'<h2 style="margin-top:14px">'+T.why+'</h2><p>'+esc(t.summary)+'</p>'+((t.drivers||[]).length?'<ul>'+t.drivers.map(function(x){return'<li>'+esc(x)+'</li>'}).join("")+'</ul>':'')+
+(facts?'<h2 style="margin-top:14px">'+T.facts+'</h2><ul>'+facts+'</ul>':'')+((f.warnings||[]).length&&f.grounding!=="verified"?'<p class="m">'+f.warnings.map(esc).join('<br>')+'</p>':'')+'<h2 style="margin-top:14px">'+T.why+'</h2><p>'+esc(t.summary)+'</p>'+((t.drivers||[]).length?'<ul>'+t.drivers.map(function(x){return'<li>'+esc(x)+'</li>'}).join("")+'</ul>':'')+
 ((t.failure_modes||[]).length?'<h2>'+T.risks+'</h2><ul>'+t.failure_modes.map(function(x){return'<li>'+esc(x)+'</li>'}).join("")+'</ul>':'')+
 '<h2>'+T.proof+'</h2><div class="hash"><a href="/v1/oracle/forecast/'+esc(f.id)+'" target="_blank">'+esc(f.commitment_hash)+'</a></div>';o.classList.remove("hide")}
 function poll(id){var o=$("out");o.classList.remove("hide");o.innerHTML='<p><span class="spin"></span>'+T.queued+'</p>';o.scrollIntoView({behavior:"smooth"});
 (function tick(){fetch("/v1/oracle/forecast/"+encodeURIComponent(id)).then(function(r){return r.json()}).then(function(f){if(f.status==="done"){if(T.pt){fetch("/v1/oracle/forecast/"+encodeURIComponent(id)+"/pt").then(function(r){return r.json()}).then(function(t){render(f,t)}).catch(function(){render(f)})}else render(f);hist();me();return}
 if(f.status==="failed"){o.innerHTML='<p class="err">'+T.failed+' '+esc(id)+'</p>';hist();return}o.innerHTML='<p><span class="spin"></span>'+(f.status==="running"?T.running:T.queued)+'</p>';setTimeout(tick,12000)}).catch(function(){setTimeout(tick,15000)})})()}
+[].forEach.call(document.querySelectorAll(".chip"),function(b){b.onclick=function(){var e=T.ex[+b.dataset.i];$("q").value=e[1];$("d").value=e[2];$("askErr").classList.add("hide");$("q").focus()}});
 $("saveKey").onclick=function(){var k=$("key").value.trim();if(!k)return;put(k);K=k;$("keyErr").classList.add("hide");me().then(function(ok){if(ok)hist()})};
 $("chg").onclick=function(){put(null);K=null;$("key").value="";showKey()};
 var dd=new Date(Date.now()+30*864e5);$("d").value=dd.toISOString().slice(0,10);$("d").min=new Date(Date.now()+864e5).toISOString().slice(0,10);
 $("ask").onclick=function(){var q=$("q").value.trim(),d=$("d").value;$("askErr").classList.add("hide");if(q.length<8||!d||new Date(d+"T23:59:59Z").getTime()<Date.now()){$("askErr").textContent=T.errQ;$("askErr").classList.remove("hide");return}
-$("ask").disabled=true;api("/v1/oracle/forecast",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({question:q,resolves_at:d+"T23:59:59Z"})}).then(function(j){$("ask").disabled=false;if(j._s===202&&j.forecast_id){$("q").value="";poll(j.forecast_id);hist()}else{$("askErr").textContent=(j._s===402?T.errQuota:(j.error||T.errKey));$("askErr").classList.remove("hide")}}).catch(function(){$("ask").disabled=false})};
+$("ask").disabled=true;$("askErr").innerHTML='<span class="m"><span class="spin"></span>'+T.checking+'</span>';$("askErr").classList.remove("hide");api("/v1/oracle/forecast",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({question:q,resolves_at:d+"T23:59:59Z",require_verified:true})}).then(function(j){$("ask").disabled=false;$("askErr").classList.add("hide");if(j._s===202&&j.forecast_id){$("q").value="";poll(j.forecast_id);hist()}else if(j._s===422){$("askErr").innerHTML=esc(T.unver)+((j.warnings||[]).length?'<br><span class="m">'+j.warnings.map(esc).join("<br>")+'</span>':"");$("askErr").classList.remove("hide")}else{$("askErr").textContent=(j._s===402?T.errQuota:(j.error||T.errKey));$("askErr").classList.remove("hide")}}).catch(function(){$("ask").disabled=false})};
 K=get();if(K){me().then(function(ok){if(ok)hist()})}else showKey();})();
 </script></html>`;
 }

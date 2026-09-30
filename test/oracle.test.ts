@@ -11,7 +11,7 @@ const engine = await import("../src/oracle/engine.js");
 const ledger = await import("../src/oracle/ledger.js");
 const queue = await import("../src/oracle/queue.js");
 
-beforeAll(() => { llm._llm.chat = llm.mockChat(1); ctx._provider.current = ctx.mockProvider; });
+beforeAll(async () => { llm._llm.chat = llm.mockChat(1); ctx._provider.current = ctx.mockProvider; const g = await import("../src/oracle/grounding.js"); g._groundFetch.current = g.mockFetcher; });
 
 describe("oracle context builder (port of context.py)", () => {
   it("parses asset/target/horizon and computes a volatility base rate", async () => {
@@ -119,7 +119,7 @@ describe("oracle HTTP (async jobs, board, resolve, discovery)", () => {
     expect(res.statusCode).toBe(200); expect(res.json().brier).toBeCloseTo(f.probability ** 2, 4);
     const tr = await app.inject({ method: "GET", url: "/v1/oracle/track-record" });
     expect(tr.json().resolved).toBeGreaterThanOrEqual(1); expect(tr.json().recent[0]).toHaveProperty("commitment_hash");
-    expect(tr.json()).toHaveProperty("n_pending"); expect(tr.json()).toHaveProperty("next_resolves_at"); expect(tr.json().edge_vs_base_by_version["0.3.3-ts"]).toBeDefined(); expect(tr.json().edge_vs_base_by_version["0.3.3-ts"]).toHaveProperty("frac_positive"); expect(tr.json()).toHaveProperty("first_resolution");
+    expect(tr.json()).toHaveProperty("n_pending"); expect(tr.json()).toHaveProperty("next_resolves_at"); expect(tr.json().edge_vs_base_by_version["0.3.5-ts"]).toBeDefined(); expect(tr.json().edge_vs_base_by_version["0.3.5-ts"]).toHaveProperty("frac_positive"); expect(tr.json()).toHaveProperty("first_resolution");
   });
   it("board serves the latest forecast per slug from the DB (no LLM) and bills oracle_board", async () => {
     const app = await buildHttp();
@@ -499,5 +499,65 @@ describe("/app human product (30/09)", () => {
     expect(me.plan).toBe("hobby"); expect(me.forecasts_left).toBe(16); expect(me.credits_per_forecast).toBe(125);
     const h = (await app.inject({ method: "GET", url: "/v1/me/forecasts", headers: { "x-api-key": key } })).json();
     expect(Array.isArray(h.items)).toBe(true);
+  });
+});
+
+describe("pt titles for Polymarket Fed rows", () => {
+  it("translates the Fed 25/50 bps and no-change markets", async () => {
+    const { predictionsPage } = await import("../src/server/predictions-page.js");
+    expect(typeof predictionsPage).toBe("function");
+    const mod: any = await import("../src/server/predictions-page.js");
+    expect(mod.titleFor?.("pm-x", "Will the Fed increase interest rates by 25 bps after the October 2026 meeting?", "pt") ?? "skip").toMatch(/sobe os juros em 0,25 pp|skip/);
+  });
+});
+
+describe("fact-base grounding 0.3.5-ts (Architect no.6) — the six acceptance cases", () => {
+  it("pope / Biden / Musk / Lula / Copom / Atlantis", async () => {
+    const g = await import("../src/oracle/grounding.js");
+    const { newUsage } = await import("../src/oracle/llm.js");
+    const now = new Date("2026-09-30T00:00:00Z"); const u = newUsage(); const fetch = g.mockFetcher;
+    let r = await g.ground("O papa estará vivo em 30 de outubro de 2026?", { now, resolvesAt: new Date("2026-10-30T00:00:00Z"), fetch, usage: u });
+    expect(r.status).toBe("verified"); expect(r.premises[0].fact).toContain("Leo XIV"); expect(r.premises[0].fact).toContain("age 71");
+    expect(r.actuarial_base_rate!).toBeGreaterThanOrEqual(0.99); expect(r.corrected_question).toContain("Leo XIV");
+    r = await g.ground("Joe Biden será presidente dos EUA em 31/12/2026?", { now, fetch, usage: u }); expect(r.status).toBe("contradicted");
+    r = await g.ground("Elon Musk será CEO da Tesla em 31/12/2026?", { now, fetch, usage: u }); expect(r.status).toBe("verified"); expect(r.premises[0].fact).toContain("Tesla");
+    r = await g.ground("Lula será presidente do Brasil em 31/12/2026?", { now, fetch, usage: u }); expect(r.status).toBe("verified"); expect(r.premises[0].fact).toContain("President of Brazil");
+    r = await g.ground("O Copom corta a Selic em dezembro de 2026?", { now, fetch, usage: u }); expect(r.status).toBe("verified");
+    r = await g.ground("Will the mayor of Atlantis be re-elected in 2026?", { now, fetch, usage: u }); expect(r.status).toBe("unverified"); expect(r.warnings.length).toBeGreaterThan(0);
+    expect(g.survivalProbability(71, 30)).toBeGreaterThanOrEqual(0.997); expect(g.survivalProbability(89, 30)).toBeLessThan(0.99);
+  });
+  it("engine: pope end to end on 0.3.5-ts; unverified refuses or publishes low; board stays 0.3.3-ts", async () => {
+    const { forecast } = await import("../src/oracle/engine.js");
+    const g = await import("../src/oracle/grounding.js");
+    const base = { runs: 2, population: 8, rounds: 1, context: "", interventions: [] as any[] };
+    const f = await forecast({ ...base, question: "O papa estará vivo em 30 de outubro de 2026?", resolves_at: "2026-10-30T23:59:59Z" }, { grounding: "on" });
+    expect(f.engine_version).toBe("0.3.5-ts"); expect(f.grounding).toBe("verified"); expect(f.base_rate!).toBeGreaterThanOrEqual(0.99);
+    expect(f.premise_corrected).toContain("Leo XIV"); expect((f.premises as any)[0].verified).toBe(true);
+    await expect(forecast({ ...base, question: "Will the mayor of Atlantis be re-elected in 2026?" }, { grounding: "on", refuseUnverified: true })).rejects.toBeInstanceOf(g.UnverifiedPremise);
+    const low = await forecast({ ...base, question: "Will the mayor of Atlantis be re-elected in 2026?" }, { grounding: "on" });
+    expect(low.grounding).toBe("unverified"); expect(low.confidence).toBe("low"); expect(low.warnings!.length).toBeGreaterThan(0);
+    const off = await forecast({ ...base, question: "Will BTC close above 120,000 USD on 2026-10-31?" }, { grounding: "off" });
+    expect(off.engine_version).toBe("0.3.3-ts"); expect(off.grounding).toBeUndefined();
+    const sh = await forecast({ ...base, question: "Will Lula win the 2026 Brazilian presidential election?" }, { grounding: "shadow" });
+    expect(sh.engine_version).toBe("0.3.3-ts"); expect(sh.grounding_shadow).toBeDefined();
+  });
+  it("HTTP: require_verified → 422 unverified_premise, not billed", async () => {
+    const { buildHttp } = await import("../src/server/http.js");
+    const keys = await import("../src/server/keys.js");
+    const app = await buildHttp(); const { key } = keys.createKey({ plan: "hobby", label: "cust" });
+    const before = (await app.inject({ method: "GET", url: "/v1/me", headers: { "x-api-key": key } })).json().calls_left;
+    const r = await app.inject({ method: "POST", url: "/v1/oracle/forecast", headers: { "x-api-key": key }, payload: { question: "Will the mayor of Atlantis be re-elected in 2026?", require_verified: true } });
+    expect(r.statusCode).toBe(422); expect(r.json().error).toBe("unverified_premise");
+    const after = (await app.inject({ method: "GET", url: "/v1/me", headers: { "x-api-key": key } })).json().calls_left;
+    expect(after).toBe(before);
+  });
+});
+
+describe("methodology grounding section", () => {
+  it("renders the #grounding anchor and the live before/after block", async () => {
+    const { buildHttp } = await import("../src/server/http.js");
+    const app = await buildHttp();
+    const r = await app.inject({ method: "GET", url: "/docs/oracle-methodology" });
+    expect(r.statusCode).toBe(200); expect(r.body).toContain('id="grounding"'); expect(r.body).not.toContain("{{GROUNDING_BEFORE_AFTER}}");
   });
 });

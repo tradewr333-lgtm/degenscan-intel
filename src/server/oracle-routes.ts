@@ -10,7 +10,8 @@ import type { FastifyInstance } from "fastify";
 import { ForecastRequest, DISCLAIMER } from "../oracle/schema.js";
 import { enqueueForecast, recoverJobs, _queue } from "../oracle/queue.js";
 import { boardLatest, getForecast, getJob, recentForecasts, resolveForecast, trackRecord, ensureOracleTables, putForecast } from "../oracle/ledger.js";
-import { llmConfigured } from "../oracle/llm.js";
+import { llmConfigured, newUsage } from "../oracle/llm.js";
+import { ground } from "../oracle/grounding.js";
 import { refreshBoard, autoResolve, boardQuestions, eventQuestions } from "../oracle/board.js";
 import { getDb } from "../store/db.js";
 
@@ -31,7 +32,18 @@ export function installOracleRoutes(app: FastifyInstance, billing: (req: any, to
     // anyone not paying (trial header, or FREE_MODE) gets the cheap config
     if (method === "quota" || method === "free") { trial = TRIAL_LIMITS; r = { ...r, runs: Math.min(r.runs, TRIAL_LIMITS.runs), population: Math.min(r.population, TRIAL_LIMITS.population), rounds: Math.min(r.rounds, TRIAL_LIMITS.rounds) }; }
     const payer = req.x402Context ? `x402:${(req.x402Context.paymentPayload as any)?.payload?.authorization?.from ?? "unknown"}` : req.intelAccess?.payer ?? null;
-    const job = enqueueForecast(r, payer, { capped: trial != null });
+    // Architect no.6: require_verified (the human /app always sets it) -> verify the fact-base NOW; an unverifiable question is
+    // refused with 422 and, because the response is >= 400, it is never billed (onResponse only records 2xx/3xx).
+    let pre: any = null;
+    if (r.require_verified) {
+      pre = await ground(r.question, { resolvesAt: r.resolves_at ? new Date(r.resolves_at) : null, usage: newUsage() });
+      if (pre.status === "unverified") {
+        reply.code(422);
+        return { error: "unverified_premise", message: "cannot verify the facts this question depends on — not charged", message_pt: "Não consigo verificar os fatos de que esta pergunta depende. Esta pergunta não foi cobrada.",
+          premises: pre.premises.map((p: any) => ({ claim: p.claim, verified: p.verified, fact: p.fact })), warnings: pre.warnings, disclaimer: DISCLAIMER };
+      }
+    }
+    const job = enqueueForecast(r, payer, { capped: trial != null, grounding: pre });
     reply.code(202);
     return { ...job, question: r.question, config: { runs: r.runs, population: r.population, rounds: r.rounds }, trial_limits: trial, note: "Poll `poll` (free) until status is done. The forecast_id is yours forever; the result is committed with a sha256 hash before resolution.", _billing: billing(req, "oracle_forecast"), disclaimer: DISCLAIMER };
   });

@@ -39,6 +39,11 @@ export function applyMeasurementExclusions() {
   if (OPERATOR_WALLETS.length) d.prepare(`UPDATE oracle_forecasts SET measurement_exclude = 'operator_wallet' WHERE measurement_exclude IS NULL
     AND id IN (SELECT id FROM oracle_jobs WHERE lower(payer) IN (${OPERATOR_WALLETS.map(() => "?").join(",")}))`).run(...OPERATOR_WALLETS);
   d.prepare("UPDATE oracle_forecasts SET measurement_exclude = 'operator_wallet' WHERE measurement_exclude IS NULL AND id = 'fe7c74b7dddf'").run();
+  // Same anti-wash rule for operator-minted keys (the owner's own test key, test keys): label channel:*-owner / channel:test*.
+  try {
+    d.prepare(`UPDATE oracle_forecasts SET measurement_exclude = 'operator_key' WHERE measurement_exclude IS NULL AND id IN (
+      SELECT j.id FROM oracle_jobs j JOIN api_keys k ON j.payer = 'key:' || k.id WHERE k.label LIKE 'channel:%-owner' OR k.label LIKE 'channel:test%')`).run();
+  } catch { /* api_keys not created yet */ }
 }
 
 export function putForecast(f: Forecast, boardSlug: string | null = null) {

@@ -18,9 +18,9 @@ const pending: string[] = [];
 let active = 0;
 const listeners = new Map<string, Set<() => void>>();
 
-export function enqueueForecast(req: ForecastRequest, payer: string | null, opts: { boardSlug?: string | null; id?: string; capped?: boolean } = {}): { forecast_id: string; status: "queued"; eta_s: number; poll: string } {
+export function enqueueForecast(req: ForecastRequest, payer: string | null, opts: { boardSlug?: string | null; id?: string; capped?: boolean; grounding?: unknown } = {}): { forecast_id: string; status: "queued"; eta_s: number; poll: string } {
   const id = opts.id ?? randomUUID().replace(/-/g, "").slice(0, 12);
-  insertJob(id, { ...req, _capped: Boolean(opts.capped) }, payer, opts.boardSlug ?? null);
+  insertJob(id, { ...req, _capped: Boolean(opts.capped), ...(opts.grounding ? { _grounding: opts.grounding } : {}) }, payer, opts.boardSlug ?? null);
   pending.push(id); void pump();
   return { forecast_id: id, status: "queued", eta_s: etaSeconds(req, queueDepth() - 1), poll: `/v1/oracle/forecast/${id}` };
 }
@@ -38,7 +38,9 @@ async function run(id: string) {
   try {
     const raw = JSON.parse(job.request);
     const req = ForecastRequest.parse(raw);
-    const f = await forecast(req, { provider: _provider.current, id, configCapped: Boolean(raw._capped) });
+    // Architect no.6: fact-base ON outside the board (0.3.5-ts), SHADOW on the election rows (br-*), OFF on the frozen board.
+    const bs = job.board_slug; const mode = !bs ? "on" : bs.startsWith("br-") ? "shadow" : "off";
+    const f = await forecast(req, { provider: _provider.current, id, configCapped: Boolean(raw._capped), grounding: mode, pregrounded: raw._grounding ?? null });
     putForecast(f, job.board_slug);
     setJob(id, "done");
   } catch (e) {

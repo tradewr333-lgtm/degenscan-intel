@@ -56,6 +56,16 @@ export function mockChat(baseSeed = 0): ChatFn {
   return async (_system, user, opts, usage) => {
     usage.calls += 1;
     const rng = new Rng((baseSeed * 1_000_003) ^ (opts.seed ?? 0));
+    if (user.includes("TASK: premises")) {  // mirrors MockLLM in realidade2/llm.py (v0.3.5)
+      const m = /Question: (.*)/.exec(user); const q = (m ? m[1] : user).toLowerCase(); const prem: any[] = [];
+      if (q.includes("papa") || q.includes("pope")) prem.push({ claim: "the current pope is alive and in office", entity: "Pope", kind: "office_holder", query: "current holder of office: pope" });
+      if (q.includes("biden")) prem.push({ claim: "Joe Biden is president of the United States", entity: "Joe Biden", kind: "status", query: "Joe Biden current office" });
+      if (q.includes("musk")) prem.push({ claim: "Elon Musk is CEO of Tesla", entity: "Elon Musk", kind: "status", query: "Elon Musk CEO Tesla" });
+      if (q.includes("lula")) prem.push({ claim: "Lula is president of Brazil", entity: "Lula", kind: "status", query: "Lula president Brazil" });
+      if (q.includes("selic") || q.includes("copom")) prem.push({ claim: "the Copom has a December 2026 meeting scheduled", entity: "Copom", kind: "scheduled_event", query: "Copom dezembro 2026 reunião Selic" });
+      if (q.includes("mayor of atlantis")) prem.push({ claim: "Atlantis has a mayor", entity: "Mayor of Atlantis", kind: "office_holder", query: "current holder of office: mayor of atlantis" });
+      return { premises: prem };
+    }
     if (user.includes("TASK: route")) {
       const m = /Question: (.*)/.exec(user); const q = (m ? m[1] : user).toLowerCase();
       if (["chuva", "rain", "temperatura", "weather", "clima", "furacão", "hurricane"].some(w => q.includes(w)))

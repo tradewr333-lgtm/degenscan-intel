@@ -6,6 +6,21 @@
 
 Ask a binary question about a market outcome ("Will BTC close above 100,000 USD on 2026-10-31?") and the oracle returns a **calibrated probability of YES** together with everything you need to decide whether to trust it: an 80 % interval, how much the simulated futures disagree, the reference-class **base rate**, the matching prediction-market price and the oracle's **edge** against it, the drivers, the ways the YES and NO worlds break, and a **commitment hash** written before the event resolves. Every forecast is scored publicly once the question resolves.
 
+## Step 0 — Fact-base first: verify the world before forecasting it {#grounding}
+
+Since engine `0.3.5-ts` (1 October 2026) every question outside the daily board starts with a **fact-base check**, before routing. The oracle lists the premises the answer depends on — who currently holds an office the question mentions or implies ("the pope", "the president of X", "the CEO of Y"), whether a named person is alive or in office, the current value of a named quantity, scheduled events — and verifies each one **live**: Wikidata (office holders, birth and death dates), news search, and Wikipedia as a last resort. The verified facts go into every agent, panelist and the aggregator with one rule: *if your memory conflicts with the verified facts, the verified facts win.*
+
+- A premise that live data **contradicts** is corrected (for example, "the pope" is re-anchored on the current holder) and reported in `premise_corrected` and `warnings`.
+- For "will X be alive on date D" questions, the verified birth date gives an **actuarial base rate** (Gompertz approximation) that anchors the forecast.
+- A premise that **cannot be verified**: the human app refuses to give a number (HTTP 422, not charged); the API publishes with `grounding: "unverified"`, `confidence: "low"` and `warnings`, or refuses too when the caller sends `require_verified: true`.
+- Every forecast carries `grounding`, `premises` (with source URLs and retrieval time) and `warnings`.
+
+**Why this rule exists — a documented error.** On 30 September 2026 the oracle was asked "Will the pope be alive on 30 October 2026?" and answered from the language model's memory:
+
+{{GROUNDING_BEFORE_AFTER}}
+
+A model that knows it may be wrong and publishes anyway is an architecture failure, not a model failure. The fact-base step makes it structurally impossible. The daily board (engine `0.3.3-ts`) stays unchanged until the first public resolution on 28 October 2026 so its calibration series is not mixed; the election questions record their premises in shadow mode until then.
+
 ## Step 1 — Ground the question in live data
 
 The oracle never reasons blind. Before anything else it assembles a *market context* from Intel's own feeds: spot price, 30-day realized volatility, perp funding and open interest, the calendar of scheduled events in the horizon (FOMC, CPI, NFP…), recent primary-source events that touch the asset, and — when a Polymarket market asks the same question — its current YES price. The context is returned in the response (`context_used`) so you can audit exactly which numbers the forecast saw. Sources that failed are listed in `sources_unavailable`; they are never silently invented.

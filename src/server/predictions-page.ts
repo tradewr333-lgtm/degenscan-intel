@@ -24,7 +24,7 @@ const PT_TITLES: Record<string, string> = {
   "btc-ath-oct2026": "Bitcoin faz nova máxima histórica até 31/10?",
 };
 const COIN: Record<string, string> = { BTC: "Bitcoin", ETH: "Ethereum", SOL: "Solana" };
-function titleFor(slug: string, question: string, lang: Lang): string {
+export function titleFor(slug: string, question: string, lang: Lang): string {
   if (lang === "en") return question;
   if (PT_TITLES[slug]) return PT_TITLES[slug];
   const ddmm = (iso: string) => iso.slice(8, 10) + "/" + iso.slice(5, 7);
@@ -32,6 +32,11 @@ function titleFor(slug: string, question: string, lang: Lang): string {
   if (m) return `${COIN[m[1]]} fecha ${m[2] === "above" ? "acima" : "abaixo"} de US$${m[3].replace(/,/g, ".")} em ${ddmm(m[4])}?`;
   m = question.match(/^Will (BTC|ETH|SOL) trade above ([\d,]+) USD at any point before (\d{4}-\d{2}-\d{2})/);
   if (m) return `${COIN[m[1]]} passa de US$${m[2].replace(/,/g, ".")} antes de ${ddmm(m[3])}?`;
+  const MES: Record<string, string> = { january: "janeiro", february: "fevereiro", march: "março", april: "abril", may: "maio", june: "junho", july: "julho", august: "agosto", september: "setembro", october: "outubro", november: "novembro", december: "dezembro" };
+  m = question.match(/^Will the Fed (decrease|increase) interest rates by (\d+)(\+)? bps after the (\w+) (\d{4}) meeting\?/i);
+  if (m) { const pp = (Number(m[2]) / 100).toFixed(2).replace(".", ","); return `O Fed ${m[1].toLowerCase() === "decrease" ? "corta" : "sobe"} os juros em ${pp} pp${m[3] ? " ou mais" : ""} na reunião de ${MES[m[4].toLowerCase()] ?? m[4]}?`; }
+  m = question.match(/^Will there be no change in Fed interest rates after the (\w+) (\d{4}) meeting\?/i);
+  if (m) return `O Fed mantém os juros na reunião de ${MES[m[1].toLowerCase()] ?? m[1]}?`;
   return question;
 }
 export function categoryOf(slug: string, question: string): "eleicoes" | "juros" | "cripto" | "bolsa" | "outros" {

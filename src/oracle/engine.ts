@@ -9,8 +9,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import { buildContext, contextToPrompt, type DataProvider, type MarketContext } from "./context.js";
 import { chatJson, newUsage, type Usage } from "./llm.js";
+import { GROUNDING_RULE, ground, groundingToPrompt, UnverifiedPremise, type Fetcher, type Grounding } from "./grounding.js";
 import { Rng } from "./rng.js";
-import { DISCLAIMER, ENGINE_VERSION, type Agent, type Forecast, type ForecastRequest, type Intervention, type Routing, type RunResult } from "./schema.js";
+import { DISCLAIMER, ENGINE_VERSION, ENGINE_VERSION_GROUNDED, type Agent, type Forecast, type ForecastRequest, type Intervention, type Routing, type RunResult } from "./schema.js";
 
 // each Monte Carlo run builds its society through a different lens -> forced diversity between runs
 export const LENSES = [
@@ -28,6 +29,9 @@ const POP_CHUNK = 8;  // personas per population LLM call
 
 export const SYS = "You are the simulation kernel of 2Realidade, a forecasting oracle used by other AI agents. " +
   "You never flatter, you quantify, you surface disagreement instead of hiding it.";
+/** 0.3.5-ts: grounded requests carry the fact-base rule in the SYSTEM prompt (Architect no.6); board (0.3.3-ts) prompts are unchanged. */
+const GROUNDED = new WeakSet<object>();
+const sysOf = (req: object) => GROUNDED.has(req) ? SYS + " " + GROUNDING_RULE : SYS;
 
 const clamp = (x: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, x));
 const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
@@ -40,7 +44,7 @@ const num = (v: unknown, d: number) => { const n = Number(v); return Number.isFi
 // ---------------------------------------------------------------- routing
 export async function route(req: ForecastRequest, usage: Usage): Promise<Routing> {
   if (req.method) return { domain: "forced", method: req.method, human_driven: req.method !== "expert_panel", binary: true, rationale: "method forced by caller" };
-  const out = await chatJson(SYS, `TASK: route\nQuestion: ${req.question}\nContext: ${req.context.slice(0, 2000)}\n` +
+  const out = await chatJson(sysOf(req), `TASK: route\nQuestion: ${req.question}\nContext: ${req.context.slice(0, 2000)}\n` +
     "Classify. domain in [crypto, finance, prediction_market, society, product, politics, weather, " +
     "sports, tech, general]. method: 'social_sim' when the outcome is driven by aggregate human " +
     "behaviour (adoption, votes, narratives, market resolution), 'expert_panel' when it is a physical " +
@@ -57,7 +61,7 @@ export async function buildPopulation(req: ForecastRequest, routing: Routing, se
   for (let start = 0; start < n; start += POP_CHUNK) {  // chunked so one reply never overflows the output limit
     const k = Math.min(POP_CHUNK, n - start);
     const lens = LENSES[seed % LENSES.length];
-    const out = await chatJson(SYS, `TASK: population N=${k}\nQuestion: ${req.question}\nDomain: ${routing.domain}\n` +
+    const out = await chatJson(sysOf(req), `TASK: population N=${k}\nQuestion: ${req.question}\nDomain: ${routing.domain}\n` +
       `Society lens for THIS run: ${lens}\n${req.context.slice(0, 3500)}\n` +
       "Priors must be anchored on the MARKET CONTEXT numbers (distance to target, implied move, " +
       "base_rate, market_odds), each persona deviating according to its own bias.\n" +
@@ -118,7 +122,7 @@ export async function runSociety(req: ForecastRequest, routing: Routing, seed: n
         return { id: a.id, archetype: a.archetype, traits: a.traits, belief: Math.round(a.belief * 1000) / 1000, recent_memory: a.memory.slice(-3),
           neighbours: neigh.map(n => ({ archetype: n.archetype, belief: Math.round(n.belief * 100) / 100 })), news_heard: shockAudience.get(a.id) ?? [] };
       });
-      const out = await chatJson(SYS, `TASK: round ${r}/${req.rounds}\nQuestion: ${req.question}\n${req.context.slice(0, 2500)}\n` +
+      const out = await chatJson(sysOf(req), `TASK: round ${r}/${req.rounds}\nQuestion: ${req.question}\n${req.context.slice(0, 2500)}\n` +
         `Simulated time step ${r}. For EACH agent below decide how its probability for YES moves ` +
         "after hearing neighbours and any news it personally heard (others did not hear it). " +
         "Respect traits: high 'contrarian' resists consensus, low 'trust' discounts news, high " +
@@ -147,7 +151,7 @@ export async function runSociety(req: ForecastRequest, routing: Routing, seed: n
 
 // ---------------------------------------------------------------- expert panel
 export async function expertPanel(req: ForecastRequest, routing: Routing, seed: number, usage: Usage): Promise<Record<string, any>[]> {
-  const out = await chatJson(SYS, `TASK: panel\nQuestion: ${req.question}\nDomain: ${routing.domain}\n` +
+  const out = await chatJson(sysOf(req), `TASK: panel\nQuestion: ${req.question}\nDomain: ${routing.domain}\n` +
     `${req.context.slice(0, 4500)}\nResolves: ${req.resolves_at ?? "None"}\n` +
     // Architect 30/09 (tail-bias fix): odds-ratio rule for tails.
     "TAIL RULE: when the anchor is below 0.20 or above 0.80, express every adjustment as an odds " +
@@ -175,13 +179,29 @@ export function ci80(xs: number[]): [number, number] {
   return [r4(s[Math.floor(0.10 * (s.length - 1))]), r4(s[Math.ceil(0.90 * (s.length - 1))])];
 }
 
-export async function forecast(req0: ForecastRequest, opts: { baseSeed?: number; provider?: DataProvider | null; id?: string; configCapped?: boolean } = {}): Promise<Forecast> {
+/** grounding: "on" (0.3.5-ts — everything outside the board), "shadow" (election board rows until 28/10: premises recorded, not
+ *  injected), "off" (board, 0.3.3-ts frozen). refuseUnverified: human surfaces (the /app) never publish an unverifiable number. */
+export type GroundingMode = "on" | "shadow" | "off";
+export async function forecast(req0: ForecastRequest, opts: { baseSeed?: number; provider?: DataProvider | null; id?: string; configCapped?: boolean; grounding?: GroundingMode; refuseUnverified?: boolean; fetch?: Fetcher; pregrounded?: Grounding | null } = {}): Promise<Forecast> {
   const baseSeed = opts.baseSeed ?? 42;
   const usage = newUsage();
+  const mode: GroundingMode = opts.grounding ?? "off";
+  const now = new Date();
+  // v0.3.5: FACT BASE FIRST — what must be true today for the question to be well-posed? Verified live, never from memory.
+  let grd: Grounding | null = null;
+  if (mode !== "off") {
+    grd = opts.pregrounded ?? await ground(req0.question, { now, resolvesAt: req0.resolves_at ? new Date(req0.resolves_at) : null, fetch: opts.fetch, usage });
+    if (mode === "on" && (opts.refuseUnverified || req0.require_verified) && grd.status === "unverified") throw new UnverifiedPremise(grd);
+  }
+  const on = mode === "on" && grd != null;
   // v0.3: never simulate blind — assemble market context first and inject it everywhere
   const mctx: MarketContext = await buildContext(req0.question, opts.provider ?? null);
+  if (on && grd!.actuarial_base_rate != null && mctx.base_rate == null) { mctx.base_rate = grd!.actuarial_base_rate; mctx.base_rate_note = grd!.actuarial_note; }
+  const factBlock = on && grd!.status !== "none_needed" ? groundingToPrompt(grd!, now) + "\n" : "";
   const callerCtx = req0.context;
-  const req: ForecastRequest = { ...req0, context: contextToPrompt(mctx) + (callerCtx ? "\nCALLER CONTEXT: " + callerCtx : "") };
+  const req: ForecastRequest = { ...req0, question: on ? (grd!.corrected_question ?? req0.question) : req0.question,
+    context: factBlock + contextToPrompt(mctx) + (callerCtx ? "\nCALLER CONTEXT: " + callerCtx : "") };
+  if (on) GROUNDED.add(req);
   let routing = await route(req, usage);
   if (routing.method === "social_sim") routing = { ...routing, method: "hybrid" };  // panel is always on since v0.3
   const runs: RunResult[] = [];
@@ -195,8 +215,8 @@ export async function forecast(req0: ForecastRequest, opts: { baseSeed?: number;
   const pNaive = samples.length ? logitMean(samples) : 0.5;
   const disagreement = samples.length > 1 ? pstdev(samples) : 0.3;
 
-  const agg = await chatJson(SYS, "TASK: aggregate\n" +
-    `Question: ${req.question}\nRouting: ${JSON.stringify(routing)}\n${contextToPrompt(mctx)}\n` +
+  const agg = await chatJson(sysOf(req), "TASK: aggregate\n" +
+    `Question: ${req.question}\nRouting: ${JSON.stringify(routing)}\n${factBlock}${contextToPrompt(mctx)}\n` +
     `Run probabilities: ${runs.map(r => `p=${r.probability}`).join(" ")}\n` +
     `Trajectories: ${JSON.stringify(runs.slice(0, 12).map(r => r.belief_trajectory))}\n` +
     `Tipping rounds: ${JSON.stringify(runs.map(r => r.tipping_round))}\nFlips: ${JSON.stringify(runs.map(r => r.flipped))}\n` +
@@ -213,11 +233,12 @@ export async function forecast(req0: ForecastRequest, opts: { baseSeed?: number;
   const p = clamp(num(agg?.probability, pNaive), 0.01, 0.99);
   let conf = String(agg?.confidence ?? "medium");
   if (routing.method === "expert_panel" && !routing.human_driven) conf = "low";  // honesty: no data-backed model behind it
+  if (on && (grd!.status === "unverified" || grd!.status === "partial")) conf = "low";  // a premise the answer depends on could not be verified live
   if (!["low", "medium", "high"].includes(conf)) conf = "medium";
 
   const fid = opts.id ?? randomUUID().replace(/-/g, "").slice(0, 12);
   const created = new Date().toISOString();
-  const h = createHash("sha256").update(`${fid}|${req.question}|${p.toFixed(4)}|${created}`).digest("hex");
+  const h = createHash("sha256").update(`${fid}|${req0.question}|${p.toFixed(4)}|${created}`).digest("hex");
   const edge = mctx.market_odds != null ? r4(p - mctx.market_odds) : null;
   const edgeVsBase = mctx.base_rate != null ? r4(p - mctx.base_rate) : null;
   return {
@@ -227,6 +248,8 @@ export async function forecast(req0: ForecastRequest, opts: { baseSeed?: number;
     failure_modes: (Array.isArray(agg?.failure_modes) ? agg.failure_modes : []).slice(0, 6).map(String), confidence: conf as Forecast["confidence"],
     cost: { ...usage }, commitment_hash: h, market_odds: mctx.market_odds, market_ref: mctx.market_ref, edge, base_rate: mctx.base_rate, edge_vs_base: edgeVsBase,
     config: { runs: req0.runs, population: req0.population, rounds: req0.rounds, capped: Boolean(opts.configCapped) },
-    context_used: JSON.parse(JSON.stringify(mctx)), engine_version: ENGINE_VERSION, disclaimer: DISCLAIMER,
+    context_used: JSON.parse(JSON.stringify(mctx)), engine_version: on ? ENGINE_VERSION_GROUNDED : ENGINE_VERSION, disclaimer: DISCLAIMER,
+    ...(on ? { grounding: grd!.status, premises: JSON.parse(JSON.stringify(grd!.premises)), premise_corrected: grd!.corrected_question, warnings: grd!.warnings } : {}),
+    ...(mode === "shadow" && grd ? { grounding_shadow: JSON.parse(JSON.stringify(grd)) } : {}),
   };
 }
