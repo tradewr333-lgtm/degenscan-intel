@@ -154,7 +154,14 @@ export async function buildHttp() {
     provider: { organization: OPERATOR, url: PUBLIC_URL },
     documentationUrl: `${PUBLIC_URL}/llms.txt`, iconUrl: `${PUBLIC_URL}/favicon.ico`,
     capabilities: { streaming: false, pushNotifications: false, stateTransitionHistory: false,
-      extensions: [{ uri: "https://x402.org", description: "x402 v2 pay-per-call (HTTP 402 → PAYMENT-SIGNATURE). Prices at /.well-known/x402", required: false, params: { networks: ["eip155:8453", ...(PAY_TO_SOLANA ? [SOLANA_NETWORK] : [])], asset: "USDC", pricing: `${PUBLIC_URL}/.well-known/x402` } }] },
+      extensions: [
+      { uri: "https://a2a-registry.org/extensions/registry/v1", description: "Registry metadata and payment capabilities", required: false,
+        params: { payment: { model: "freemium", protocols: ["x402", "stripe"], direction: "inbound", rails: [
+          { network: "base", token: "USDC", type: "stablecoin", protocol: "x402", scheme: "exact", caip2: "eip155:8453", contractAddress: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", settlementTime: "fast" },
+          ...(PAY_TO_SOLANA ? [{ network: "solana", token: "USDC", type: "stablecoin", protocol: "x402", scheme: "exact", caip2: SOLANA_NETWORK, contractAddress: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", settlementTime: "fast" }] : []),
+          { network: "stripe", token: "USD", type: "fiat", protocol: "stripe" },
+        ] } } },
+      { uri: "https://x402.org", description: "x402 v2 pay-per-call (HTTP 402 → PAYMENT-SIGNATURE). Prices at /.well-known/x402", required: false, params: { networks: ["eip155:8453", ...(PAY_TO_SOLANA ? [SOLANA_NETWORK] : [])], asset: "USDC", pricing: `${PUBLIC_URL}/.well-known/x402` } }] },
     defaultInputModes: ["application/json"], defaultOutputModes: ["application/json"],
     securitySchemes: { apiKey: { type: "apiKey", in: "header", name: "X-API-KEY" } },
     skills: TOOL_DOCS.filter(t => t.price_usd > 0 && t.tool !== "health").map(t => ({ id: t.tool, name: t.tool.replace(/_/g, " "), description: `${REST_FOR[t.tool] ? `${t.tool === "oracle_forecast" ? "POST" : "GET"} ${PUBLIC_URL}${REST_FOR[t.tool]}` : `MCP tools/call ${t.tool}`} — $${t.price_usd}/call (x402 USDC)`, tags: ["crypto", "markets", "trading", ...(t.tool.startsWith("oracle") ? ["forecast", "prediction"] : []), ...(t.tool === "token_verdict" ? ["security", "token-risk"] : [])], inputModes: ["application/json"], outputModes: ["application/json"] })),
