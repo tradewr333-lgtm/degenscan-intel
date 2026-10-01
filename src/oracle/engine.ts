@@ -195,7 +195,7 @@ export async function forecast(req0: ForecastRequest, opts: { baseSeed?: number;
   }
   const on = mode === "on" && grd != null;
   // v0.3: never simulate blind — assemble market context first and inject it everywhere
-  const mctx: MarketContext = await buildContext(req0.question, opts.provider ?? null);
+  const mctx: MarketContext = await buildContext(req0.question, opts.provider ?? null, new Date(), on ? req0.resolves_at ?? null : null);  // resolves_at as horizon fallback only on 0.3.5-ts (board unchanged)
   if (on && grd!.actuarial_base_rate != null && mctx.base_rate == null) { mctx.base_rate = grd!.actuarial_base_rate; mctx.base_rate_note = grd!.actuarial_note; }
   const factBlock = on && grd!.status !== "none_needed" ? groundingToPrompt(grd!, now) + "\n" : "";
   const callerCtx = req0.context;

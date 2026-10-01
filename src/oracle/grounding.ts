@@ -10,6 +10,7 @@
  *                          surfaces that must not publish unverified numbers (human /app) refuse with HTTP 422 and no charge.
  *  Origin: forecast 24be779bfd42 priced an 89-year-old Pope Francis (d. 2025-04-21) instead of Leo XIV (b. 1955-09-14). */
 import { chatJson, type Usage } from "./llm.js";
+import * as tools from "../server/tools.js";
 
 export type PremiseKind = "office_holder" | "status" | "value" | "scheduled_event" | "other";
 export type Fetcher = (url: string, params?: Record<string, string | number> | null) => Promise<any>;
@@ -167,6 +168,35 @@ export async function newsSearch(fetch: Fetcher, query: string, days = 30): Prom
   return (j?.articles ?? []).slice(0, 5).map((a: any) => ({ title: a.title, url: a.url, age: a.seendate }));
 }
 
+/** Market assets are fetched by the market context (price, vol, Polymarket); a "premise" about them is not a world fact. */
+const MARKET_ENTITY = /\b(bitcoin|btc|ethereum|ether|eth|solana|sol|s&p|spx|s&p 500|nasdaq|crypto market|total crypto market cap|ouro|gold|petr[oó]leo|oil)\b/i;
+
+/** Construtor 01/10: live GDELT/Wikipedia lookups failed from Render for the Copom/Fed cases, so scheduled central-bank meetings are
+ *  verified first against official sources we already run: the FOMC calendar (federalreserve.gov dates in tools.calendar) and the
+ *  BCB Focus survey (it lists the upcoming Copom meetings, "R7/2026"…) plus SGS 432 for the current Selic target. */
+export async function internalCentralBank(fetch: Fetcher, p: Premise): Promise<Premise | null> {
+  const t = `${p.claim} ${p.entity} ${p.query}`.toLowerCase();
+  if (/\b(fomc|fed|federal reserve|federal funds)\b/.test(t)) {
+    const cal: any = tools.calendar({ days: 120, types: ["fomc"] });
+    const meets = (cal.items ?? []).filter((e: any) => e.subtype === "fomc").map((e: any) => String(e.at).slice(0, 10));
+    if (meets.length) { p.verified = true; p.fact = `FOMC rate decisions scheduled (Federal Reserve calendar): ${meets.join(", ")}`; p.source_url = "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"; p.data = { fomc: meets }; return p; }
+  }
+  if (/\b(copom|selic|banco central do brasil|bcb|central bank of brazil)\b/.test(t)) {
+    const sgs = await fetch("https://api.bcb.gov.br/dados/serie/bcdata.sgs.432/dados/ultimos/1", { formato: "json" });
+    const selic = Number(String(sgs?.[0]?.valor ?? "").replace(",", "."));
+    const focus = await fetch("https://olinda.bcb.gov.br/olinda/servico/Expectativas/versao/v1/odata/ExpectativasMercadoSelic", { $top: 24, $orderby: "Data desc", $format: "json" }).catch(() => null);
+    const rows: any[] = Array.isArray(focus?.value) ? focus.value : [];
+    const latest = rows.map(r => r.Data).sort().pop();
+    const meetings = [...new Set(rows.filter(r => r.Data === latest).map(r => String(r.Reuniao)))].sort();
+    if (Number.isFinite(selic)) {
+      p.verified = true;
+      p.fact = `Selic target today: ${selic}% (BCB SGS 432, ${sgs?.[0]?.data ?? "latest"})` + (meetings.length ? `; Copom meetings covered by the latest Focus survey (${latest}): ${meetings.join(", ")}` : "");
+      p.source_url = "https://www.bcb.gov.br/controleinflacao/historicotaxasjuros"; p.data = { selic, meetings, focus_date: latest }; return p;
+    }
+  }
+  return null;
+}
+
 export function ageOn(birth: string, when: Date): number | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(birth ?? ""); if (!m) return null;
   const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
@@ -207,6 +237,8 @@ export async function verifyPremise(p: Premise, fetch: Fetcher, now: Date): Prom
       }
     }
     if (p.kind === "value" || p.kind === "scheduled_event") {
+      const cb = await internalCentralBank(fetch, p).catch(() => null);
+      if (cb) return cb;
       const news = await newsSearch(fetch, p.query || p.entity, p.kind === "value" ? 45 : 90);
       if (news.length) {
         p.verified = true;
@@ -215,11 +247,11 @@ export async function verifyPremise(p: Premise, fetch: Fetcher, now: Date): Prom
         return p;
       }
     }
-    // last resort for anything: Wikipedia summary
-    const wp = p.entity ? await wikipediaSummary(fetch, p.entity) : null;
+    // last resort: Wikipedia summary — only for people/entities (a generic article cannot verify a value or a scheduled event)
+    const wp = p.entity && (p.kind === "status" || p.kind === "office_holder" || p.kind === "other") ? await wikipediaSummary(fetch, p.entity) : null;
     if (wp) { p.verified = true; p.fact = `${wp.title}: ${wp.extract}`; p.source_url = wp.url ?? ""; return p; }
   } catch (e) {
-    p.fact = `lookup failed: ${(e as Error)?.name ?? "Error"}`;
+    p.fact = `lookup failed: ${(e as Error)?.name ?? "Error"} ${String((e as Error)?.message ?? "").slice(0, 80)}`;
   }
   p.verified = false;
   return p;
@@ -240,6 +272,7 @@ export async function ground(question: string, opts: { now?: Date; resolvesAt?: 
   let premises: Premise[] = [];
   try { premises = await extractPremises(question, now, opts.usage); }
   catch { return { premises: [], status: "unverified", corrected_question: null, warnings: ["premise extraction failed"], actuarial_base_rate: null, actuarial_note: "" }; }
+  premises = premises.filter(p => !(MARKET_ENTITY.test(p.entity) && p.kind !== "office_holder" && p.kind !== "status"));
   if (!premises.length) return { premises: [], status: "none_needed", corrected_question: null, warnings: [], actuarial_base_rate: null, actuarial_note: "" };
   for (const p of premises) await verifyPremise(p, fetch, now);
   const g: Grounding = { premises, status: "verified", corrected_question: null, warnings: [], actuarial_base_rate: null, actuarial_note: "" };

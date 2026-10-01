@@ -74,9 +74,10 @@ export function detectTarget(q: string): number | null {
 /** 'below' when the question asks about falling under a level and never mentions above; else 'above'. */
 export function detectDirection(q: string): "above" | "below" { const ql = q.toLowerCase(); return BELOW_WORDS.test(ql) && !ABOVE_WORDS.test(ql) ? "below" : "above"; }
 export function detectHorizonDays(q: string, now: Date): number | null {
-  const m = /(20\d{2})-(\d{2})-(\d{2})/.exec(q);
-  if (!m) return null;
-  const dt = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  // ISO date, or dd/mm/yyyy (pt-BR questions from the /app — Construtor 01/10: they had no horizon, hence no base_rate)
+  const m = /(20\d{2})-(\d{2})-(\d{2})/.exec(q); const b = m ? null : /\b(\d{1,2})\/(\d{1,2})\/(20\d{2})\b/.exec(q);
+  if (!m && !b) return null;
+  const dt = m ? Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : Date.UTC(Number(b![3]), Number(b![2]) - 1, Number(b![1]));
   return Math.max(1, Math.floor((dt - now.getTime()) / 86_400_000));
 }
 
@@ -104,11 +105,11 @@ const round3 = (n: number) => Math.round(n * 1000) / 1000;
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
 // ---------------------------------------------------------------- builder
-export async function buildContext(question: string, provider: DataProvider | null, now = new Date()): Promise<MarketContext> {
+export async function buildContext(question: string, provider: DataProvider | null, now = new Date(), resolvesAt?: string | null): Promise<MarketContext> {
   const ctx: MarketContext = {
     as_of: now.toISOString().slice(0, 16).replace("T", " ") + " UTC",
     asset: detectAsset(question), spot: null, target: detectTarget(question), distance_pct: null,
-    horizon_days: detectHorizonDays(question, now), realized_vol_30d_ann: null, implied_move_pct: null, z_to_target: null,
+    horizon_days: detectHorizonDays(question, now) ?? (resolvesAt && !isNaN(Date.parse(resolvesAt)) ? Math.max(1, Math.floor((Date.parse(resolvesAt) - now.getTime()) / 86_400_000)) : null), realized_vol_30d_ann: null, implied_move_pct: null, z_to_target: null,
     funding_8h: null, open_interest_usd: null, market_odds: null, market_ref: null, base_rate: null, base_rate_note: "",
     upcoming_events: [], recent_events: [], extra: {}, sources: [], sources_unavailable: [],
   };

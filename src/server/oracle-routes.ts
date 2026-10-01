@@ -11,7 +11,7 @@ import { ForecastRequest, DISCLAIMER } from "../oracle/schema.js";
 import { enqueueForecast, recoverJobs, _queue } from "../oracle/queue.js";
 import { boardLatest, getForecast, getJob, recentForecasts, resolveForecast, trackRecord, ensureOracleTables, putForecast } from "../oracle/ledger.js";
 import { llmConfigured, newUsage } from "../oracle/llm.js";
-import { ground } from "../oracle/grounding.js";
+import { ground, defaultFetcher, WIKIDATA_API, WIKIDATA_SPARQL, GDELT_DOC, BRAVE_NEWS, WIKIPEDIA_SUMMARY } from "../oracle/grounding.js";
 import { refreshBoard, autoResolve, boardQuestions, eventQuestions } from "../oracle/board.js";
 import { getDb } from "../store/db.js";
 
@@ -102,6 +102,21 @@ export function installOracleRoutes(app: FastifyInstance, billing: (req: any, to
   });
   // Operator: curated event questions (Lote Eventos) added at runtime, no deploy. Resolution must be machine-checkable.
   eventQuestions(); // registers pinned Polymarket markets at boot
+  // Operator: which fact-base sources answer from this host (Construtor 01/10 — GDELT/Wikipedia failed from Render).
+  app.get("/v1/admin/grounding/probe", async (req: any, reply) => {
+    if (!operator(req, reply)) return { error: "operator key required" };
+    const probes: [string, () => Promise<any>][] = [
+      ["wikidata_api", () => defaultFetcher(WIKIDATA_API, { action: "wbsearchentities", search: "Leo XIV", language: "en", format: "json", limit: 1 })],
+      ["wikidata_sparql", () => defaultFetcher(WIKIDATA_SPARQL, { query: "SELECT ?x WHERE { wd:Q19546 rdfs:label ?x . FILTER(lang(?x)='en') } LIMIT 1", format: "json" })],
+      ["wikipedia", () => defaultFetcher(WIKIPEDIA_SUMMARY("en", "Pope Leo XIV"), null)],
+      ["gdelt", () => defaultFetcher(GDELT_DOC, { query: "Copom Selic", mode: "ArtList", maxrecords: 2, format: "json", timespan: "30d" })],
+      ["bcb_sgs", () => defaultFetcher("https://api.bcb.gov.br/dados/serie/bcdata.sgs.432/dados/ultimos/1", { formato: "json" })],
+      ...(process.env.BRAVE_API_KEY ? [["brave_news", () => defaultFetcher(BRAVE_NEWS, { q: "Copom Selic", count: 2 })] as [string, () => Promise<any>]] : []),
+    ];
+    const out: Record<string, any> = {};
+    for (const [name, fn] of probes) { const t0 = Date.now(); try { const v = await fn(); out[name] = { ok: v != null, ms: Date.now() - t0, sample: JSON.stringify(v ?? null).slice(0, 160) }; } catch (e) { out[name] = { ok: false, ms: Date.now() - t0, error: `${(e as Error).name}: ${String((e as Error).message).slice(0, 160)}`, cause: String((e as any)?.cause?.code ?? (e as any)?.cause?.message ?? "").slice(0, 120) }; } }
+    return { probes: out, brave_configured: Boolean(process.env.BRAVE_API_KEY) };
+  });
   app.post("/v1/admin/board/questions", async (req: any, reply) => {
     if (!operator(req, reply)) return { error: "operator key required" };
     const { slug, question, resolves_at, resolution, source } = req.body ?? {};
