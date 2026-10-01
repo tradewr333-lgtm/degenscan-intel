@@ -20,6 +20,7 @@ export const WIKIDATA_SPARQL = "https://query.wikidata.org/sparql";
 export const WIKIPEDIA_SUMMARY = (lang: string, title: string) => `https://${lang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title.replace(/ /g, "_"))}`;
 export const BRAVE_NEWS = "https://api.search.brave.com/res/v1/news/search";
 export const GDELT_DOC = "https://api.gdeltproject.org/api/v2/doc/doc";
+export const GOOGLE_NEWS_RSS = "https://news.google.com/rss/search";
 
 export const GROUNDING_RULE = "If your memory conflicts with VERIFIED FACTS, VERIFIED FACTS win. Never assume a person's age, " +
   "office, status or a current value from memory: use only what VERIFIED FACTS state. If a fact the " +
@@ -77,11 +78,11 @@ export const defaultFetcher: Fetcher = async (url, params) => {
   if (wd) { const c = cache.get(key); if (c && Date.now() - c.at < CACHE_MS) return c.v; }
   const headers: Record<string, string> = { "user-agent": process.env.R2_UA ?? "2Realidade-oracle/0.3 (contact@degenscan.io)", accept: url === WIKIDATA_SPARQL ? "application/sparql-results+json" : "application/json" };
   if (url.includes("brave.com") && process.env.BRAVE_API_KEY) headers["x-subscription-token"] = process.env.BRAVE_API_KEY;
-  const r = await fetch(key, { headers, signal: AbortSignal.timeout(url.includes("gdeltproject") ? 15000 : 8000) });  // GDELT is slow (01/10: 8 s timed out)
+  const r = await fetch(key, { headers, signal: AbortSignal.timeout(url.includes("gdeltproject") ? 6000 : 8000) });  // GDELT times out from Render (probe 01/10) → fail fast to Google News RSS
   if (r.status === 404) return null;
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   const text = await r.text();
-  let v: any = null; try { v = JSON.parse(text); } catch { v = null; }
+  let v: any = null; try { v = JSON.parse(text); } catch { v = text.trimStart().startsWith("<") ? { _xml: text } : null; }
   if (wd && v) cache.set(key, { at: Date.now(), v });
   return v;
 };
@@ -164,8 +165,19 @@ export async function newsSearch(fetch: Fetcher, query: string, days = 30): Prom
     const j = await fetch(BRAVE_NEWS, { q: query, count: 5, freshness: "pm" });
     return (j?.results ?? []).slice(0, 5).map((r: any) => ({ title: r.title, url: r.url, age: r.age }));
   }
-  const j = await fetch(GDELT_DOC, { query, mode: "ArtList", maxrecords: 5, format: "json", timespan: `${days}d`, sort: "DateDesc" });
-  return (j?.articles ?? []).slice(0, 5).map((a: any) => ({ title: a.title, url: a.url, age: a.seendate }));
+  let arts: { title: string; url: string; age: string }[] = [];
+  try {
+    const j = await fetch(GDELT_DOC, { query, mode: "ArtList", maxrecords: 5, format: "json", timespan: `${days}d`, sort: "DateDesc" });
+    arts = (j?.articles ?? []).slice(0, 5).map((a: any) => ({ title: a.title, url: a.url, age: a.seendate }));
+  } catch { arts = []; }
+  if (arts.length) return arts;
+  // Free fallback without key (probe 01/10: GDELT timed out from Render): Google News RSS, last `days` days.
+  const pt = /[ãõçéêáíóú]|\b(copom|selic|reunião|eleição)\b/i.test(query);
+  const x = await fetch(GOOGLE_NEWS_RSS, { q: `${query} when:${Math.min(days, 90)}d`, hl: pt ? "pt-BR" : "en-US", gl: pt ? "BR" : "US", ceid: pt ? "BR:pt-419" : "US:en" });
+  const xml: string = x?._xml ?? "";
+  const items = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)].slice(0, 5);
+  const tag = (blk: string, t: string) => (new RegExp(`<${t}>([\\s\\S]*?)</${t}>`).exec(blk)?.[1] ?? "").replace(/<!\[CDATA\[|\]\]>/g, "").replace(/&amp;/g, "&").trim();
+  return items.map(m => ({ title: tag(m[1], "title"), url: tag(m[1], "link"), age: tag(m[1], "pubDate") })).filter(a => a.title);
 }
 
 /** Market assets are fetched by the market context (price, vol, Polymarket); a "premise" about them is not a world fact. */
@@ -184,13 +196,15 @@ export async function internalCentralBank(fetch: Fetcher, p: Premise): Promise<P
   if (/\b(copom|selic|banco central do brasil|bcb|central bank of brazil)\b/.test(t)) {
     const sgs = await fetch("https://api.bcb.gov.br/dados/serie/bcdata.sgs.432/dados/ultimos/1", { formato: "json" });
     const selic = Number(String(sgs?.[0]?.valor ?? "").replace(",", "."));
-    const focus = await fetch("https://olinda.bcb.gov.br/olinda/servico/Expectativas/versao/v1/odata/ExpectativasMercadoSelic", { $top: 24, $orderby: "Data desc", $format: "json" }).catch(() => null);
+    // OData wants %20 and a literal $ — build the URL by hand (URLSearchParams encodes spaces as "+")
+    const focus = await fetch("https://olinda.bcb.gov.br/olinda/servico/Expectativas/versao/v1/odata/ExpectativasMercadoSelic?$top=24&$orderby=Data%20desc&$format=json", null).catch(() => null);
     const rows: any[] = Array.isArray(focus?.value) ? focus.value : [];
     const latest = rows.map(r => r.Data).sort().pop();
-    const meetings = [...new Set(rows.filter(r => r.Data === latest).map(r => String(r.Reuniao)))].sort();
+    const mkey = (r: string) => { const m = /R(\d+)\/(\d{4})/.exec(r); return m ? Number(m[2]) * 100 + Number(m[1]) : 999999; };
+    const meetings = [...new Set(rows.filter(r => r.Data === latest).map(r => String(r.Reuniao)))].sort((a, b) => mkey(a) - mkey(b));
     if (Number.isFinite(selic)) {
       p.verified = true;
-      p.fact = `Selic target today: ${selic}% (BCB SGS 432, ${sgs?.[0]?.data ?? "latest"})` + (meetings.length ? `; Copom meetings covered by the latest Focus survey (${latest}): ${meetings.join(", ")}` : "");
+      p.fact = `Selic target: ${selic}% (BCB SGS 432, latest value, dated ${sgs?.[0]?.data ?? "?"})` + (meetings.length ? `; upcoming Copom meetings in the latest Focus survey (${latest}): ${meetings.join(", ")} (R<n>/<year> = n-th meeting of that year)` : "");
       p.source_url = "https://www.bcb.gov.br/controleinflacao/historicotaxasjuros"; p.data = { selic, meetings, focus_date: latest }; return p;
     }
   }
@@ -248,7 +262,7 @@ export async function verifyPremise(p: Premise, fetch: Fetcher, now: Date): Prom
       }
     }
     // last resort: Wikipedia summary — only for people/entities (a generic article cannot verify a value or a scheduled event)
-    const wp = p.entity && (p.kind === "status" || p.kind === "office_holder" || p.kind === "other") ? await wikipediaSummary(fetch, p.entity) : null;
+    const wp = p.entity && (p.kind === "status" || p.kind === "other") ? await wikipediaSummary(fetch, p.entity) : null;  // never "verifies" an office holder (01/10: BCB article counted as verified)
     if (wp) { p.verified = true; p.fact = `${wp.title}: ${wp.extract}`; p.source_url = wp.url ?? ""; return p; }
   } catch (e) {
     p.fact = `lookup failed: ${(e as Error)?.name ?? "Error"} ${String((e as Error)?.message ?? "").slice(0, 80)}`;

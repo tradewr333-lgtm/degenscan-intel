@@ -59,7 +59,8 @@ function stripDates(q: string): string {
 /** First money-like number in the question (context.py v0.3.1 `detect_target`): dates and years are stripped first;
  *  a number with an explicit unit ($/usd/k or thousands grouping) is accepted from 10 up, without unit from 100. */
 export function detectTarget(q: string): number | null {
-  const cleaned = stripDates(q.replace(/US\$/g, "$"));
+  // index NAMES are not targets: "S&P 500 … above 7,000" must give 7000, not 500 (Construtor 01/10, live /app case)
+  const cleaned = stripDates(q.replace(/US\$/g, "$")).replace(/\b(s&p|sp|s & p)\s*500\b/gi, "SPX").replace(/\bnasdaq[\s-]*100\b/gi, "NDX").replace(/\brussell\s*2000\b/gi, "RUT").replace(/\bstoxx\s*(50|600)\b/gi, "STOXX").replace(/\bftse\s*100\b/gi, "FTSE").replace(/\bnikkei\s*225\b/gi, "NIKKEI");
   const re = /(\$\s*)?(\d{1,3}(?:[,.]\d{3})+|\d+(?:\.\d+)?)\s*(k\b|usd\b|\$)?/gi;
   for (const m of cleaned.matchAll(re)) {
     const pre = m[1], raw = m[2], unit = (m[3] ?? "").toLowerCase();

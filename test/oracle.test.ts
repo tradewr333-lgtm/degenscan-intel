@@ -561,3 +561,12 @@ describe("methodology grounding section", () => {
     expect(r.statusCode).toBe(200); expect(r.body).toContain('id="grounding"'); expect(r.body).not.toContain("{{GROUNDING_BEFORE_AFTER}}");
   });
 });
+
+describe("target detection ignores index names (01/10)", () => {
+  it("S&P 500 above 7.000 → 7000", async () => {
+    const c = await import("../src/oracle/context.js");
+    expect(c.detectTarget("O S&P 500 fecha 2026 acima de 7.000 pontos?")).toBe(7000);
+    expect(c.detectTarget("Will the S&P 500 close October 2026 above its September 2026 close?")).toBeNull();
+    expect(c.detectHorizonDays("O Bitcoin fecha 31/10/2026 acima de US$ 100.000?", new Date("2026-10-01T00:00:00Z"))).toBe(30);
+  });
+});

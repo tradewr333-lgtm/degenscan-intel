@@ -14,20 +14,21 @@ export function etaSeconds(req: ForecastRequest, ahead: number) {
   return Math.round((calls * 6 + 60) * (1 + ahead / CONCURRENCY));
 }
 
-const pending: string[] = [];
+const pending: string[] = [];      // board / background jobs
+const userPending: string[] = [];  // paying callers (/app, API): served first, plus one reserved slot (Construtor 01/10: a user question waited 10+ min behind the 06:00 board)
 let active = 0;
 const listeners = new Map<string, Set<() => void>>();
 
 export function enqueueForecast(req: ForecastRequest, payer: string | null, opts: { boardSlug?: string | null; id?: string; capped?: boolean; grounding?: unknown } = {}): { forecast_id: string; status: "queued"; eta_s: number; poll: string } {
   const id = opts.id ?? randomUUID().replace(/-/g, "").slice(0, 12);
   insertJob(id, { ...req, _capped: Boolean(opts.capped), ...(opts.grounding ? { _grounding: opts.grounding } : {}) }, payer, opts.boardSlug ?? null);
-  pending.push(id); void pump();
+  (opts.boardSlug ? pending : userPending).push(id); void pump();
   return { forecast_id: id, status: "queued", eta_s: etaSeconds(req, queueDepth() - 1), poll: `/v1/oracle/forecast/${id}` };
 }
 
 async function pump() {
-  while (active < CONCURRENCY && pending.length) {
-    const id = pending.shift()!; active++;
+  while ((userPending.length && active < CONCURRENCY + 1) || (pending.length && active < CONCURRENCY)) {
+    const id = (userPending.length ? userPending.shift() : pending.shift())!; active++;
     run(id).finally(() => { active--; listeners.get(id)?.forEach(fn => fn()); listeners.delete(id); void pump(); });
   }
 }
@@ -64,8 +65,8 @@ export function waitFor(id: string, timeoutMs = 600_000): Promise<void> {
 /** Re-enqueue jobs interrupted by a restart. Call once at boot. */
 export function recoverJobs() {
   const rows = unfinishedJobs();
-  for (const j of rows) { if (j.status === "running") setJob(j.id, "queued", "requeued after restart"); pending.push(j.id); }
+  for (const j of rows) { if (j.status === "running") setJob(j.id, "queued", "requeued after restart"); (j.board_slug ? pending : userPending).push(j.id); }
   if (rows.length) console.log(`[oracle] requeued ${rows.length} unfinished forecast job(s)`);
   void pump();
 }
-export const _queue = { get active() { return active; }, get pending() { return pending.length; }, concurrency: CONCURRENCY };
+export const _queue = { get active() { return active; }, get pending() { return pending.length + userPending.length; }, concurrency: CONCURRENCY };

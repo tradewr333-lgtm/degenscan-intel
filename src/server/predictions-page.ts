@@ -107,6 +107,7 @@ export function predictionsPage(lang: Lang = "pt"): string {
 .wrap{max-width:1180px;margin:0 auto;padding:24px 16px 40px}a{color:#7cc4ff;text-decoration:none}a:hover{text-decoration:underline}
 h1{margin:0 0 8px;font-size:28px}.lead{color:var(--mute);max-width:780px;line-height:1.5;margin:0 0 16px}
 .stats{display:flex;flex-wrap:wrap;gap:10px;margin:0 0 18px}.stat{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 14px;min-width:120px}.stat b{display:block;font-size:22px}.stat span{color:var(--mute);font-size:13px}
+.ask{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:0 0 16px}.ask a{background:var(--acc);color:#fff;padding:10px 14px;border-radius:10px;font-weight:600;text-decoration:none}
 .tabs{display:flex;gap:8px;overflow-x:auto;padding-bottom:6px;margin-bottom:16px}.tabs button{flex:0 0 auto;background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:999px;padding:8px 14px;font-size:14px;cursor:pointer}.tabs button.on{background:var(--acc);border-color:var(--acc);color:#fff}.tabs small{opacity:.7;margin-left:4px}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;gap:10px}
@@ -123,6 +124,7 @@ h3{margin:0;font-size:16px;line-height:1.35;font-weight:600;min-height:43px}
 <div class="wrap">
 <h1>${T.h1}</h1><p class="lead">${T.lead}</p>
 <div class="stats"><div class="stat"><b>${tr.n_pending}</b><span>${T.stats[0]}</span></div><div class="stat"><b>${tr.resolved}</b><span>${T.stats[1]}</span></div><div class="stat"><b>${tr.brier ?? "—"}</b><span>${T.stats[2]}</span></div></div>
+<div class="ask"><a href="${lang === "pt" ? "/app" : "/app?lang=en"}">${lang === "pt" ? "Pergunte o seu ao oráculo →" : "Ask your own question →"}</a><span class="m">${lang === "pt" ? "Assinantes Hobby: 16 perguntas/mês, com fatos verificados ao vivo." : "Hobby: 16 questions/month, facts verified live."}</span></div>
 <nav class="tabs">${tabs}</nav>
 <section class="grid" id="g">${cards.join("")}</section>
 <div class="how"><h2>${T.how}</h2><ol>${T.howItems.map(x => `<li>${x}</li>`).join("")}</ol><p class="m">${T.updated}</p></div>

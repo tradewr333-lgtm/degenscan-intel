@@ -15,11 +15,13 @@ Since engine `0.3.5-ts` (1 October 2026) every question outside the daily board 
 - A premise that **cannot be verified**: the human app refuses to give a number (HTTP 422, not charged); the API publishes with `grounding: "unverified"`, `confidence: "low"` and `warnings`, or refuses too when the caller sends `require_verified: true`.
 - Every forecast carries `grounding`, `premises` (with source URLs and retrieval time) and `warnings`.
 
-**Why this rule exists — a documented error.** On 30 September 2026 the oracle was asked "Will the pope be alive on 30 October 2026?" and answered from the language model's memory:
+### Why this exists: the pope, 30 September 2026
+
+Forecast `24be779bfd42` asked *"Will the pope be alive on 30 October 2026?"*. The engine of the time only fetched market data; for everything else it relied on the language model's memory. The panel priced the 30-day survival of an **89-year-old Pope Francis** and published **0.925** — while listing "if the current pope is not Francis, this estimate is too low" among its own failure modes. Pope Francis died on 21 April 2025. The pope is **Leo XIV**, born 14 September 1955, aged 71. With the birth date verified on Wikidata, the actuarial reference class gives **≈ 0.998**. Both forecasts, from the public ledger:
 
 {{GROUNDING_BEFORE_AFTER}}
 
-A model that knows it may be wrong and publishes anyway is an architecture failure, not a model failure. The fact-base step makes it structurally impossible. The daily board (engine `0.3.3-ts`) stays unchanged until the first public resolution on 28 October 2026 so its calibration series is not mixed; the election questions record their premises in shadow mode until then.
+Knowing you might be wrong and publishing anyway is the failure this step makes structurally impossible. We would rather show the error than hide it: a scorecard you cannot audit is not a scorecard. The daily board (engine `0.3.3-ts`) stays unchanged until the first public resolution on 28 October 2026 so its calibration series is not mixed; the election questions record their premises in shadow mode until then.
 
 ## Step 1 — Ground the question in live data
 

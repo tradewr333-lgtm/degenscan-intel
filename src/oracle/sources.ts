@@ -23,7 +23,9 @@ export async function selicFacts(): Promise<{ facts: Record<string, unknown>; ma
   } catch { focus = []; }
   // latest survey date, first upcoming meeting
   const latestDate = focus.map(f => f.Data).sort().pop();
-  const rows = focus.filter(f => f.Data === latestDate).sort((a, b) => String(a.Reuniao).localeCompare(String(b.Reuniao)));
+  // "R7/2026" < "R1/2027": sort by (year, meeting number) — a string sort put R1/2028 first (Construtor 01/10, live Copom case)
+  const key = (r: string) => { const m = /R(\d+)\/(\d{4})/.exec(String(r)); return m ? Number(m[2]) * 100 + Number(m[1]) : 999999; };
+  const rows = focus.filter(f => f.Data === latestDate).sort((a, b) => key(a.Reuniao) - key(b.Reuniao));
   const next = rows[0];
   const median = next ? Number(next.Mediana) : null;
   const facts: Record<string, unknown> = { selic_target_pct: Number.isFinite(selic) ? selic : null, focus_survey_date: latestDate ?? null, focus_next_meeting: next?.Reuniao ?? null, focus_median_next_pct: median, focus_min_next_pct: next ? Number(next.Minimo) : null, focus_max_next_pct: next ? Number(next.Maximo) : null, focus_respondents: next ? Number(next.numeroRespondentes) : null };

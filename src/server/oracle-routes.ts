@@ -11,7 +11,7 @@ import { ForecastRequest, DISCLAIMER } from "../oracle/schema.js";
 import { enqueueForecast, recoverJobs, _queue } from "../oracle/queue.js";
 import { boardLatest, getForecast, getJob, recentForecasts, resolveForecast, trackRecord, ensureOracleTables, putForecast } from "../oracle/ledger.js";
 import { llmConfigured, newUsage } from "../oracle/llm.js";
-import { ground, defaultFetcher, WIKIDATA_API, WIKIDATA_SPARQL, GDELT_DOC, BRAVE_NEWS, WIKIPEDIA_SUMMARY } from "../oracle/grounding.js";
+import { ground, defaultFetcher, newsSearch, WIKIDATA_API, WIKIDATA_SPARQL, GDELT_DOC, BRAVE_NEWS, WIKIPEDIA_SUMMARY } from "../oracle/grounding.js";
 import { refreshBoard, autoResolve, boardQuestions, eventQuestions } from "../oracle/board.js";
 import { getDb } from "../store/db.js";
 
@@ -110,6 +110,7 @@ export function installOracleRoutes(app: FastifyInstance, billing: (req: any, to
       ["wikidata_sparql", () => defaultFetcher(WIKIDATA_SPARQL, { query: "SELECT ?x WHERE { wd:Q19546 rdfs:label ?x . FILTER(lang(?x)='en') } LIMIT 1", format: "json" })],
       ["wikipedia", () => defaultFetcher(WIKIPEDIA_SUMMARY("en", "Pope Leo XIV"), null)],
       ["gdelt", () => defaultFetcher(GDELT_DOC, { query: "Copom Selic", mode: "ArtList", maxrecords: 2, format: "json", timespan: "30d" })],
+      ["news_search", () => newsSearch(defaultFetcher, "Copom Selic", 30).then(a => a.length ? a : null)],
       ["bcb_sgs", () => defaultFetcher("https://api.bcb.gov.br/dados/serie/bcdata.sgs.432/dados/ultimos/1", { formato: "json" })],
       ...(process.env.BRAVE_API_KEY ? [["brave_news", () => defaultFetcher(BRAVE_NEWS, { q: "Copom Selic", count: 2 })] as [string, () => Promise<any>]] : []),
     ];
