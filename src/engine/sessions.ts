@@ -7,8 +7,17 @@ const US_HOLIDAYS = new Set([
   "2027-01-01", "2027-01-18", "2027-02-15", "2027-03-26", "2027-05-31", "2027-06-18", "2027-07-05", "2027-09-06", "2027-11-25", "2027-12-24",
 ]);
 
+// Intl.DateTimeFormat construction is very expensive (~ms); build one per timezone and reuse it.
+// Incident 02/10 20:00 UTC: after the Friday US close, nextOpen() walked ~780 5-min steps per asset, each building a
+// new formatter → seconds of CPU per event, event loop blocked, health check failed, restart loop all weekend.
+const FMT = new Map<string, Intl.DateTimeFormat>();
+function fmtFor(tz: string) {
+  let f = FMT.get(tz);
+  if (!f) { f = new Intl.DateTimeFormat("en-US", { timeZone: tz, hour12: false, weekday: "short", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }); FMT.set(tz, f); }
+  return f;
+}
 function partsIn(tz: string, at: Date) {
-  const f = new Intl.DateTimeFormat("en-US", { timeZone: tz, hour12: false, weekday: "short", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+  const f = fmtFor(tz);
   const p = Object.fromEntries(f.formatToParts(at).map(x => [x.type, x.value]));
   const wd = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(p.weekday);
   const hour = Number(p.hour) % 24;
@@ -33,13 +42,25 @@ export function isTradable(a: Asset, at = new Date()): boolean {
 }
 
 /** Next open time for the asset's first session, searching forward up to 7 days in 5-min steps. */
+const NEXT_OPEN = new Map<string, { bucket: number; value: string | null }>();
 export function nextOpen(a: Asset, at = new Date()): string | null {
   if (isTradable(a, at)) return null;
   const step = 5 * 60_000;
-  for (let t = at.getTime() + step; t < at.getTime() + 7 * 86_400_000; t += step) {
-    if (isTradable(a, new Date(t))) return new Date(t).toISOString();
+  // memoised per sessions-shape and 5-min bucket: every asset on the same venue shares one search
+  const key = JSON.stringify(a.sessions);
+  const bucket = Math.floor(at.getTime() / step);
+  const hit = NEXT_OPEN.get(key);
+  if (hit && hit.bucket === bucket) return hit.value;
+  let value: string | null = null;
+  // coarse 1h walk, then refine in 5-min steps inside the hour that opens
+  const hour = 3_600_000, start = bucket * step;
+  let t = start + step;
+  for (; t < start + 7 * 86_400_000; t += hour) if (isTradable(a, new Date(t))) break;
+  if (t < start + 7 * 86_400_000) {
+    for (let u = Math.max(start + step, t - hour + step); u <= t; u += step) if (isTradable(a, new Date(u))) { value = new Date(u).toISOString(); break; }
   }
-  return null;
+  NEXT_OPEN.set(key, { bucket, value });
+  return value;
 }
 
 export function tradability(assetIds: string[], at = new Date()) {
