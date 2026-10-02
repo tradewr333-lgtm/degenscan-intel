@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 import { CONNECTORS, connectorById } from "./ingest/registry.js";
-import { runAllOnce, runConnector, startScheduler } from "./ingest/run.js";
+import { runAllOnce, runConnector, startScheduler, startLagMonitor } from "./ingest/run.js";
 import { buildHttp } from "./server/http.js";
 import { refreshUniverse, loadUniverse } from "./universe/index.js";
 import { invalidateGraph } from "./graph/graph.js";
@@ -17,11 +17,13 @@ async function main() {
   switch (cmd) {
     case "serve": {
       const port = Number(process.env.PORT ?? 8787);
-      if (!flag("--no-ingest")) startScheduler(ev => { if (ev.severity >= 0.7) console.log(`  !! ${ev.kind} ${ev.title} → ${ev.impacts.slice(0, 3).map(i => `${i.asset_id}${i.direction > 0 ? "▲" : i.direction < 0 ? "▼" : "◆"}${i.confidence}`).join(" ")}`); });
       // nightly universe refresh at ~21:35 ET
       setInterval(async () => { const et = new Date().toLocaleTimeString("en-US", { timeZone: "America/New_York", hour12: false }); if (et.startsWith("21:35")) { await refreshUniverse(); invalidateGraph(); invalidateDict(); } }, 60_000);
       const app = await buildHttp();
       await app.listen({ port, host: "0.0.0.0" });
+      startLagMonitor();
+      // ingest starts only after the port answers, so Render's health check passes during warm-up (incident 02/10)
+      if (!flag("--no-ingest")) startScheduler(ev => { if (ev.severity >= 0.7) console.log(`  !! ${ev.kind} ${ev.title} → ${ev.impacts.slice(0, 3).map(i => `${i.asset_id}${i.direction > 0 ? "▲" : i.direction < 0 ? "▼" : "◆"}${i.confidence}`).join(" ")}`); });
       if (!flag("--no-ingest")) { startBoardScheduler(); const { startPaperBot } = await import("./bot/paper.js"); const { polymarketEdge } = await import("./server/oracle-routes.js"); startPaperBot(() => polymarketEdge(0, 50).items); }
       console.log(`degenscan-intel listening on :${port}  (MCP: POST /mcp, REST: /v1, universe ${loadUniverse().version}, ${CONNECTORS.length} connectors)`);
       break;

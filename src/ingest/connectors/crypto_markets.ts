@@ -29,7 +29,7 @@ function chainEntities(chain: string | string[]) {
 
 /** CoinGecko — detect abnormal 1h moves in universe coins (crypto.onchain as a generic "market shock" kind). */
 export const coingeckoMoves: Connector = {
-  id: "coingecko-moves", name: "CoinGecko abnormal moves", tier: "aggregator", cadence_s: 300, url: "https://www.coingecko.com/en/api",
+  id: "coingecko-moves", name: "CoinGecko abnormal moves", tier: "aggregator", cadence_s: 600, url: "https://www.coingecko.com/en/api",
   async run() {
     const ids = loadUniverse().assets.filter(a => a.coingecko_id).map(a => a.coingecko_id!).join(",");
     const r = await fetchJson<any[]>(`https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${ids}&price_change_percentage=1h,24h`);

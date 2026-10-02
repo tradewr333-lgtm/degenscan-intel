@@ -184,8 +184,8 @@ export const fccNews = rssConnector(
     severity: it => has(it.title, "fine", "forfeiture", "merger") ? 0.5 : 0.3, entities: () => [ent("regulator", "regulator:FCC", "FCC")] },
 );
 export const whiteHouse = rssConnector(
-  { id: "whitehouse", name: "White House", tier: "primary", cadence_s: 300, url: "https://www.whitehouse.gov", fallback_chain: true,
-    feed: ["https://www.whitehouse.gov/feed/", "https://www.whitehouse.gov/presidential-actions/feed/", gnews("whitehouse.gov", "when:1d")] },
+  { id: "whitehouse", name: "White House", tier: "primary", cadence_s: 900, url: "https://www.whitehouse.gov", fallback_chain: true,
+    feed: ["https://www.whitehouse.gov/presidential-actions/feed/", gnews("whitehouse.gov", "when:1d")] },
   { kind: it => has(it.title, "executive order") ? "reg.rule" : has(it.title, "tariff", "trade", "sanction") ? "reg.notice" : null,
     severity: it => has(it.title, "tariff") ? 0.7 : 0.5, entities: it => has(it.title, "tariff", "trade") ? [ent("regulator", "regulator:USTR", "USTR")] : [ent("regulator", "regulator:WH", "White House")] },
 );
@@ -211,7 +211,7 @@ export const cisaKev: Connector = {
 
 /** OFAC recent actions (sanctions designations). */
 export const ofac = rssConnector(
-  { id: "ofac", name: "OFAC Recent Actions", tier: "primary", cadence_s: 900, url: "https://ofac.treasury.gov/recent-actions", fallback_chain: true,
+  { id: "ofac", name: "OFAC Recent Actions", tier: "primary", cadence_s: 21600, url: "https://ofac.treasury.gov/recent-actions", fallback_chain: true,
     feed: ["https://ofac.treasury.gov/recent-actions.rss", "https://ofac.treasury.gov/system/files/126/ofac.xml", "https://home.treasury.gov/news/press-releases/rss", gnews("treasury.gov", "sanctions when:2d")] },
   { kind: () => "reg.sanction", severity: it => has(it.title, "Russia", "Iran", "China", "crypto", "virtual currency") ? 0.6 : 0.3, entities: () => [ent("regulator", "regulator:OFAC", "OFAC")] },
 );

@@ -31,7 +31,7 @@ const EXCLUDED_WALLETS = (process.env.EXCLUDED_WALLETS ?? "0x5344722b8D037827A9a
 const REST_FOR: Record<string, string> = { events_since: "/v1/events?since=4h&universe=NVDA,BTC", impact_for: "/v1/impact/{asset_id}?since=24h", exposure_graph: "/v1/graph/{asset_id}?depth=2", regime_snapshot: "/v1/regime", explain: "/v1/explain/{event_id}", polymarket_context: "/v1/polymarket/{market}?since=48h", pulse: "/v1/pulse", news_for: "/v1/news/{ticker}?since=24h", derivs_for: "/v1/derivs/{symbol}", price_for: "/v1/price/{symbol}", funding_alerts: "/v1/funding/alerts", whale_moves: "/v1/whales?min_usd=1000000", polymarket_top: "/v1/polymarket/top?sort=volume_24h", filings_for: "/v1/filings/{ticker}?since=7d", calendar: "/v1/calendar?days=7", brief: "/v1/brief/{asset_id}", token_verdict: "/v1/token/verdict/{address}?chain=base", oracle_board: "/v1/oracle/board", polymarket_edge: "/v1/oracle/edge?min_abs=0.02", oracle_forecast: "/v1/oracle/forecast" };
 const OPENAPI = (base: string) => ({
   openapi: "3.1.0",
-  info: { title: "Degenscan Intel", version: "0.10.23", description: "Cross-asset market event intelligence for AI trading agents. Priced routes return HTTP 402 with x402 v2 payment requirements (USDC on Base) unless X-API-KEY is sent or the free trial header X-Free-Trial: 1 is present (100 calls/day/IP). Information and analytics only — not investment advice.", contact: { name: "Marbella Collins LLC", email: "contact@degenscan.io" }, license: { name: "MIT" } },
+  info: { title: "Degenscan Intel", version: "0.10.24", description: "Cross-asset market event intelligence for AI trading agents. Priced routes return HTTP 402 with x402 v2 payment requirements (USDC on Base) unless X-API-KEY is sent or the free trial header X-Free-Trial: 1 is present (100 calls/day/IP). Information and analytics only — not investment advice.", contact: { name: "Marbella Collins LLC", email: "contact@degenscan.io" }, license: { name: "MIT" } },
   servers: [{ url: base }],
   components: { securitySchemes: { apiKey: { type: "apiKey", in: "header", name: "X-API-KEY" }, freeTrial: { type: "apiKey", in: "header", name: "X-Free-Trial", description: "Send the value 1 for 100 free calls/day per IP." }, x402: { type: "apiKey", in: "header", name: "PAYMENT-SIGNATURE", description: "x402 v2 payment payload (base64). Obtain requirements from the 402 response header PAYMENT-REQUIRED." } } },
   paths: {
@@ -109,7 +109,7 @@ export async function buildHttp() {
   const billing = (req: any, tool: string) => req.x402Context ? { tool, price_usd: PRICES[tool] ?? 0.005, method: "x402" } : { tool, price_usd: req.intelAccess?.price ?? 0, method: req.intelAccess?.method ?? "free" };
 
   app.get("/", async () => ({
-    name: "degenscan-intel", version: "0.10.23",
+    name: "degenscan-intel", version: "0.10.24",
     description: "No key required: market-event intelligence for trading agents — SEC filings, Fed/FOMC, regulators, disasters, Nasdaq halts, DeFi hacks, Polymarket odds, Hyperliquid funding/OI — scored per asset. 100 free calls/day, then USDC per call (x402, Base/Solana) or API key.",
     mcp: `${PUBLIC_URL}/mcp`, rest: `${PUBLIC_URL}/v1`, pricing: TOOL_DOCS, skill: `${PUBLIC_URL}/skill.md`, openapi: `${PUBLIC_URL}/openapi.json`, x402: `${PUBLIC_URL}/.well-known/x402`, plans: `${PUBLIC_URL}/v1/plans`, prepaid_keys: `${PUBLIC_URL}/v1/keys/packs`, metrics: `${PUBLIC_URL}/v1/metrics`, docs: `${PUBLIC_URL}/docs`, sdks: { js: "npm i @degenscan/intel", python: "pip install degenscan-intel" }, github: "https://github.com/tradewr333-lgtm/degenscan-intel", contact: "contact@degenscan.io",
     operator: OPERATOR, disclaimer: DISCLAIMER, license: "MIT",
@@ -124,10 +124,16 @@ export async function buildHttp() {
     const lines = m.weeks.map(w => [w.week_start, w.week_end, w.calls_free, w.calls_api_key, w.calls_paid_x402, w.unique_paying_wallets, w.usdc_revenue, w.stripe_active_subscriptions, `"${w.tx_hashes.join(" ")}"`, w.excluded_owner_wallets.calls, w.excluded_owner_wallets.usdc, `"${w.excluded_owner_wallets.tx_hashes.join(" ")}"`].join(","));
     return reply.type("text/csv").header("content-disposition", "inline; filename=degenscan-intel-metrics.csv").send([head, ...lines].join("\n") + "\n");
   });
+  // /health must stay O(1): Render kills the instance after a 5 s miss. Counts are cached and refreshed at most once a minute.
+  let healthCounts = { events: 0, calls: 0, at: 0 };
+  const refreshCounts = () => {
+    try {
+      healthCounts = { events: (getDb().prepare("SELECT MAX(rowid) AS n FROM events").get() as unknown as { n: number }).n ?? 0, calls: (getDb().prepare("SELECT MAX(rowid) AS n FROM calls").get() as unknown as { n: number }).n ?? 0, at: Date.now() };
+    } catch { /* keep last */ }
+  };
   app.get("/health", async () => {
-    const n = (getDb().prepare("SELECT COUNT(*) AS n FROM events").get() as unknown as { n: number }).n;
-    const calls = (getDb().prepare("SELECT COUNT(*) AS n FROM calls").get() as unknown as { n: number }).n;
-    return { ok: true, events: n, calls, connectors: CONNECTORS.length, storage: { path: DB_PATH, persistent: DB_PATH.startsWith("/data/") }, at: new Date().toISOString() };
+    if (Date.now() - healthCounts.at > 60_000) refreshCounts();
+    return { ok: true, events: healthCounts.events, calls: healthCounts.calls, connectors: CONNECTORS.length, storage: { path: DB_PATH, persistent: DB_PATH.startsWith("/data/") }, at: new Date().toISOString() };
   });
   // Agent skill (Claude/Cursor "skills" format): when to call which tool, loop, payment.
   const SKILL = (() => { try { return readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../skills/degenscan-intel/SKILL.md"), "utf8"); } catch { return "# Degenscan Intel\nSee /llms.txt"; } })();
@@ -150,7 +156,7 @@ export async function buildHttp() {
   // A2A Agent Card (a2a-protocol.org): lets A2A registries (a2aregistry.org, a2a-registry.org) and agents discover what we offer.
   // We expose HTTP+JSON (REST) and MCP; payment is x402 on each call. No A2A JSON-RPC task endpoint is claimed.
   const AGENT_CARD = () => ({
-    protocolVersion: "0.3.0", name: "Degenscan Intel", version: "0.10.23",
+    protocolVersion: "0.3.0", name: "Degenscan Intel", version: "0.10.24",
     description: "Market-event intelligence and calibrated probability forecasts for AI trading agents: ~40 primary sources (SEC, Fed, Polymarket, Hyperliquid, on-chain) scored into per-asset impacts; token contract risk verdicts; public Brier track record. Pay per call with x402 (USDC on Base or Solana) or an API key. Information and analytics only — not investment advice.",
     url: `${PUBLIC_URL}/a2a`, preferredTransport: "JSONRPC",
     additionalInterfaces: [{ url: `${PUBLIC_URL}/a2a`, transport: "JSONRPC" }, { url: `${PUBLIC_URL}/v1`, transport: "HTTP+JSON" }],

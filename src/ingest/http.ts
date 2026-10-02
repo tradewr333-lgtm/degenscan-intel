@@ -37,6 +37,9 @@ export function txt(v: unknown): string {
 
 export async function fetchRss(url: string): Promise<RssItem[]> {
   const xml = await fetchText(url, { timeoutMs: 12_000, headers: { accept: "application/rss+xml, application/atom+xml, application/xml, text/xml, */*" } });
+  // rss-parser (xml2js) parses synchronously: a multi-MB document blocks the event loop on 0.5 CPU. Feeds are small; refuse outliers.
+  const maxBytes = Number(process.env.RSS_MAX_BYTES ?? 2_000_000);
+  if (xml.length > maxBytes) throw new Error(`feed too large (${Math.round(xml.length / 1024)} KB > ${Math.round(maxBytes / 1024)} KB) ${url}`);
   const feed = await parser.parseString(xml);
   return (feed.items ?? []).map((it: any) => {
     const title = txt(it.title).trim();
