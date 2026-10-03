@@ -19,6 +19,11 @@ export const PACKS = {
 } as const;
 export type Pack = keyof typeof PACKS;
 
+/** Carry Oracle (Renato 04/10, non-negotiable): flat US$100/month toll, unlimited calls to /v1/carry/*, no per-request metering.
+ *  Paid by card (Stripe subscription, revoked on cancel) or USDC (x402, one payment = 30 days). A carry key has zero budget for
+ *  the other paid tools — it is a separate product. */
+export const CARRY = { usd_month: 100, days_per_usdc_payment: 30, lookup_key: "carry_oracle_monthly_100usd", product_name: "Degenscan Carry Oracle" } as const;
+
 export interface ApiKeyRow {
   id: string; key_hash: string; plan: Plan | Pack; monthly_calls: number; status: "active" | "revoked" | "pending";
   stripe_customer: string | null; stripe_subscription: string | null; stripe_session: string | null; email: string | null; created_at: string; label: string | null;
@@ -32,7 +37,7 @@ function ensure() {
       status TEXT NOT NULL DEFAULT 'active', stripe_customer TEXT, stripe_subscription TEXT, stripe_session TEXT UNIQUE,
       email TEXT, label TEXT, created_at TEXT NOT NULL
     );`);
-  for (const col of ["total_calls INTEGER", "wallet TEXT", "tx TEXT"]) { try { getDb().exec(`ALTER TABLE api_keys ADD COLUMN ${col}`); } catch { /* exists */ } }
+  for (const col of ["total_calls INTEGER", "wallet TEXT", "tx TEXT", "expires_at TEXT"]) { try { getDb().exec(`ALTER TABLE api_keys ADD COLUMN ${col}`); } catch { /* exists */ } }
 }
 const hash = (raw: string) => createHash("sha256").update(raw).digest("hex");
 
@@ -44,6 +49,28 @@ export function createKey(opts: { plan: Plan; stripe_customer?: string; stripe_s
   getDb().prepare(`INSERT INTO api_keys (id, key_hash, plan, monthly_calls, status, stripe_customer, stripe_subscription, stripe_session, email, label, created_at) VALUES (?,?,?,?,'active',?,?,?,?,?,?)`)
     .run(id, hash(key), opts.plan, PLANS[opts.plan].monthly_calls, opts.stripe_customer ?? null, opts.stripe_subscription ?? null, opts.stripe_session ?? null, opts.email ?? null, opts.label ?? null, new Date().toISOString());
   return { id, key };
+}
+
+export function createCarryKey(opts: { via: "stripe" | "x402"; stripe_customer?: string; stripe_subscription?: string; stripe_session?: string; email?: string; wallet?: string | null }): { id: string; key: string } {
+  ensure();
+  const id = "k_" + randomBytes(6).toString("hex");
+  const key = `dsi_carry_${randomBytes(24).toString("base64url")}`;
+  const expires = opts.via === "x402" ? new Date(Date.now() + CARRY.days_per_usdc_payment * 86_400_000).toISOString() : null;
+  getDb().prepare(`INSERT INTO api_keys (id, key_hash, plan, monthly_calls, status, stripe_customer, stripe_subscription, stripe_session, email, wallet, label, expires_at, created_at)
+    VALUES (?,?,'carry',0,?,?,?,?,?,?,?,?,?)`).run(id, hash(key), opts.via === "x402" ? "pending" : "active", opts.stripe_customer ?? null, opts.stripe_subscription ?? null,
+    opts.stripe_session ?? null, opts.email ?? null, opts.wallet ?? null, `carry ${opts.via}`, expires, new Date().toISOString());
+  return { id, key };
+}
+/** Is this raw key a live Carry Oracle subscription? */
+export function carryAccess(raw: string | undefined | null): { ok: boolean; id?: string; expires_at?: string | null; reason?: string } {
+  if (!raw) return { ok: false, reason: "no key" };
+  ensure();
+  const row = getDb().prepare("SELECT id, plan, status, expires_at FROM api_keys WHERE key_hash = ?").get(hash(raw.trim())) as any;
+  if (!row) return { ok: false, reason: "unknown key" };
+  if (row.plan !== "carry") return { ok: false, reason: "this key is not a Carry Oracle subscription" };
+  if (row.status !== "active") return { ok: false, reason: `subscription ${row.status}` };
+  if (row.expires_at && new Date(row.expires_at).getTime() < Date.now()) return { ok: false, reason: `expired ${row.expires_at}` };
+  return { ok: true, id: row.id, expires_at: row.expires_at };
 }
 
 /** Prepaid pack key paid in USDC (x402). Created as `pending`; activated by activatePackKey() once the facilitator settles. */
@@ -64,6 +91,7 @@ export function keyStatus(raw: string) {
   if (!row) return null;
   const used = row.total_calls != null ? lifetimeUsage(row.id) : monthlyUsage(row.id);
   const budget = row.total_calls ?? row.monthly_calls;
+  if ((row.plan as string) === "carry") return { id: row.id, plan: "carry", status: row.status, product: "Carry Oracle — flat US$100/month, unlimited /v1/carry/* calls", expires_at: (row as any).expires_at ?? "renews monthly (Stripe)", created_at: row.created_at };
   return { id: row.id, plan: row.plan, status: row.status, budget, used, remaining: Math.max(0, budget - used), period: row.total_calls != null ? "lifetime" : "calendar_month", created_at: row.created_at };
 }
 

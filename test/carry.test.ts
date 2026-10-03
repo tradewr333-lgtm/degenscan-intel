@@ -37,3 +37,28 @@ describe("Carry Oracle data layer (Hyperliquid funding, all dexes)", () => {
     expect(c.carryStats().backfill.rows).toBe(6);
   });
 });
+
+describe("Carry Oracle toll: flat US$100/month, no metering", () => {
+  it("carry routes need a live carry key; stats and /carry stay open; other keys are refused", async () => {
+    const { buildHttp } = await import("../src/server/http.js");
+    const k = await import("../src/server/keys.js");
+    const app = await buildHttp();
+    expect((await app.inject({ url: "/v1/carry/stats" })).statusCode).toBe(200);
+    expect((await app.inject({ url: "/carry" })).body).toContain("US$ 100/mês");
+    const r = await app.inject({ url: "/v1/carry/xdex" });
+    expect(r.statusCode).toBe(402); expect(r.json().error).toBe("carry_subscription_required"); expect(r.json().price).toContain("100");
+    const hobby = k.createKey({ plan: "hobby" });
+    expect((await app.inject({ url: "/v1/carry/xdex", headers: { "x-api-key": hobby.key } })).statusCode).toBe(402);
+    const c = k.createCarryKey({ via: "stripe", stripe_subscription: "sub_test_carry" });
+    const ok = await app.inject({ url: "/v1/carry/funding-matrix", headers: { "x-api-key": c.key } });
+    expect(ok.statusCode).toBe(200);
+    for (let i = 0; i < 5; i++) expect((await app.inject({ url: "/v1/carry/xdex", headers: { "x-api-key": c.key } })).statusCode).toBe(200);
+    k.revokeBySubscription("sub_test_carry");
+    expect((await app.inject({ url: "/v1/carry/xdex", headers: { "x-api-key": c.key } })).statusCode).toBe(402);
+    const u = k.createCarryKey({ via: "x402", wallet: "0xabc" });   // pending until settlement
+    expect(k.carryAccess(u.key).ok).toBe(false);
+    k.activatePackKey(u.id, "0xtx"); expect(k.carryAccess(u.key).ok).toBe(true);
+    // a carry key has no budget on the metered tools
+    expect(k.validateKey(c.key)?.remaining ?? 0).toBe(0);
+  });
+});

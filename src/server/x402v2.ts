@@ -7,7 +7,7 @@ import { registerExactSvmScheme } from "@x402/svm/exact/server";
 import { createFacilitatorConfig } from "@coinbase/x402";
 import { declareDiscoveryExtension, bazaarResourceServerExtension } from "@x402/extensions/bazaar";
 import { PRICES } from "./pricing.js";
-import { PACKS } from "./keys.js";
+import { PACKS, CARRY } from "./keys.js";
 import { FREE_MODE } from "./access.js";
 
 /**
@@ -142,6 +142,12 @@ export function buildRoutes(): RoutesConfig {
       extensions: declareDiscoveryExtension({ bodyType: "json", input: {}, inputSchema: { properties: {} },
         output: { example: { api_key: `dsi_${pack}_…`, key_id: "k_…", pack, calls: p.calls, paid_usd: p.usd, usage: "send header X-API-KEY on /v1/* or POST /mcp", check: `${PUBLIC_URL}/v1/keys/me` } } }),
     } as RouteConfig])),
+    "POST /v1/keys/x402/carry_month": {
+      accepts: rails(usd(CARRY.usd_month)),
+      description: `Carry Oracle — 30 days of unlimited access to /v1/carry/* (Hyperliquid funding on every dex, cross-dex spreads, hourly history kept without a window) for a flat ${CARRY.usd_month} USDC. Returns an X-API-KEY. Data and analytics only — not investment advice.`,
+      mimeType: "application/json", ...common,
+      extensions: declareDiscoveryExtension({ bodyType: "json", input: {}, inputSchema: { properties: {} }, output: { example: { api_key: "dsi_carry_…", key_id: "k_…", product: "carry_month", expires_at: "2026-11-03T00:00:00Z" } } }),
+    } as RouteConfig,
     "POST /mcp": {
       // MCP: price depends on the tool being called; handshake/tools/list are granted for free by the access hook.
       accepts: rails((ctx: any) => { const b: any = ctx.adapter.getBody?.(); const t = String(b?.params?.name ?? ""); return usd(PRICES[t] ?? 0.005); }),
