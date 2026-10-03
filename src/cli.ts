@@ -24,7 +24,7 @@ async function main() {
       startLagMonitor();
       // ingest starts only after the port answers, so Render's health check passes during warm-up (incident 02/10)
       if (!flag("--no-ingest")) startScheduler(ev => { if (ev.severity >= 0.7) console.log(`  !! ${ev.kind} ${ev.title} → ${ev.impacts.slice(0, 3).map(i => `${i.asset_id}${i.direction > 0 ? "▲" : i.direction < 0 ? "▼" : "◆"}${i.confidence}`).join(" ")}`); });
-      if (!flag("--no-ingest")) { startBoardScheduler(); const { startPaperBot } = await import("./bot/paper.js"); const { polymarketEdge } = await import("./server/oracle-routes.js"); startPaperBot(() => polymarketEdge(0, 50).items); }
+      if (!flag("--no-ingest")) { startBoardScheduler(); (await import("./carry/hl.js")).startCarryCollector(); const { startPaperBot } = await import("./bot/paper.js"); const { polymarketEdge } = await import("./server/oracle-routes.js"); startPaperBot(() => polymarketEdge(0, 50).items); }
       console.log(`degenscan-intel listening on :${port}  (MCP: POST /mcp, REST: /v1, universe ${loadUniverse().version}, ${CONNECTORS.length} connectors)`);
       break;
     }
