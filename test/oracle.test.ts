@@ -570,3 +570,25 @@ describe("target detection ignores index names (01/10)", () => {
     expect(c.detectHorizonDays("O Bitcoin fecha 31/10/2026 acima de US$ 100.000?", new Date("2026-10-01T00:00:00Z"))).toBe(30);
   });
 });
+
+describe("grounding: named person vs current office holder (Construtor 03/10 — Powell marked verified)", () => {
+  it("Powell as Fed chair is contradicted by the current holder (Warsh)", async () => {
+    const g = await import("../src/oracle/grounding.js");
+    const p: any = { claim: "Jerome Powell is currently the Chair of the Federal Reserve", entity: "Jerome Powell", kind: "status", query: "Jerome Powell", verified: false, fact: "", source_url: "", retrieved_at: "", data: {} };
+    await g.verifyPremise(p, g.mockFetcher, new Date("2026-10-03T00:00:00Z"));
+    expect(p.verified).toBe("contradicted");
+    expect(p.fact).toContain("Kevin Warsh");
+  });
+  it("the FOMC calendar never verifies a premise about a chair's term", async () => {
+    const g = await import("../src/oracle/grounding.js");
+    const p: any = { claim: "Jerome Powell's term as Fed Chair expires in May 2026", entity: "Federal Reserve", kind: "scheduled_event", query: "Fed chair term", verified: false, fact: "", source_url: "", retrieved_at: "", data: {} };
+    expect(await g.internalCentralBank(g.mockFetcher, p)).toBeNull();
+  });
+  it("a person record with no position does not verify 'currently holds office'", async () => {
+    const g = await import("../src/oracle/grounding.js");
+    const p: any = { claim: "Joe Biden is currently in office", entity: "Joe Biden", kind: "status", query: "Joe Biden", verified: false, fact: "", source_url: "", retrieved_at: "", data: {} };
+    await g.verifyPremise(p, g.mockFetcher, new Date("2026-10-03T00:00:00Z"));
+    expect(p.verified).not.toBe(true);
+  });
+});
+

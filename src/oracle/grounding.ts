@@ -188,6 +188,10 @@ const MARKET_ENTITY = /\b(bitcoin|btc|ethereum|ether|eth|solana|sol|s&p|spx|s&p 
  *  BCB Focus survey (it lists the upcoming Copom meetings, "R7/2026"…) plus SGS 432 for the current Selic target. */
 export async function internalCentralBank(fetch: Fetcher, p: Premise): Promise<Premise | null> {
   const t = `${p.claim} ${p.entity} ${p.query}`.toLowerCase();
+  // the official calendars only answer premises about meetings / the policy rate — never about who heads the bank, a term or a
+  // nomination (03/10: the FOMC calendar was pasted as "verified" evidence for "Powell's term expires in May 2026")
+  if (/\b(chair|chairman|chairwoman|president|presidente|governor|governador|term|mandato|appoint|nominat|successor|sucessor|indica)/.test(t)) return null;
+  if (!/\b(meeting|meetings|decision|reuni|fomc|copom|rate|rates|juros|taxa|selic|cut|cuts|corte|hike|alta|target|meta)\b/.test(t)) return null;
   if (/\b(fomc|fed|federal reserve|federal funds)\b/.test(t)) {
     const cal: any = tools.calendar({ days: 120, types: ["fomc"] });
     const meets = (cal.items ?? []).filter((e: any) => e.subtype === "fomc").map((e: any) => String(e.at).slice(0, 10));
@@ -218,9 +222,39 @@ export function ageOn(birth: string, when: Date): number | null {
   return W.y - y - ((W.m < mo || (W.m === mo && W.d < d)) ? 1 : 0);
 }
 
+/** Offices whose Wikidata holder is reliable enough to CONTRADICT a claim (BCB is not: Wikidata still lists Campos Neto). */
+const OFFICE_PATTERNS: [RegExp, string][] = [
+  [/\b(chair(?:man|woman)?|head|president|presidente)\s+(?:of\s+(?:the\s+)?|do\s+|da\s+)?(federal reserve|fed)\b|\bfed chair/i, "Chair of the Federal Reserve"],
+  [/\bpresident\s+of\s+(?:the\s+)?united states\b|\bpresidente\s+dos\s+(?:eua|estados unidos)\b|\bu\.?s\.? president\b/i, "President of the United States"],
+  [/\bpresident\s+of\s+brazil\b|\bpresidente\s+do\s+brasil\b|\bbrazilian president\b/i, "President of Brazil"],
+  [/\b(pope|papa)\b/i, "pope"],
+  [/\bprime minister\s+of\s+(?:the\s+)?united kingdom\b|\buk prime minister\b|\bprimeiro-ministro\s+(?:do\s+)?reino unido\b/i, "Prime Minister of the United Kingdom"],
+  [/\bpresident\s+of\s+(?:the\s+)?european central bank\b|\becb president\b|\bpresidente\s+do\s+bce\b/i, "President of the European Central Bank"],
+];
+export function officeFromClaim(claim: string): string | null {
+  for (const [re, office] of OFFICE_PATTERNS) if (re.test(claim)) return office;
+  return null;
+}
+const nameMatches = (holder: string, named: string[]) => named.some(n => n.split(" ").filter(w => w.length > 2).some(w => holder.toLowerCase().includes(w.toLowerCase())));
+
 export async function verifyPremise(p: Premise, fetch: Fetcher, now: Date): Promise<Premise> {
   p.retrieved_at = now.toISOString();
   try {
+    // a named person "is / will be <office>": check the office's CURRENT holder, whatever kind the extractor gave
+    // (03/10: "Jerome Powell is currently the Chair of the Federal Reserve" was marked verified from a person lookup
+    // that said "no current position" — Kevin Warsh is chair since 2026-05-22)
+    const officeInClaim = officeFromClaim(p.claim);
+    const namedInClaim = (p.claim.match(/[A-ZÀ-Ú][a-zà-ú]+(?: [A-ZÀ-Ú][a-zà-ú]+)+/g) ?? []).filter(n => !/^(Federal Reserve|United States|European Central|Central Bank|Prime Minister|The )/.test(n));
+    if (officeInClaim && namedInClaim.length && p.kind !== "value" && p.kind !== "scheduled_event") {
+      const h = await wikidataOfficeHolder(fetch, officeInClaim);
+      if (h?.name) {
+        const age = ageOn(h.birth_date ?? "", now);
+        p.fact = `current ${officeInClaim}: ${h.name} (born ${h.birth_date || "?"}${age != null ? ", age " + age : ""}; in office since ${h.start_time || "?"})`;
+        p.source_url = h.url ?? "https://www.wikidata.org"; p.data = h;
+        p.verified = nameMatches(String(h.name), namedInClaim) ? true : "contradicted";
+        return p;
+      }
+    }
     if (p.kind === "office_holder") {
       const office = p.query.replace(/^(current holder of office:|holder of|current)\s*/i, "").trim() || p.entity;
       const h = (await wikidataOfficeHolder(fetch, office.toLowerCase())) ?? (await wikidataOfficeHolder(fetch, office));
@@ -244,8 +278,10 @@ export async function verifyPremise(p: Premise, fetch: Fetcher, now: Date): Prom
         p.source_url = person.url ?? ""; p.data = person;
         const claimL = p.claim.toLowerCase();
         if (dead && /\b(alive|vivo|in office|is president|is ceo|será|will be)\b/.test(claimL)) p.verified = "contradicted";
-        else if (/\b(president|ceo|prime minister|chancellor|governor|pope|mayor)\b/.test(claimL) &&
-          !["president", "chief executive", "ceo", "prime minister", "chancellor", "governor", "pope", "mayor"].some(k => pos.toLowerCase().includes(k))) p.verified = "contradicted";
+        else if (/\b(president|presidente|ceo|prime minister|primeiro-ministro|chancellor|governor|governador|pope|papa|mayor|prefeito|chair|chairman|chairwoman|secretary|minister|ministro|director|head of)\b/.test(claimL) &&
+          !["president", "chief executive", "ceo", "prime minister", "chancellor", "governor", "pope", "mayor", "chair", "secretary", "minister", "director", "head"].some(k => pos.toLowerCase().includes(k))) p.verified = "contradicted";
+        // a person record proves identity / alive — not that they hold an office or will do something
+        else if (/\b(currently|current|is the|in office|será|will be|remains|continua)\b/.test(claimL) && pos === "no current position recorded") p.verified = false;
         else p.verified = true;
         return p;
       }
@@ -326,6 +362,8 @@ const PEOPLE: Record<string, any> = {
   "elon musk": { name: "Elon Musk", qid: "Q317521", birth_date: "1971-06-28", death_date: null, current_positions: ["chief executive officer of Tesla, Inc.", "chief executive officer of SpaceX"], url: "https://www.wikidata.org/wiki/Q317521" },
   "luiz inácio lula da silva": { name: "Luiz Inácio Lula da Silva", qid: "Q37181", birth_date: "1945-10-27", death_date: null, current_positions: ["President of Brazil"], url: "https://www.wikidata.org/wiki/Q37181" },
   lula: { name: "Luiz Inácio Lula da Silva", qid: "Q37181", birth_date: "1945-10-27", death_date: null, current_positions: ["President of Brazil"], url: "https://www.wikidata.org/wiki/Q37181" },
+  "chair of the federal reserve": { name: "Kevin Warsh", qid: "Q6396720", birth_date: "1970-04-13", death_date: null, start_time: "2026-05-22", url: "https://www.wikidata.org/wiki/Q6396720" },
+  "jerome powell": { name: "Jerome Powell", qid: "Q6182718", birth_date: "1953-02-04", death_date: null, current_positions: [], url: "https://www.wikidata.org/wiki/Q6182718" },
   "pope francis": { name: "Pope Francis", qid: "Q450675", birth_date: "1936-12-17", death_date: "2025-04-21", current_positions: [], url: "https://www.wikidata.org/wiki/Q450675" },
 };
 /** Answers like Wikidata/Wikipedia/GDELT would on 2026-09-30, for the six acceptance cases (same as MockFetcher in Python). */
