@@ -144,13 +144,18 @@ export function carryStats() {
 
 const latestTs = () => (getDb().prepare("SELECT MAX(ts) AS t FROM hl_funding WHERE src = 'snapshot'").get() as any)?.t as number | null;
 
+/** Hyperliquid spot wraps majors as U-tokens (UBTC, UETH, USOL…): map them to the perp ticker. */
+const SPOT_ALIAS: Record<string, string> = { UBTC: "BTC", UETH: "ETH", USOL: "SOL", UFART: "FARTCOIN", UPUMP: "PUMP", UXPL: "XPL", UENA: "ENA", UDOGE: "DOGE", UXRP: "XRP", USUI: "SUI", UBONK: "BONK", ULINK: "LINK", UAVAX: "AVAX", UADA: "ADA", ULTC: "LTC" };
+export const spotBase = (b: string) => { const u = b.toUpperCase(); return SPOT_ALIAS[u] ?? u; };
+
 /** Latest funding for every perp on every dex, annualised, with the matching spot mark when one exists. */
 export function fundingMatrix(opts: { dex?: string; minVol?: number; delayH?: number } = {}) {
   ensureCarryTables();
   const d = getDb(); let t = latestTs(); if (!t) return { as_of: null, items: [] };
   if (opts.delayH) t = (d.prepare("SELECT MAX(ts) AS t FROM hl_funding WHERE src='snapshot' AND ts <= ?").get(t - opts.delayH * HOUR) as any)?.t ?? t;
   const rows = d.prepare("SELECT coin, dex, funding, premium, mark, oracle, oi, vol24 FROM hl_funding WHERE ts = ? AND src = 'snapshot'" + (opts.dex ? " AND dex = ?" : "")).all(...(opts.dex ? [t, opts.dex] : [t])) as any[];
-  const spot = new Map((d.prepare("SELECT base, mark, vol24 FROM hl_spot WHERE ts = ?").all(t) as any[]).map(r => [String(r.base).toUpperCase(), r]));
+  const spot = new Map<string, any>();
+  for (const r of d.prepare("SELECT base, mark, vol24 FROM hl_spot WHERE ts = ? ORDER BY vol24 ASC").all(t) as any[]) spot.set(spotBase(String(r.base)), r);   // most liquid pair wins
   const items = rows.filter(r => (r.vol24 ?? 0) >= (opts.minVol ?? 0)).map(r => {
     const { base } = splitCoin(r.coin); const sp = spot.get(base.toUpperCase());
     return { coin: r.coin, dex: r.dex, base, funding_1h: r.funding, funding_apr: r.funding == null ? null : Math.round(APR(r.funding) * 10000) / 10000, mark: r.mark, oi_usd: r.oi == null ? null : Math.round(r.oi), vol24_usd: r.vol24 == null ? null : Math.round(r.vol24), spot: sp ? { mark: sp.mark, vol24_usd: Math.round(sp.vol24 ?? 0) } : null };
@@ -165,7 +170,8 @@ export function crossDex(opts: { minVol?: number; delayH?: number; limit?: numbe
   const t = new Date(m.as_of).getTime(); const d = getDb();
   const avg = d.prepare("SELECT AVG(funding) AS a, SUM(CASE WHEN funding > 0 THEN 1 ELSE 0 END) * 1.0 / COUNT(*) AS pos, COUNT(*) AS n FROM hl_funding WHERE coin = ? AND ts > ? AND ts <= ?");
   const groups = new Map<string, any[]>();
-  for (const it of m.items) { if ((it.vol24_usd ?? 0) < (opts.minVol ?? 100_000)) continue; const k = it.base.toUpperCase(); (groups.get(k) ?? groups.set(k, []).get(k)!).push(it); }
+  // HIP-3 dexes only: a main-dex ticker is a different asset from a same-named HIP-3 listing (STX = Stacks on main, a stock on para)
+  for (const it of m.items) { if (it.dex === "main") continue; if ((it.vol24_usd ?? 0) < (opts.minVol ?? 100_000)) continue; const k = it.base.toUpperCase(); (groups.get(k) ?? groups.set(k, []).get(k)!).push(it); }
   const items: any[] = [];
   for (const [base, legs] of groups) {
     if (legs.length < 2) continue;
@@ -186,4 +192,19 @@ export function coinHistory(coin: string, hours = 24 * 30) {
   const since = Date.now() - Math.min(hours, 24 * 3650) * HOUR;
   const rows = getDb().prepare("SELECT ts, funding, premium, mark, oi, vol24, src FROM hl_funding WHERE coin = ? AND ts >= ? ORDER BY ts").all(coin, since) as any[];
   return { coin, ...splitCoin(coin), hours: rows.length, items: rows.map(r => ({ at: new Date(r.ts).toISOString(), funding_1h: r.funding, funding_apr: r.funding == null ? null : Math.round(APR(r.funding) * 10000) / 10000, premium: r.premium, mark: r.mark, oi_usd: r.oi == null ? null : Math.round(r.oi), vol24_usd: r.vol24 == null ? null : Math.round(r.vol24), src: r.src })) };
+}
+
+/** Spot × perp on the main dex: perp funding (now, 14 d, % positive hours) next to the spot market of the same asset and the
+ *  perp/spot basis. The classic cash-and-carry leg pair. Statistics, not a trade call. */
+export function spotPerp(opts: { minVol?: number; limit?: number } = {}) {
+  const m = fundingMatrix({ dex: "main" });
+  if (!m.as_of) return { as_of: null, items: [] };
+  const t = new Date(m.as_of).getTime(); const d = getDb();
+  const avg = d.prepare("SELECT AVG(funding) AS a, SUM(CASE WHEN funding > 0 THEN 1 ELSE 0 END) * 1.0 / COUNT(*) AS pos, COUNT(*) AS n FROM hl_funding WHERE coin = ? AND ts > ? AND ts <= ?");
+  const items = m.items.filter((i: any) => i.spot && (i.vol24_usd ?? 0) >= (opts.minVol ?? 100_000) && (i.spot.vol24_usd ?? 0) >= (opts.minVol ?? 100_000) / 10).map((i: any) => {
+    const a = avg.get(i.coin, t - 14 * 24 * HOUR, t) as any;
+    return { base: i.base, perp: i.coin, funding_apr: i.funding_apr, funding_apr_14d: a?.a == null ? null : Math.round(APR(a.a) * 10000) / 10000, hours_positive_14d: a?.pos == null ? null : Math.round(a.pos * 100) / 100, hours_14d: a?.n ?? 0,
+      perp_mark: i.mark, spot_mark: i.spot.mark, basis_pct: i.mark && i.spot.mark ? Math.round((i.mark / i.spot.mark - 1) * 100000) / 1000 : null, perp_vol24_usd: i.vol24_usd, spot_vol24_usd: i.spot.vol24_usd, oi_usd: i.oi_usd };
+  }).sort((a: any, b: any) => (b.funding_apr_14d ?? b.funding_apr ?? 0) - (a.funding_apr_14d ?? a.funding_apr ?? 0));
+  return { as_of: m.as_of, count: items.length, items: items.slice(0, opts.limit ?? 50) };
 }

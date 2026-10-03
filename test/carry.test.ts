@@ -11,7 +11,7 @@ describe("Carry Oracle data layer (Hyperliquid funding, all dexes)", () => {
         const f = b.dex === "xyz" ? "0.00004" : "0.00001";
         return json([{ universe: [{ name: `${b.dex}:NBIS` }] }, [{ funding: f, markPx: b.dex === "xyz" ? "100" : "100.5", openInterest: "1000", dayNtlVlm: "2000000" }]]);
       }
-      if (b.type === "spotMetaAndAssetCtxs") return json([{ universe: [{ name: "@1", tokens: [1, 0] }], tokens: [{ index: 0, name: "USDC" }, { index: 1, name: "BTC" }] }, [{ coin: "@1", markPx: "59990", dayNtlVlm: "1000000" }]]);
+      if (b.type === "spotMetaAndAssetCtxs") return json([{ universe: [{ name: "@1", tokens: [1, 0] }], tokens: [{ index: 0, name: "USDC" }, { index: 1, name: "UBTC" }] }, [{ coin: "@1", markPx: "59990", dayNtlVlm: "1000000" }]]);
       if (b.type === "fundingHistory") return json([{ coin: b.coin, fundingRate: "0.00002", premium: "0", time: Date.now() - 5 * 3600e3 }, { coin: b.coin, fundingRate: "0.00003", premium: "0", time: Date.now() - 4 * 3600e3 }]);
       return json(null);
     });
@@ -33,6 +33,9 @@ describe("Carry Oracle data layer (Hyperliquid funding, all dexes)", () => {
     expect(x.items[0].legs[0].dex).toBe("xyz");
     expect(x.items[0].spread_apr_now).toBeCloseTo((0.00004 - 0.00001) * 8760, 3);
     expect(c.coinHistory("xyz:NBIS").hours).toBe(3);
+    expect(x.items.every((i: any) => i.legs.every((l: any) => l.dex !== "main"))).toBe(true);
+    const sp = c.spotPerp({ minVol: 0 });
+    expect(sp.items[0].base).toBe("BTC"); expect(sp.items[0].spot_mark).toBe(59990);
     await c.backfillMissing(coins, 0);           // second pass: nothing to do
     expect(c.carryStats().backfill.rows).toBe(6);
   });

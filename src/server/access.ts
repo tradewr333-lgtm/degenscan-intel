@@ -66,6 +66,7 @@ export function decideAccess(req: FastifyRequest): Access | null {
   // Free daily quota is opt-in (header X-Free-Trial: 1) so that unauthenticated probes from indexers see a real 402.
   // MCP tools/call keeps the automatic quota (MCP clients can't easily add headers; registries probe initialize/tools/list only).
   const wantsTrial = String(req.headers["x-free-trial"] ?? "").trim() === "1" || (req.url.split("?")[0] === "/mcp");
-  if (wantsTrial && !req.headers["payment-signature"] && !req.headers["x-payment"] && underFreeQuota(req.ip)) return { method: "quota", payer: req.ip, price: 0 };
+  // the oracle (≈ US$0.25 of model cost per answer) is never part of the free quota — key, plan or x402 only (Construtor 04/10)
+  if (wantsTrial && tool !== "oracle_forecast" && !req.headers["payment-signature"] && !req.headers["x-payment"] && underFreeQuota(req.ip)) return { method: "quota", payer: req.ip, price: 0 };
   return null;
 }
