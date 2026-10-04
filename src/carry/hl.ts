@@ -11,10 +11,10 @@ import { getDb } from "../store/db.js";
 import { UA } from "../ingest/http.js";
 
 const HL_INFO = process.env.HYPERLIQUID_INFO_URL ?? "https://api.hyperliquid.xyz/info";
-const HOUR = 3_600_000;
+export const HOUR = 3_600_000;
 export const APR = (hourly: number) => hourly * 24 * 365;
 
-async function info<T = any>(body: Record<string, unknown>, timeoutMs = 15_000): Promise<T> {
+export async function info<T = any>(body: Record<string, unknown>, timeoutMs = 15_000): Promise<T> {
   const r = await fetch(HL_INFO, { method: "POST", headers: { "content-type": "application/json", "user-agent": UA }, body: JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs) });
   if (!r.ok) throw new Error(`HL ${r.status} ${JSON.stringify(body).slice(0, 60)}`);
   return r.json() as Promise<T>;
@@ -39,6 +39,10 @@ export function ensureCarryTables() {
     );
     CREATE INDEX IF NOT EXISTS idx_hls_base_ts ON hl_spot(base, ts);
     CREATE TABLE IF NOT EXISTS hl_backfill (coin TEXT PRIMARY KEY, done_at TEXT NOT NULL, rows INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS hl_markets (
+      coin TEXT PRIMARY KEY, dex TEXT NOT NULL, status TEXT NOT NULL, growth_mode TEXT, max_leverage INTEGER,
+      first_seen INTEGER NOT NULL, last_seen INTEGER NOT NULL, delisted_seen INTEGER
+    );
   `);
   ready = true;
 }
@@ -57,12 +61,16 @@ export async function snapshot(now = Date.now()): Promise<string[]> {
   const dexes: (string | null)[] = ((await info<any[]>({ type: "perpDexs" })) ?? []).map(d => (d && d.name) || null);
   const ins = getDb().prepare("INSERT OR REPLACE INTO hl_funding (coin, dex, ts, funding, premium, mark, oracle, oi, vol24, src) VALUES (?,?,?,?,?,?,?,?,?, 'snapshot')");
   const coins: string[] = []; let perps = 0;
+  const mk = getDb().prepare(`INSERT INTO hl_markets (coin, dex, status, growth_mode, max_leverage, first_seen, last_seen, delisted_seen) VALUES (?,?,?,?,?,?,?,?)
+    ON CONFLICT(coin) DO UPDATE SET status = excluded.status, growth_mode = excluded.growth_mode, max_leverage = excluded.max_leverage, last_seen = excluded.last_seen,
+    delisted_seen = COALESCE(hl_markets.delisted_seen, excluded.delisted_seen)`);
   for (const dex of dexes) {
     const m = await info<any[]>(dex ? { type: "metaAndAssetCtxs", dex } : { type: "metaAndAssetCtxs" });
     const uni: any[] = m?.[0]?.universe ?? [], ctx: any[] = m?.[1] ?? [];
     const db = getDb(); db.exec("BEGIN");
     try {
       uni.forEach((u, i) => {
+        mk.run(String(u.name), dex ?? "main", u?.isDelisted ? "delisted" : "active", u?.growthMode ?? null, num(u?.maxLeverage), ts, ts, u?.isDelisted ? ts : null);
         if (u?.isDelisted) return;
         const c = ctx[i] ?? {}; const mark = num(c.markPx);
         ins.run(String(u.name), dex ?? "main", ts, num(c.funding), num(c.premium), mark, num(c.oraclePx), mark != null && num(c.openInterest) != null ? mark * Number(c.openInterest) : null, num(c.dayNtlVlm));
@@ -120,7 +128,8 @@ export function startCarryCollector() {
   ensureCarryTables();
   let lastHour = -1;
   const run = async () => {
-    try { const coins = await snapshot(); backfillMissing(coins).catch(e => console.warn("[carry] backfill:", (e as Error).message)); }
+    try { const coins = await snapshot(); backfillMissing(coins).catch(e => console.warn("[carry] backfill:", (e as Error).message));
+      import("./desk.js").then(m => m.hourlyDesk()).catch(e => console.warn("[carry] desk:", (e as Error).message)); }
     catch (e) { lastSnapshot = { ...(lastSnapshot ?? { perps: 0, spot: 0, dexes: [] }), at: lastSnapshot?.at ?? "", error: (e as Error).message }; console.warn("[carry] snapshot:", (e as Error).message); }
   };
   setTimeout(() => { lastHour = Math.floor(Date.now() / HOUR); run(); }, 60_000);
@@ -155,10 +164,10 @@ export function fundingMatrix(opts: { dex?: string; minVol?: number; delayH?: nu
   if (opts.delayH) t = (d.prepare("SELECT MAX(ts) AS t FROM hl_funding WHERE src='snapshot' AND ts <= ?").get(t - opts.delayH * HOUR) as any)?.t ?? t;
   const rows = d.prepare("SELECT coin, dex, funding, premium, mark, oracle, oi, vol24 FROM hl_funding WHERE ts = ? AND src = 'snapshot'" + (opts.dex ? " AND dex = ?" : "")).all(...(opts.dex ? [t, opts.dex] : [t])) as any[];
   const spot = new Map<string, any>();
-  for (const r of d.prepare("SELECT base, mark, vol24 FROM hl_spot WHERE ts = ? ORDER BY vol24 ASC").all(t) as any[]) spot.set(spotBase(String(r.base)), r);   // most liquid pair wins
+  for (const r of d.prepare("SELECT pair, base, mark, vol24 FROM hl_spot WHERE ts = ? ORDER BY vol24 ASC").all(t) as any[]) spot.set(spotBase(String(r.base)), r);   // most liquid pair wins
   const items = rows.filter(r => (r.vol24 ?? 0) >= (opts.minVol ?? 0)).map(r => {
     const { base } = splitCoin(r.coin); const sp = spot.get(base.toUpperCase());
-    return { coin: r.coin, dex: r.dex, base, funding_1h: r.funding, funding_apr: r.funding == null ? null : Math.round(APR(r.funding) * 10000) / 10000, mark: r.mark, oi_usd: r.oi == null ? null : Math.round(r.oi), vol24_usd: r.vol24 == null ? null : Math.round(r.vol24), spot: sp ? { mark: sp.mark, vol24_usd: Math.round(sp.vol24 ?? 0) } : null };
+    return { coin: r.coin, dex: r.dex, base, funding_1h: r.funding, funding_apr: r.funding == null ? null : Math.round(APR(r.funding) * 10000) / 10000, mark: r.mark, oi_usd: r.oi == null ? null : Math.round(r.oi), vol24_usd: r.vol24 == null ? null : Math.round(r.vol24), spot: sp ? { pair: sp.pair, mark: sp.mark, vol24_usd: Math.round(sp.vol24 ?? 0) } : null };
   }).sort((a, b) => Math.abs(b.funding_apr ?? 0) - Math.abs(a.funding_apr ?? 0));
   return { as_of: new Date(t as number).toISOString(), count: items.length, items };
 }
@@ -204,7 +213,58 @@ export function spotPerp(opts: { minVol?: number; limit?: number } = {}) {
   const items = m.items.filter((i: any) => i.spot && (i.vol24_usd ?? 0) >= (opts.minVol ?? 100_000) && (i.spot.vol24_usd ?? 0) >= (opts.minVol ?? 100_000) / 10).map((i: any) => {
     const a = avg.get(i.coin, t - 14 * 24 * HOUR, t) as any;
     return { base: i.base, perp: i.coin, funding_apr: i.funding_apr, funding_apr_14d: a?.a == null ? null : Math.round(APR(a.a) * 10000) / 10000, hours_positive_14d: a?.pos == null ? null : Math.round(a.pos * 100) / 100, hours_14d: a?.n ?? 0,
-      perp_mark: i.mark, spot_mark: i.spot.mark, basis_pct: i.mark && i.spot.mark ? Math.round((i.mark / i.spot.mark - 1) * 100000) / 1000 : null, perp_vol24_usd: i.vol24_usd, spot_vol24_usd: i.spot.vol24_usd, oi_usd: i.oi_usd };
+      perp_mark: i.mark, spot_mark: i.spot.mark, spot_pair: i.spot.pair, basis_pct: i.mark && i.spot.mark ? Math.round((i.mark / i.spot.mark - 1) * 100000) / 1000 : null, perp_vol24_usd: i.vol24_usd, spot_vol24_usd: i.spot.vol24_usd, oi_usd: i.oi_usd };
   }).sort((a: any, b: any) => (b.funding_apr_14d ?? b.funding_apr ?? 0) - (a.funding_apr_14d ?? a.funding_apr ?? 0));
   return { as_of: m.as_of, count: items.length, items: items.slice(0, opts.limit ?? 50) };
+}
+
+/** Funding extremes with NO hedge leg on Hyperliquid (no spot market, no same-ticker listing on another HIP-3 dex). Raw data, not a call. */
+export function naked(opts: { minAbsApr?: number; minVol?: number; limit?: number } = {}) {
+  const thr = opts.minAbsApr ?? 0.5;
+  const m = fundingMatrix();
+  if (!m.as_of) return { as_of: null, threshold_apr: thr, items: [] };
+  const t = new Date(m.as_of).getTime(); const d = getDb();
+  const hip3Bases = new Map<string, number>();
+  for (const i of m.items) if (i.dex !== "main") hip3Bases.set(i.base.toUpperCase(), (hip3Bases.get(i.base.toUpperCase()) ?? 0) + 1);
+  const st = d.prepare("SELECT AVG(funding) AS a, SUM(CASE WHEN ABS(funding) * 8760 >= ? THEN 1 ELSE 0 END) AS above, COUNT(*) AS n FROM hl_funding WHERE coin = ? AND ts > ? AND ts <= ?");
+  const items = m.items.filter((i: any) => Math.abs(i.funding_apr ?? 0) >= thr && (i.vol24_usd ?? 0) >= (opts.minVol ?? 0)).flatMap((i: any) => {
+    const xdexPair = i.dex !== "main" && (hip3Bases.get(i.base.toUpperCase()) ?? 0) > 1;
+    if (i.spot || xdexPair) return [];
+    const a = st.get(thr, i.coin, t - 14 * 24 * HOUR, t) as any;
+    return [{ coin: i.coin, dex: i.dex, funding_apr_now: i.funding_apr, funding_apr_14d: a?.a == null ? null : Math.round(APR(a.a) * 10000) / 10000, hours_above_threshold_14d: a?.above ?? 0, hours_14d: a?.n ?? 0, oi_usd: i.oi_usd, vol24h_usd: i.vol24_usd, why_no_hedge: i.dex === "main" ? "no_spot" : "no_spot_no_xdex_pair" }];
+  });
+  return { as_of: m.as_of, threshold_apr: thr, count: items.length, items: items.slice(0, opts.limit ?? 100) };
+}
+
+/** Health of every Hyperliquid perp market and dex: status, OI/volume and their 7-day change, growth mode, risk flags. */
+export function watchdog() {
+  ensureCarryTables();
+  const d = getDb(); const t = latestTs(); if (!t) return { as_of: null, dexes: [], markets: [] };
+  const t7 = t - 7 * 24 * HOUR;
+  const rows = d.prepare(`SELECT m.coin, m.dex, m.status, m.growth_mode, m.max_leverage, m.first_seen, m.last_seen, m.delisted_seen,
+      f.oi, f.vol24, f.ts AS fts, (SELECT oi FROM hl_funding WHERE coin = m.coin AND src = 'snapshot' AND ts <= ? ORDER BY ts DESC LIMIT 1) AS oi7,
+      (SELECT vol24 FROM hl_funding WHERE coin = m.coin AND src = 'snapshot' AND ts <= ? ORDER BY ts DESC LIMIT 1) AS vol7,
+      (SELECT MAX(ts) FROM hl_funding WHERE coin = m.coin) AS last_funding
+    FROM hl_markets m LEFT JOIN hl_funding f ON f.coin = m.coin AND f.ts = ? AND f.src = 'snapshot'`).all(t7, t7, t) as any[];
+  const pct = (a: number | null, b: number | null) => a != null && b ? Math.round((a / b - 1) * 1000) / 10 : null;
+  const markets = rows.map(r => {
+    const status = r.status === "delisted" ? "delisted" : (r.oi ?? 0) <= 0 ? "zero_oi" : "active";
+    const oi7 = pct(r.oi, r.oi7), vol7 = pct(r.vol24, r.vol7); const flags: string[] = [];
+    if (oi7 != null && oi7 <= -50) flags.push("oi_down_50pct_7d");
+    if (status === "active" && (r.vol24 ?? 0) < 100_000) flags.push("vol_below_100k");
+    if (r.delisted_seen && t - r.delisted_seen < 7 * 24 * HOUR) flags.push("delisted_recently");
+    return { coin: r.coin, dex: r.dex, status, growth_mode: r.growth_mode, max_leverage: r.max_leverage, oi_usd: r.oi == null ? null : Math.round(r.oi), oi_change_7d_pct: oi7,
+      vol24h_usd: r.vol24 == null ? null : Math.round(r.vol24), vol_change_7d_pct: vol7, last_funding_at: r.last_funding ? new Date(r.last_funding).toISOString() : null,
+      tracked_since: new Date(r.first_seen).toISOString(), risk_flags: flags };
+  });
+  const byDex = new Map<string, any>();
+  for (const mk of markets) { const x = byDex.get(mk.dex) ?? { dex: mk.dex, markets: 0, active: 0, zero_oi: 0, delisted: 0, oi_usd: 0, vol24h_usd: 0 }; x.markets++; x[mk.status]++; x.oi_usd += mk.oi_usd ?? 0; x.vol24h_usd += mk.vol24h_usd ?? 0; byDex.set(mk.dex, x); }
+  const dexes = [...byDex.values()].map(x => ({ ...x, risk_flags: x.active === 0 ? ["dex_no_active_markets"] : [] })).sort((a, b) => b.vol24h_usd - a.vol24h_usd);
+  return { as_of: new Date(t).toISOString(), note: "7-day changes need 7 days of hourly snapshots (recorded since 2026-10-03); null until then.", dexes, markets: markets.sort((a, b) => (b.vol24h_usd ?? 0) - (a.vol24h_usd ?? 0)) };
+}
+
+// ------------------------------------------------------------------ waitlist (Carry Desk) — no payment, no sequence
+export function ensureWaitlist() {
+  getDb().exec(`CREATE TABLE IF NOT EXISTS carry_waitlist (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL, email TEXT UNIQUE NOT NULL, name TEXT,
+    profile TEXT, capital_range TEXT, venues TEXT, tier_interest TEXT, lang TEXT, source TEXT, ip_hash TEXT)`);
 }

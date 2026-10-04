@@ -12,6 +12,9 @@ describe("Carry Oracle data layer (Hyperliquid funding, all dexes)", () => {
         return json([{ universe: [{ name: `${b.dex}:NBIS` }] }, [{ funding: f, markPx: b.dex === "xyz" ? "100" : "100.5", openInterest: "1000", dayNtlVlm: "2000000" }]]);
       }
       if (b.type === "spotMetaAndAssetCtxs") return json([{ universe: [{ name: "@1", tokens: [1, 0] }], tokens: [{ index: 0, name: "USDC" }, { index: 1, name: "UBTC" }] }, [{ coin: "@1", markPx: "59990", dayNtlVlm: "1000000" }]]);
+      if (b.type === "candleSnapshot") { const n = 340, now = Date.now(); const base = b.req.coin.includes("NBIS") ? 100 : 60000;
+        return json(Array.from({ length: n }, (_, i) => ({ t: now - (n - i) * 3600e3, c: String(base * (1 + 0.01 * Math.sin(i / 5)) * (b.req.coin.startsWith("io:") ? 1.001 : 1)) }))); }
+      if (b.type === "l2Book") return json({ levels: [[{ px: "99.99", sz: "5000" }, { px: "99.9", sz: "5000" }], [{ px: "100.01", sz: "5000" }, { px: "100.1", sz: "5000" }]] });
       if (b.type === "fundingHistory") return json([{ coin: b.coin, fundingRate: "0.00002", premium: "0", time: Date.now() - 5 * 3600e3 }, { coin: b.coin, fundingRate: "0.00003", premium: "0", time: Date.now() - 4 * 3600e3 }]);
       return json(null);
     });
@@ -63,5 +66,104 @@ describe("Carry Oracle toll: flat US$100/month, no metering", () => {
     k.activatePackKey(u.id, "0xtx"); expect(k.carryAccess(u.key).ok).toBe(true);
     // a carry key has no budget on the metered tools
     expect(k.validateKey(c.key)?.remaining ?? 0).toBe(0);
+  });
+});
+
+describe("Carry Lote A: naked, watchdog, waitlist, docs, discovery", () => {
+  it("naked lists unhedgeable extremes; watchdog reports markets incl. delisted; both gated", async () => {
+    const c = await import("../src/carry/hl.js");
+    const { getDb } = await import("../src/store/db.js");
+    c.ensureCarryTables(); getDb().exec("DELETE FROM hl_funding; DELETE FROM hl_spot; DELETE FROM hl_backfill; DELETE FROM hl_markets;");
+    await c.snapshot();
+    const n = c.naked({ minAbsApr: 0.1 });            // xyz:NBIS 0.00004*8760 = 35 % but it has an io pair → excluded; BTC has spot → excluded
+    expect(n.items.find((i: any) => i.coin === "xyz:NBIS")).toBeUndefined();
+    expect(n.items.find((i: any) => i.coin === "BTC")).toBeUndefined();
+    const w = c.watchdog();
+    expect(w.markets.find((m: any) => m.coin === "OLD")?.status).toBe("delisted");
+    expect(w.dexes.find((d: any) => d.dex === "main")?.markets).toBe(2);
+    const { buildHttp } = await import("../src/server/http.js");
+    const app = await buildHttp();
+    expect((await app.inject({ url: "/v1/carry/naked" })).statusCode).toBe(402);
+    expect((await app.inject({ url: "/v1/carry/watchdog" })).statusCode).toBe(402);
+  });
+  it("waitlist stores a contact (dedup by email), rejects bad email, honeypot silently ignored", async () => {
+    const { buildHttp } = await import("../src/server/http.js");
+    const { getDb } = await import("../src/store/db.js");
+    const app = await buildHttp();
+    const post = (b: any) => app.inject({ method: "POST", url: "/v1/carry/waitlist", payload: b });
+    expect((await post({ email: "bad" })).statusCode).toBe(400);
+    expect((await post({ email: "a@fund.xyz", profile: "fund", tier_interest: "desk", lang: "en" })).statusCode).toBe(201);
+    expect((await post({ email: "A@fund.xyz", profile: "vault" })).statusCode).toBe(201);
+    expect((await post({ email: "bot@spam.xyz", website: "http://x" })).statusCode).toBe(201);
+    const rows = getDb().prepare("SELECT email, profile FROM carry_waitlist").all() as any[];
+    expect(rows.filter(r => r.email === "a@fund.xyz")).toHaveLength(1);
+    expect(rows.find(r => r.email === "bot@spam.xyz")).toBeUndefined();
+    expect((await app.inject({ url: "/v1/admin/carry/waitlist" })).statusCode).toBe(401);
+  });
+  it("docs page, llms.txt, stats tiers and MCP carry tools expose the product", async () => {
+    const { buildHttp } = await import("../src/server/http.js");
+    const app = await buildHttp();
+    const docs = await app.inject({ url: "/docs/carry" });
+    expect(docs.statusCode).toBe(200); expect(docs.body).toContain("Field dictionary"); expect(docs.body).toContain("/v1/carry/xdex");
+    expect((await app.inject({ url: "/llms.txt" })).body).toContain("/v1/carry/funding-matrix");
+    expect((await app.inject({ url: "/v1/carry/stats" })).json().tiers[0].name).toBe("Carry Data");
+    expect((await app.inject({ url: "/carry" })).body).toContain("Lista de espera do Carry Desk");
+    const { buildMcpServer } = await import("../src/server/mcp.js");
+    const s: any = buildMcpServer({});
+    const tool = s._registeredTools?.carry_xdex;
+    expect(tool).toBeTruthy();
+    const r = await tool.handler({}, {});
+    expect(JSON.parse(r.content[0].text).error).toBe("subscription_required");
+  });
+});
+
+
+describe("Carry Desk (Lote B): eligibility, capacity, realized, after-hours, alerts, gating", () => {
+  it("computes the desk analytics on the stored data", async () => {
+    const c = await import("../src/carry/hl.js");
+    const { getDb } = await import("../src/store/db.js");
+    c.ensureCarryTables(); getDb().exec("DELETE FROM hl_funding; DELETE FROM hl_spot; DELETE FROM hl_backfill; DELETE FROM hl_markets;");
+    const coins = await c.snapshot(); await c.backfillMissing(coins, 0);
+    const d = await import("../src/carry/desk.js");
+    const el = await d.eligible({ min_liq: 0 }, { minVol: 0 });
+    const x = el.items.find((i: any) => i.kind === "xdex");
+    expect(x.legs[0].coin).toBe("xyz:NBIS"); expect(x.legs[0].side).toBe("short");
+    expect(x.checks.corr_1h_14d.value).toBeGreaterThan(0.99);
+    expect(x.checks).toHaveProperty("breakeven_days_taker");
+    expect(el.items.some((i: any) => i.kind === "spot_perp")).toBe(true);
+    const cap = await d.capacity({ capital: 100000, lev: 3, maxPairs: 2 });
+    expect(cap.items[0].legs[0].depth_bps20_usd).toBeGreaterThan(0);
+    expect(cap.allocation.capital_usd).toBe(100000);
+    const r = await d.realized(x.pair_key);
+    expect(r.windows.map((w: any) => w.hours)).toEqual([168, 336, 720]);
+    expect(r.windows[0].fees_pct).toBeCloseTo(0.18, 5);
+    const ah = await d.afterhours();
+    expect(Array.isArray(ah.items)).toBe(true);
+    const close = d.lastUsClose(new Date("2026-10-03T12:00:00Z"));           // Saturday → Friday 02/10 16:00 ET = 20:00 UTC
+    expect(close.toISOString()).toBe("2026-10-02T20:00:00.000Z");
+  });
+  it("desk routes need a desk key; a data key gets 403; alerts are created signed and listed", async () => {
+    const { buildHttp } = await import("../src/server/http.js");
+    const k = await import("../src/server/keys.js");
+    const app = await buildHttp();
+    expect((await app.inject({ url: "/v1/carry/eligible" })).statusCode).toBe(402);
+    const data = k.createCarryKey({ via: "stripe", stripe_subscription: "sub_d1" });
+    expect((await app.inject({ url: "/v1/carry/eligible", headers: { "x-api-key": data.key } })).statusCode).toBe(403);
+    const desk = k.createCarryKey({ via: "stripe", tier: "desk", stripe_subscription: "sub_desk1" });
+    expect(desk.key.startsWith("dsi_carrydesk_")).toBe(true);
+    expect((await app.inject({ url: "/v1/carry/funding-matrix", headers: { "x-api-key": desk.key } })).statusCode).toBe(200);   // desk includes data
+    const a = await app.inject({ method: "POST", url: "/v1/carry/alerts", headers: { "x-api-key": desk.key }, payload: { type: "eligible_on", target: "https://example.org/hook" } });
+    expect(a.statusCode).toBe(201); expect(a.json().secret.startsWith("whsec_")).toBe(true);
+    expect((await app.inject({ method: "POST", url: "/v1/carry/alerts", headers: { "x-api-key": desk.key }, payload: { type: "bogus", target: "https://x.org" } })).statusCode).toBe(400);
+    expect((await app.inject({ url: "/v1/carry/alerts", headers: { "x-api-key": desk.key } })).json().items).toHaveLength(1);
+    const seats = k.deskSeats(); expect(seats.total).toBe(25); expect(seats.used).toBeGreaterThanOrEqual(1); expect(seats.open).toBe(false);
+    k.setCarrySetting("desk_open", "1"); expect(k.deskSeats().open).toBe(true); k.setCarrySetting("desk_open", "0");
+    expect((await app.inject({ url: "/carry" })).body).toContain("Carry Desk");
+    expect((await app.inject({ url: "/docs/carry" })).body).toContain('id="method"');
+    k.revokeBySubscription("sub_desk1"); expect(k.deskAccess(desk.key).ok).toBe(false);
+  });
+  it("carry tools are priced for pay-per-call and pack credits", async () => {
+    const p = await import("../src/server/pricing.js");
+    expect(p.PRICES.carry_xdex).toBe(0.05); expect(p.creditsFor("carry_xdex")).toBe(50); expect(p.CREDITS_SQL).toContain("carry_funding_matrix");
   });
 });

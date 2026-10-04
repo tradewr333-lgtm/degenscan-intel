@@ -144,7 +144,7 @@ describe("oracle HTTP (async jobs, board, resolve, discovery)", () => {
     const s: any = buildMcpServer();
     const names = Object.keys(s._registeredTools ?? {});
     expect(names).toEqual(expect.arrayContaining(["oracle_forecast", "oracle_get", "oracle_board", "oracle_track_record"]));
-    expect(names.length).toBe(24);
+    expect(names.length).toBe(30);
   });
 });
 

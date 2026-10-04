@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import Stripe from "stripe";
-import { createKey, findBySession, revokeBySubscription, PLANS, PACKS, type Plan, CARRY, createCarryKey } from "./keys.js";
+import { createKey, findBySession, revokeBySubscription, PLANS, PACKS, type Plan, CARRY, CARRY_DESK, deskSeats, createCarryKey } from "./keys.js";
 
 /**
  * Fiat subscriptions for agents/operators without a crypto wallet.
@@ -92,6 +92,35 @@ export function installStripe(app: FastifyInstance) {
     return reply.redirect(session.url!);
   });
 
+  // Carry Desk by card: monthly US$450 / yearly US$4,500, created once by lookup_key. Respects seats and the operator's open switch.
+  const deskPrice: Record<string, string | null> = { month: null, year: null };
+  const ensureDeskPrice = async (interval: "month" | "year") => {
+    if (deskPrice[interval]) return deskPrice[interval]!;
+    const lk = interval === "year" ? CARRY_DESK.lookup_year : CARRY_DESK.lookup_month;
+    const found = await stripe.prices.list({ lookup_keys: [lk], active: true, limit: 1 });
+    if (found.data[0]) return (deskPrice[interval] = found.data[0].id);
+    const prods = await stripe.products.search({ query: `name:'${CARRY_DESK.product_name}'` }).catch(() => ({ data: [] as any[] }));
+    const product = prods.data[0] ?? await stripe.products.create({ name: CARRY_DESK.product_name, description: "Carry Desk: everything in Carry Data plus eligibility filters, per-pair capacity, net realized carry, after-hours premium and webhook alerts. Limited seats. Data and analytics only — not investment advice." });
+    const price = await stripe.prices.create({ product: product.id, unit_amount: (interval === "year" ? CARRY_DESK.usd_year : CARRY_DESK.usd_month) * 100, currency: "usd", recurring: { interval }, lookup_key: lk });
+    console.log(`[stripe] created Carry Desk ${interval} price ${price.id}`);
+    return (deskPrice[interval] = price.id);
+  };
+  app.post("/v1/admin/carry/desk/prices", async (req: any, reply) => {
+    if (!process.env.ORACLE_OPERATOR_KEY || req.headers["x-operator-key"] !== process.env.ORACLE_OPERATOR_KEY) return reply.code(401).send({ error: "operator key required" });
+    return { month: await ensureDeskPrice("month"), year: await ensureDeskPrice("year"), data: await ensureCarryPrice() };
+  });
+  app.get("/v1/carry/desk/checkout", async (req: any, reply) => {
+    const seats = deskSeats();
+    if (!seats.open || seats.available <= 0) return reply.redirect(`${PUBLIC_URL}/carry#desk`);
+    const interval = req.query?.interval === "year" ? "year" : "month";
+    const session = await stripe.checkout.sessions.create({
+      mode: "subscription", line_items: [{ price: await ensureDeskPrice(interval), quantity: 1 }], customer_email: req.query?.email || undefined, allow_promotion_codes: false,
+      success_url: `${PUBLIC_URL}/v1/keys/claim?session_id={CHECKOUT_SESSION_ID}`, cancel_url: `${PUBLIC_URL}/carry`,
+      metadata: { plan: "carry_desk" }, subscription_data: { metadata: { plan: "carry_desk" } },
+    });
+    return reply.redirect(session.url!);
+  });
+
   /** Mint the key once the session is paid. Idempotent: second call says it was already claimed. */
   app.get("/v1/keys/claim", async (req: any, reply) => {
     const sid = String(req.query.session_id ?? "");
@@ -99,10 +128,11 @@ export function installStripe(app: FastifyInstance) {
     if (findBySession(sid)) return reply.code(409).send({ error: "key already claimed for this session — it was shown once; contact contact@degenscan.io to rotate" });
     const s = await stripe.checkout.sessions.retrieve(sid);
     if (s.payment_status !== "paid" && s.status !== "complete") return reply.code(402).send({ error: "session not paid" });
-    if (s.metadata?.plan === "carry") {
-      const { id, key } = createCarryKey({ via: "stripe", stripe_customer: String(s.customer ?? ""), stripe_subscription: String(s.subscription ?? ""), stripe_session: sid, email: s.customer_details?.email ?? undefined });
-      const body = { api_key: key, key_id: id, plan: "carry", product: `Carry Oracle — US$${CARRY.usd_month}/month, unlimited /v1/carry/* calls`, usage: `send header  X-API-KEY: ${key}  on /v1/carry/*`, docs: `${PUBLIC_URL}/carry`, note: "Shown once. Store it now. Cancelling the subscription revokes the key." };
-      if ((req.headers.accept ?? "").includes("text/html")) return reply.type("text/html").send(`<!doctype html><meta charset=utf-8><title>Carry Oracle — API key</title><body style="font-family:system-ui;max-width:640px;margin:40px auto;padding:0 16px"><h2>Sua chave do Carry Oracle</h2><pre style="background:#111;color:#0f0;padding:16px;border-radius:8px;overflow:auto">${key}</pre><p>Envie no cabeçalho <code>X-API-KEY</code> em <code>/v1/carry/*</code>. <b>Aparece uma vez só — guarde agora.</b></p><p><a href="${PUBLIC_URL}/carry">Documentação</a></p><p style="color:#666">Dados e analítica de mercado, não é recomendação de investimento.</p></body>`);
+    if (s.metadata?.plan === "carry" || s.metadata?.plan === "carry_desk") {
+      const desk = s.metadata?.plan === "carry_desk";
+      const { id, key } = createCarryKey({ via: "stripe", tier: desk ? "desk" : "data", stripe_customer: String(s.customer ?? ""), stripe_subscription: String(s.subscription ?? ""), stripe_session: sid, email: s.customer_details?.email ?? undefined });
+      const body = { api_key: key, key_id: id, plan: desk ? "carry_desk" : "carry", product: desk ? `Carry Desk — US$${CARRY_DESK.usd_month}/month (or yearly), all /v1/carry/* routes incl. desk + alerts` : `Carry Oracle — US$${CARRY.usd_month}/month, unlimited /v1/carry/* calls`, usage: `send header  X-API-KEY: ${key}  on /v1/carry/*`, docs: `${PUBLIC_URL}/carry`, note: "Shown once. Store it now. Cancelling the subscription revokes the key." };
+      if ((req.headers.accept ?? "").includes("text/html")) return reply.type("text/html").send(`<!doctype html><meta charset=utf-8><title>Carry Oracle — API key</title><body style="font-family:system-ui;max-width:640px;margin:40px auto;padding:0 16px"><h2>Sua chave do ${desk ? "Carry Desk" : "Carry Oracle"}</h2><pre style="background:#111;color:#0f0;padding:16px;border-radius:8px;overflow:auto">${key}</pre><p>Envie no cabeçalho <code>X-API-KEY</code> em <code>/v1/carry/*</code>. <b>Aparece uma vez só — guarde agora.</b></p><p><a href="${PUBLIC_URL}/carry">Documentação</a></p><p style="color:#666">Dados e analítica de mercado, não é recomendação de investimento.</p></body>`);
       return body;
     }
     const plan = ((s.metadata?.plan as Plan) ?? "starter");

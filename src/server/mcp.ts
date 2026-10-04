@@ -7,13 +7,15 @@ import { ForecastRequest, DISCLAIMER } from "../oracle/schema.js";
 import { enqueueForecast, _queue } from "../oracle/queue.js";
 import { boardLatest, getForecast, getJob, recentForecasts, trackRecord } from "../oracle/ledger.js";
 import { llmConfigured } from "../oracle/llm.js";
+import { carryAccess, CARRY } from "./keys.js";
+import { fundingMatrix, crossDex, spotPerp, coinHistory, naked, watchdog } from "../carry/hl.js";
 
 const json = (x: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(x) }], structuredContent: x as Record<string, unknown> });
 const fail = (e: unknown) => ({ content: [{ type: "text" as const, text: `error: ${(e as Error).message}` }], isError: true });
 
 /** Build the MCP server. One instance per stateless HTTP request is fine (cheap). */
-export function buildMcpServer() {
-  const s = new McpServer({ name: "degenscan-intel", version: "0.10.30" }, {
+export function buildMcpServer(ctx: { carryKey?: string; operator?: boolean; carryPaid?: boolean } = {}) {
+  const s = new McpServer({ name: "degenscan-intel", version: "0.10.32" }, {
     instructions: [
       "Degenscan Intel: cross-asset event feed for trading agents. Events are normalized from ~40 primary sources (SEC, Fed, Federal Register, USGS, NHC, Nasdaq halts, DefiLlama, Polymarket…) and scored against an exposure graph into per-asset impacts.",
       "Cheapest probe: pulse ($0.001). One-call briefing per asset: brief ($0.10). Typical loop: regime_snapshot → events_since(since='4h', universe=[your book]) → impact_for(asset_id) for anything with confidence ≥ 0.4 → check tradable_now / next_open before acting. For prediction markets: polymarket_context(market) → compare yes_prob with fresh primary-source events.",
@@ -165,6 +167,20 @@ export function buildMcpServer() {
     title: "Sources status", description: "Transparency report on the ~40 data connectors: tier (primary/media), cadence, last successful run, items ingested, last error. Use it to judge freshness before trusting a quiet feed, or to see which sources are best-effort. Free.",
     inputSchema: {}, annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   }, async () => json(sources()));
+
+  // ---- Carry Oracle (subscription, flat US$100/month): the tools answer subscription_required without a live dsi_carry_ key.
+  const carryGuard = (fn: () => unknown) => {
+    const ok = ctx.operator || ctx.carryPaid || carryAccess(ctx.carryKey).ok;
+    if (!ok) return json({ error: "subscription_required", product: "Carry Oracle", price: `US$${CARRY.usd_month}/month flat, unlimited calls`, pay_card: "https://intel.degenscan.io/v1/carry/checkout", pay_usdc: "POST https://intel.degenscan.io/v1/keys/x402/carry_month (x402, 100 USDC = 30 days)", then: "send X-API-KEY: dsi_carry_… on the MCP request — or pay this call with x402 (USDC)", docs: "https://intel.degenscan.io/docs/carry", disclaimer: "Market data and analytics only — not a signal, not investment advice." });
+    try { return json({ ...(fn() as object), disclaimer: "Market data and analytics only — not a signal, not investment advice." }); } catch (e) { return fail(e); }
+  };
+  const ro = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true };
+  s.registerTool("carry_funding_matrix", { title: "Carry: funding matrix", description: "Current annualised funding for every perp on every Hyperliquid dex (main + HIP-3), with OI, 24h volume and spot mark when it exists. Data, not a signal. Requires a Carry Oracle key (US$100/month).", inputSchema: { dex: z.string().optional(), min_vol: z.number().optional() }, annotations: ro }, async (a: any) => carryGuard(() => fundingMatrix({ dex: a.dex, minVol: a.min_vol ?? 0 })));
+  s.registerTool("carry_xdex", { title: "Carry: cross-dex spreads", description: "Same ticker listed on 2+ HIP-3 dexes: funding spread now and over 14 days, % positive hours, basis, thinner leg liquidity. Data, not a signal. Requires a Carry Oracle key.", inputSchema: { min_vol: z.number().optional(), limit: z.number().optional() }, annotations: ro }, async (a: any) => carryGuard(() => crossDex({ minVol: a.min_vol ?? 100_000, limit: a.limit ?? 50 })));
+  s.registerTool("carry_spot_perp", { title: "Carry: spot × perp", description: "Main-dex perps with a spot market: funding now and over 14 days, % positive hours, perp/spot basis, liquidity of both legs. Data, not a signal. Requires a Carry Oracle key.", inputSchema: { min_vol: z.number().optional(), limit: z.number().optional() }, annotations: ro }, async (a: any) => carryGuard(() => spotPerp({ minVol: a.min_vol ?? 100_000, limit: a.limit ?? 50 })));
+  s.registerTool("carry_history", { title: "Carry: funding history", description: "Hourly funding/premium/mark/OI/volume for one coin, kept beyond Hyperliquid's 500 h window. HIP-3 coins are prefixed (xyz:NBIS). Requires a Carry Oracle key.", inputSchema: { coin: z.string(), hours: z.number().optional() }, annotations: ro }, async (a: any) => carryGuard(() => coinHistory(a.coin, a.hours ?? 720)));
+  s.registerTool("carry_naked", { title: "Carry: unhedgeable funding extremes", description: "Perps whose |annualised funding| exceeds a threshold (default 50%) and that have no hedge leg on Hyperliquid (no spot, no same-ticker HIP-3 listing). Raw data, not a call. Requires a Carry Oracle key.", inputSchema: { min_abs_apr: z.number().optional() }, annotations: ro }, async (a: any) => carryGuard(() => naked({ minAbsApr: a.min_abs_apr ?? 0.5 })));
+  s.registerTool("carry_watchdog", { title: "Carry: market health", description: "Every Hyperliquid perp market and dex: status (active/zero_oi/delisted), OI and volume with 7-day change, growth mode, risk flags. Requires a Carry Oracle key.", inputSchema: {}, annotations: ro }, async () => carryGuard(() => watchdog()));
 
   return s;
 }

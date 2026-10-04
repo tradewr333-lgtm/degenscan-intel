@@ -7,7 +7,7 @@ import { registerExactSvmScheme } from "@x402/svm/exact/server";
 import { createFacilitatorConfig } from "@coinbase/x402";
 import { declareDiscoveryExtension, bazaarResourceServerExtension } from "@x402/extensions/bazaar";
 import { PRICES } from "./pricing.js";
-import { PACKS, CARRY } from "./keys.js";
+import { PACKS, CARRY, CARRY_DESK } from "./keys.js";
 import { FREE_MODE } from "./access.js";
 
 /**
@@ -142,6 +142,25 @@ export function buildRoutes(): RoutesConfig {
       extensions: declareDiscoveryExtension({ bodyType: "json", input: {}, inputSchema: { properties: {} },
         output: { example: { api_key: `dsi_${pack}_…`, key_id: "k_…", pack, calls: p.calls, paid_usd: p.usd, usage: "send header X-API-KEY on /v1/* or POST /mcp", check: `${PUBLIC_URL}/v1/keys/me` } } }),
     } as RouteConfig])),
+    // Carry Oracle Data routes: pay per call in USDC, or send X-API-KEY with a Carry subscription key (flat US$100/month, unlimited).
+    ...Object.fromEntries(([
+      ["GET /v1/carry/funding-matrix", "carry_funding_matrix", "Annualised funding for every perp on every Hyperliquid dex (main + HIP-3), with OI, 24h volume and spot mark."],
+      ["GET /v1/carry/xdex", "carry_xdex", "Same ticker on 2+ HIP-3 dexes: funding spread now and 14d, % positive hours, basis, thinner-leg liquidity."],
+      ["GET /v1/carry/spot-perp", "carry_spot_perp", "Main-dex perp vs spot: funding now and 14d, % positive hours, perp/spot basis."],
+      ["GET /v1/carry/history/:coin", "carry_history", "Hourly funding/premium/mark/OI/volume for one coin, kept beyond Hyperliquid's 500 h window (HIP-3 coins prefixed, e.g. xyz:NBIS)."],
+      ["GET /v1/carry/naked", "carry_naked", "Funding extremes with no hedge leg on Hyperliquid (no spot, no same-ticker HIP-3 listing). Raw data."],
+      ["GET /v1/carry/watchdog", "carry_watchdog", "Health of every Hyperliquid perp market and dex: status, OI/volume and 7-day change, growth mode, risk flags."],
+    ] as const).map(([route, tool, d]) => [route, {
+      accepts: accept(tool), description: `Carry Oracle — ${d} Or subscribe: US$${CARRY.usd_month}/month flat, unlimited (card ${PUBLIC_URL}/v1/carry/checkout or POST /v1/keys/x402/carry_month). Docs ${PUBLIC_URL}/docs/carry. Market data and analytics only — not a signal, not investment advice.`,
+      mimeType: "application/json", ...common,
+      extensions: declareDiscoveryExtension(route.includes(":coin") ? { pathParams: { coin: "xyz:NBIS" }, pathParamsSchema: { properties: { coin: { type: "string" } }, required: ["coin"] }, input: { hours: 168 }, inputSchema: { properties: { hours: { type: "number" } } } } : { input: {}, inputSchema: { properties: { min_vol: { type: "number" }, limit: { type: "number" } } } }),
+    } as RouteConfig])),
+    "POST /v1/keys/x402/carry_desk_month": {
+      accepts: rails(usd(CARRY_DESK.usd_month)),
+      description: `Carry Desk — 30 days for ${CARRY_DESK.usd_month} USDC: everything in Carry Data plus eligibility filters, per-pair capacity, net realized carry, after-hours premium and webhook alerts. Limited seats; when closed or full the request is refused before any payment settles. Data and analytics only — not investment advice.`,
+      mimeType: "application/json", ...common,
+      extensions: declareDiscoveryExtension({ bodyType: "json", input: {}, inputSchema: { properties: {} }, output: { example: { api_key: "dsi_carrydesk_…", key_id: "k_…", product: "carry_desk_month" } } }),
+    } as RouteConfig,
     "POST /v1/keys/x402/carry_month": {
       accepts: rails(usd(CARRY.usd_month)),
       description: `Carry Oracle — 30 days of unlimited access to /v1/carry/* (Hyperliquid funding on every dex, cross-dex spreads, hourly history kept without a window) for a flat ${CARRY.usd_month} USDC. Returns an X-API-KEY. Data and analytics only — not investment advice.`,

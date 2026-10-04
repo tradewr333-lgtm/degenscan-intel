@@ -1,5 +1,5 @@
 import type { FastifyRequest } from "fastify";
-import { validateKey } from "./keys.js";
+import { validateKey, carryAccess } from "./keys.js";
 import { priceOf, creditsFor, FREE_DAILY_CALLS_PER_IP } from "./pricing.js";
 
 /**
@@ -28,6 +28,14 @@ export function toolForRequest(req: FastifyRequest): string | null {
     return String(b.params?.name ?? "");
   }
   if (url === "/v1/oracle/forecast" && req.method === "POST") return "oracle_forecast";
+  // Carry Oracle: Data routes are priced (pay per call or subscription); desk routes are subscription-only (checked in the route)
+  if (url === "/v1/carry/funding-matrix") return "carry_funding_matrix";
+  if (url === "/v1/carry/xdex") return "carry_xdex";
+  if (url === "/v1/carry/spot-perp") return "carry_spot_perp";
+  if (url.startsWith("/v1/carry/history/")) return "carry_history";
+  if (url === "/v1/carry/naked") return "carry_naked";
+  if (url === "/v1/carry/watchdog") return "carry_watchdog";
+  if (url.startsWith("/v1/carry/")) return null;
   if (url === "/v1/oracle/edge") return "polymarket_edge";
   if (url === "/v1/oracle/board/questions" || (url.startsWith("/v1/oracle/board") && req.method === "POST")) return null;  // free list / operator actions
   if (url === "/v1/oracle/board" || url.startsWith("/v1/oracle/board/")) return "oracle_board";
@@ -58,6 +66,13 @@ export function decideAccess(req: FastifyRequest): Access | null {
   const price = priceOf(tool);
   if (price === 0 || FREE_MODE) return { method: "free", payer: null, price: 0 };
   const key = (req.headers["x-api-key"] as string | undefined)?.trim();
+  if (tool.startsWith("carry_")) {
+    if (process.env.ORACLE_OPERATOR_KEY && req.headers["x-operator-key"] === process.env.ORACLE_OPERATOR_KEY) return { method: "free", payer: "operator", price: 0 };
+    const c = carryAccess(key);
+    if (c.ok) return { method: "api_key", payer: `key:${c.id}`, price: 0 };            // subscription: unlimited
+    if (key) { const v = validateKey(key); if (v && String(v.plan).startsWith("pack_") && v.remaining >= creditsFor(tool)) return { method: "api_key", payer: `key:${v.id}`, price }; }
+    return null;                                                                       // no free quota on carry: x402 or subscription
+  }
   if (key) {
     const v = validateKey(key);
     if (v && v.remaining >= creditsFor(tool)) return { method: "api_key", payer: `key:${v.id}`, price };

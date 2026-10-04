@@ -23,6 +23,18 @@ export type Pack = keyof typeof PACKS;
  *  Paid by card (Stripe subscription, revoked on cancel) or USDC (x402, one payment = 30 days). A carry key has zero budget for
  *  the other paid tools — it is a separate product. */
 export const CARRY = { usd_month: 100, days_per_usdc_payment: 30, lookup_key: "carry_oracle_monthly_100usd", product_name: "Degenscan Carry Oracle" } as const;
+/** Carry Desk (seller's order 04/10, approved by Renato): US$450/month or US$4,500/year, limited seats per wave (25 first). Everything in
+ *  Data + eligible/capacity/realized/afterhours + webhook alerts. Opened/closed and seats set by the operator (carry_settings), no deploy. */
+export const CARRY_DESK = { usd_month: 450, usd_year: 4500, days_per_usdc_payment: 30, lookup_month: "carry_desk_monthly_450usd", lookup_year: "carry_desk_yearly_4500usd", product_name: "Degenscan Carry Desk", default_seats: 25 } as const;
+function ensureSettings() { getDb().exec("CREATE TABLE IF NOT EXISTS carry_settings (k TEXT PRIMARY KEY, v TEXT NOT NULL)"); }
+export function carrySetting(k: string, dflt: string): string { ensureSettings(); return ((getDb().prepare("SELECT v FROM carry_settings WHERE k = ?").get(k) as any)?.v) ?? dflt; }
+export function setCarrySetting(k: string, v: string) { ensureSettings(); getDb().prepare("INSERT INTO carry_settings (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v").run(k, v); }
+export function deskSeats() {
+  ensure();
+  const total = Number(carrySetting("desk_seats", String(CARRY_DESK.default_seats)));
+  const used = (getDb().prepare("SELECT COUNT(*) AS n FROM api_keys WHERE plan = 'carry_desk' AND status IN ('active','pending') AND (expires_at IS NULL OR expires_at > ?)").get(new Date().toISOString()) as any).n;
+  return { total, used, available: Math.max(0, total - used), open: carrySetting("desk_open", "0") === "1" };
+}
 
 export interface ApiKeyRow {
   id: string; key_hash: string; plan: Plan | Pack; monthly_calls: number; status: "active" | "revoked" | "pending";
@@ -51,14 +63,15 @@ export function createKey(opts: { plan: Plan; stripe_customer?: string; stripe_s
   return { id, key };
 }
 
-export function createCarryKey(opts: { via: "stripe" | "x402"; stripe_customer?: string; stripe_subscription?: string; stripe_session?: string; email?: string; wallet?: string | null }): { id: string; key: string } {
+export function createCarryKey(opts: { via: "stripe" | "x402"; tier?: "data" | "desk"; stripe_customer?: string; stripe_subscription?: string; stripe_session?: string; email?: string; wallet?: string | null }): { id: string; key: string } {
   ensure();
+  const desk = opts.tier === "desk";
   const id = "k_" + randomBytes(6).toString("hex");
-  const key = `dsi_carry_${randomBytes(24).toString("base64url")}`;
-  const expires = opts.via === "x402" ? new Date(Date.now() + CARRY.days_per_usdc_payment * 86_400_000).toISOString() : null;
+  const key = `${desk ? "dsi_carrydesk_" : "dsi_carry_"}${randomBytes(24).toString("base64url")}`;
+  const expires = opts.via === "x402" ? new Date(Date.now() + (desk ? CARRY_DESK.days_per_usdc_payment : CARRY.days_per_usdc_payment) * 86_400_000).toISOString() : null;
   getDb().prepare(`INSERT INTO api_keys (id, key_hash, plan, monthly_calls, status, stripe_customer, stripe_subscription, stripe_session, email, wallet, label, expires_at, created_at)
-    VALUES (?,?,'carry',0,?,?,?,?,?,?,?,?,?)`).run(id, hash(key), opts.via === "x402" ? "pending" : "active", opts.stripe_customer ?? null, opts.stripe_subscription ?? null,
-    opts.stripe_session ?? null, opts.email ?? null, opts.wallet ?? null, `carry ${opts.via}`, expires, new Date().toISOString());
+    VALUES (?,?,?,0,?,?,?,?,?,?,?,?,?)`).run(id, hash(key), desk ? "carry_desk" : "carry", opts.via === "x402" ? "pending" : "active", opts.stripe_customer ?? null, opts.stripe_subscription ?? null,
+    opts.stripe_session ?? null, opts.email ?? null, opts.wallet ?? null, `${desk ? "carry desk" : "carry"} ${opts.via}`, expires, new Date().toISOString());
   return { id, key };
 }
 /** Is this raw key a live Carry Oracle subscription? */
@@ -67,10 +80,16 @@ export function carryAccess(raw: string | undefined | null): { ok: boolean; id?:
   ensure();
   const row = getDb().prepare("SELECT id, plan, status, expires_at FROM api_keys WHERE key_hash = ?").get(hash(raw.trim())) as any;
   if (!row) return { ok: false, reason: "unknown key" };
-  if (row.plan !== "carry") return { ok: false, reason: "this key is not a Carry Oracle subscription" };
+  if (row.plan !== "carry" && row.plan !== "carry_desk") return { ok: false, reason: "this key is not a Carry Oracle subscription" };
   if (row.status !== "active") return { ok: false, reason: `subscription ${row.status}` };
   if (row.expires_at && new Date(row.expires_at).getTime() < Date.now()) return { ok: false, reason: `expired ${row.expires_at}` };
-  return { ok: true, id: row.id, expires_at: row.expires_at };
+  return { ok: true, id: row.id, expires_at: row.expires_at, tier: row.plan === "carry_desk" ? "desk" : "data" } as any;
+}
+/** Desk-only routes: a live carry_desk key. */
+export function deskAccess(raw: string | undefined | null): { ok: boolean; id?: string; reason?: string } {
+  const a: any = carryAccess(raw);
+  if (!a.ok) return a;
+  return a.tier === "desk" ? a : { ok: false, reason: "Carry Desk route — your key is Carry Data (US$100). Upgrade: /carry" };
 }
 
 /** Prepaid pack key paid in USDC (x402). Created as `pending`; activated by activatePackKey() once the facilitator settles. */
@@ -91,6 +110,7 @@ export function keyStatus(raw: string) {
   if (!row) return null;
   const used = row.total_calls != null ? lifetimeUsage(row.id) : monthlyUsage(row.id);
   const budget = row.total_calls ?? row.monthly_calls;
+  if ((row.plan as string) === "carry_desk") return { id: row.id, plan: "carry_desk", status: row.status, product: "Carry Desk — US$450/month, unlimited /v1/carry/* incl. desk routes and alerts", expires_at: (row as any).expires_at ?? "renews (Stripe)", created_at: row.created_at };
   if ((row.plan as string) === "carry") return { id: row.id, plan: "carry", status: row.status, product: "Carry Oracle — flat US$100/month, unlimited /v1/carry/* calls", expires_at: (row as any).expires_at ?? "renews monthly (Stripe)", created_at: row.created_at };
   return { id: row.id, plan: row.plan, status: row.status, budget, used, remaining: Math.max(0, budget - used), period: row.total_calls != null ? "lifetime" : "calendar_month", created_at: row.created_at };
 }

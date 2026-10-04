@@ -25,6 +25,9 @@ export const PRICES: Record<string, number> = {
   universe: 0,
   sources_status: 0,
   health: 0,
+  // Carry Data routes/tools (Renato 04/10, seller's order): pay per call in USDC OR the flat US$100/month subscription (unlimited).
+  // Prices cross US$100 around 3,000 calls/month so heavy use converges to the subscription. Desk routes are subscription-only.
+  carry_funding_matrix: 0.03, carry_xdex: 0.05, carry_spot_perp: 0.03, carry_history: 0.02, carry_naked: 0.01, carry_watchdog: 0.01,
 };
 
 export const FREE_DAILY_CALLS_PER_IP = Number(process.env.FREE_DAILY_CALLS ?? 100);
@@ -33,5 +36,6 @@ export function priceOf(tool: string) { return PRICES[tool] ?? 0.005; }
 export function toAtomicUsdc(usd: number) { return String(Math.round(usd * 1e6)); }
 
 /** Prepaid-pack credits consumed per call (1 credit = one $0.002-class call). oracle_forecast = 0.25 / 0.002 = 125. */
-export function creditsFor(tool: string) { return tool === "oracle_forecast" ? 125 : 1; }
-export const CREDITS_SQL = "SUM(CASE WHEN tool = 'oracle_forecast' THEN 125 ELSE 1 END)";
+export const CARRY_CREDITS: Record<string, number> = { carry_funding_matrix: 30, carry_xdex: 50, carry_spot_perp: 30, carry_history: 20, carry_naked: 10, carry_watchdog: 10 };
+export function creditsFor(tool: string) { return tool === "oracle_forecast" ? 125 : (CARRY_CREDITS[tool] ?? 1); }
+export const CREDITS_SQL = "SUM(CASE WHEN tool = 'oracle_forecast' THEN 125 " + Object.entries(CARRY_CREDITS).map(([t, c]) => `WHEN tool = '${t}' THEN ${c} `).join("") + "ELSE 1 END)";
