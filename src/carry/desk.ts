@@ -9,6 +9,7 @@ import { getDb } from "../store/db.js";
 import { info, HOUR, APR, crossDex, spotPerp, naked, watchdog, splitCoin } from "./hl.js";
 import { sessionOpen } from "../engine/sessions.js";
 import { US_EQUITY_SESSION } from "../universe/static.js";
+import { loadUniverse } from "../universe/index.js";
 
 const r4 = (x: number | null | undefined) => x == null || !Number.isFinite(x) ? null : Math.round(x * 10000) / 10000;
 const r2 = (x: number | null | undefined) => x == null || !Number.isFinite(x) ? null : Math.round(x * 100) / 100;
@@ -221,12 +222,20 @@ export function lastUsClose(at = new Date()): Date {
   for (let i = 0; i < 6 * 288; i++) { if (!sessionOpen(US_EQUITY_SESSION, new Date(t)) && sessionOpen(US_EQUITY_SESSION, new Date(t - step))) return new Date(t); t -= step; }
   return new Date(t);
 }
+/** US-listed stocks/ETFs (the only assets for which "premium vs the last US close" means something). Universe equities/ETFs plus
+ *  US names commonly listed on HIP-3 dexes that may sit outside the daily top-100. Crypto, indices, commodities are excluded. */
+const EXTRA_US = ["NBIS", "SNDK", "CRWD", "AVGO", "NET", "RDDT", "IREN", "AAOI", "CBRS", "EWY", "EWZ", "EWJ", "DRAM", "MU", "AMD", "INTC", "ORCL", "PLTR", "COIN", "HOOD", "MSTR", "CRCL", "TSLA", "NVDA", "AAPL", "MSFT", "GOOGL", "AMZN", "META", "NFLX", "BABA", "SMCI", "ARM", "TSM", "UBER", "SHOP", "SPY", "QQQ", "IWM", "GLD", "SLV", "USO", "TLT", "XLE", "XLF", "SMH", "SOXL", "VST", "CEG", "OKLO", "RKLB", "IONQ", "QBTS", "RGTI", "ASTS", "HIMS", "SOFI", "GME", "AMC"];
+let usSet: Set<string> | null = null;
+export function isUsListed(base: string) {
+  if (!usSet) { usSet = new Set(EXTRA_US); try { for (const a of loadUniverse().assets as any[]) if (a.class === "equity" || a.class === "etf") usSet.add(String(a.id).toUpperCase()); } catch { /* seed only */ } }
+  return usSet.has(base.toUpperCase());
+}
 export async function afterhours(coin?: string) {
   const now = new Date(); const open = sessionOpen(US_EQUITY_SESSION, now);
   const close = lastUsClose(now); const closeHour = Math.floor(close.getTime() / HOUR) * HOUR;
   const d = getDb(); const t = (d.prepare("SELECT MAX(ts) AS t FROM hl_funding WHERE src = 'snapshot'").get() as any)?.t;
   if (!t) return { as_of: null, items: [] };
-  const coins = coin ? [coin] : (d.prepare("SELECT coin FROM hl_funding WHERE ts = ? AND src = 'snapshot' AND dex != 'main' AND COALESCE(vol24, 0) >= 50000 ORDER BY vol24 DESC").all(t) as any[]).map(r => r.coin);
+  const coins = coin ? [coin] : (d.prepare("SELECT coin FROM hl_funding WHERE ts = ? AND src = 'snapshot' AND dex != 'main' AND COALESCE(vol24, 0) >= 50000 ORDER BY vol24 DESC").all(t) as any[]).map(r => r.coin).filter((c: string) => isUsListed(splitCoin(c).base));
   const items: any[] = [];
   for (const c of coins.slice(0, coin ? 1 : 60)) {
     const cur = d.prepare("SELECT mark, oracle, funding, oi, vol24 FROM hl_funding WHERE coin = ? AND ts = ? AND src = 'snapshot'").get(c, t) as any;
@@ -243,6 +252,7 @@ export async function afterhours(coin?: string) {
   }
   items.sort((a, b) => Math.abs(b.premium_pct ?? 0) - Math.abs(a.premium_pct ?? 0));
   return { as_of: new Date(t).toISOString(), session: open ? "open" : "closed", last_close_at: close.toISOString(), count: items.length, items,
+    coverage: "US-listed stocks and ETFs on HIP-3 dexes (crypto, indices and commodities trade around the clock and are excluded).",
     note: "Premium of HIP-3 perps vs the last US regular-session close (NYSE calendar). Reference = Hyperliquid oracle at the close (approximation of the official close). Statistics, never a direction." };
 }
 
