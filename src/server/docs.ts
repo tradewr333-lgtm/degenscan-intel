@@ -194,7 +194,7 @@ export function installDocs(app: FastifyInstance, base: string) {
     pages.map(p => `## ${p.title}\nQ: ${p.question}\nA: ${p.answer}\n\ncurl:\n${p.rest}\n\nJavaScript:\n${p.js}\n\nPython:\n${p.py}\n`).join("\n---\n\n") +
     LONGFORM.map(l => `\n---\n\n${readLongform(l.file)}\n`).join("") +
     `\n## Operator\nMarbella Collins LLC · contact@degenscan.io · MIT · Information and analytics only — not investment advice. Public metrics ${base}/v1/metrics; our own wallets ${base}/wallets.json.\n`));
-  app.get("/sitemap.xml", async (_req, reply) => reply.type("application/xml").send(`<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${["", "/docs", "/llms.txt", "/llms-full.txt", "/openapi.json", "/skill.md", "/v1/metrics", ...pages.map(p => `/docs/${p.slug}`), ...LONGFORM.map(l => `/docs/${l.slug}`)].map(u => `<url><loc>${base}${u}</loc></url>`).join("")}</urlset>`));
-  app.get("/robots.txt", async (_req, reply) => reply.type("text/plain").send(`User-agent: *\nAllow: /\nSitemap: ${base}/sitemap.xml\n`));
+  app.get("/sitemap.xml", async (_req, reply) => reply.type("application/xml").send(`<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${["", "/docs", "/llms.txt", "/llms-full.txt", "/openapi.json", "/skill.md", "/v1/metrics", ...pages.map(p => `/docs/${p.slug}`), ...LONGFORM.map(l => `/docs/${l.slug}`), "/carry", "/carry/leaderboard", "/docs/carry", "/previsoes", "/pricing", "/ajuda", ...(await import("./leaderboard.js")).carrySitemapUrls()].map(u => `<url><loc>${base}${u}</loc></url>`).join("")}</urlset>`));
+  app.get("/robots.txt", async (_req, reply) => reply.type("text/plain").send(`User-agent: *\nAllow: /\nAllow: /carry\nAllow: /docs\nSitemap: ${base}/sitemap.xml\n`));
   return pages.length;
 }

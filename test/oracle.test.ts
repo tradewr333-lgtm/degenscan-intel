@@ -144,7 +144,7 @@ describe("oracle HTTP (async jobs, board, resolve, discovery)", () => {
     const s: any = buildMcpServer();
     const names = Object.keys(s._registeredTools ?? {});
     expect(names).toEqual(expect.arrayContaining(["oracle_forecast", "oracle_get", "oracle_board", "oracle_track_record"]));
-    expect(names.length).toBe(30);
+    expect(names.length).toBe(31);   // + keys_trial
   });
 });
 
@@ -162,12 +162,12 @@ describe("oracle board (scheduler logic, mocked sources)", () => {
     const qs = await board.boardQuestions();
     expect(qs.map(q => q.slug)).toEqual(expect.arrayContaining(["btc-120k-oct31", "fed-cut-oct2026", "pm-fed-cut-october-2026"]));
     const r1: any = await board.refreshBoard({ runs: 1, population: 8, rounds: 1 });
-    expect(r1.queued + r1.skipped.length).toBe(qs.length); expect(r1.queued).toBeGreaterThanOrEqual(qs.length - 1); // btc-120k-oct31 was already forecast today by the earlier test
+    expect(r1.queued + r1.skipped.length).toBe(qs.length); expect(r1.queued).toBeGreaterThanOrEqual(qs.length - 1 - qs.filter((q: any) => q.resolves_at && Date.parse(q.resolves_at) < Date.now() + 2 * 86400e3).length); // btc-120k-oct31 already forecast; questions about to resolve (e.g. 1st round 04/10) are skipped
     const r2: any = await board.refreshBoard({ runs: 1, population: 8, rounds: 1 });   // same day → nothing new
     expect(r2.queued).toBe(0); expect(r2.skipped.length).toBe(qs.length);
     const app = await buildHttp();
     const b = (await app.inject({ method: "GET", url: "/v1/oracle/board" })).json();
-    expect(b.count).toBeGreaterThanOrEqual(qs.length);
+    expect(b.count).toBeGreaterThanOrEqual(qs.length - r1.skipped.filter((s: string) => s.includes("within 24h")).length);
     const pm = b.items.find((i: any) => i.slug === "pm-fed-cut-october-2026");
     expect(pm.resolution.type).toBe("polymarket"); expect(pm.probability).toBeGreaterThan(0);
     const res = await board.autoResolve();

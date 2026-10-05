@@ -32,7 +32,7 @@ export function setCarrySetting(k: string, v: string) { ensureSettings(); getDb(
 export function deskSeats() {
   ensure();
   const total = Number(carrySetting("desk_seats", String(CARRY_DESK.default_seats)));
-  const used = (getDb().prepare("SELECT COUNT(*) AS n FROM api_keys WHERE plan = 'carry_desk' AND status IN ('active','pending') AND (expires_at IS NULL OR expires_at > ?)").get(new Date().toISOString()) as any).n;
+  const used = (getDb().prepare("SELECT COUNT(*) AS n FROM api_keys WHERE plan = 'carry_desk' AND status IN ('active','pending') AND COALESCE(label, '') NOT LIKE 'internal%' AND (expires_at IS NULL OR expires_at > ?)").get(new Date().toISOString()) as any).n;
   return { total, used, available: Math.max(0, total - used), open: carrySetting("desk_open", "0") === "1" };
 }
 
@@ -63,7 +63,7 @@ export function createKey(opts: { plan: Plan; stripe_customer?: string; stripe_s
   return { id, key };
 }
 
-export function createCarryKey(opts: { via: "stripe" | "x402"; tier?: "data" | "desk"; stripe_customer?: string; stripe_subscription?: string; stripe_session?: string; email?: string; wallet?: string | null }): { id: string; key: string } {
+export function createCarryKey(opts: { via: "stripe" | "x402" | "internal"; label?: string; tier?: "data" | "desk"; stripe_customer?: string; stripe_subscription?: string; stripe_session?: string; email?: string; wallet?: string | null }): { id: string; key: string } {
   ensure();
   const desk = opts.tier === "desk";
   const id = "k_" + randomBytes(6).toString("hex");
@@ -71,7 +71,7 @@ export function createCarryKey(opts: { via: "stripe" | "x402"; tier?: "data" | "
   const expires = opts.via === "x402" ? new Date(Date.now() + (desk ? CARRY_DESK.days_per_usdc_payment : CARRY.days_per_usdc_payment) * 86_400_000).toISOString() : null;
   getDb().prepare(`INSERT INTO api_keys (id, key_hash, plan, monthly_calls, status, stripe_customer, stripe_subscription, stripe_session, email, wallet, label, expires_at, created_at)
     VALUES (?,?,?,0,?,?,?,?,?,?,?,?,?)`).run(id, hash(key), desk ? "carry_desk" : "carry", opts.via === "x402" ? "pending" : "active", opts.stripe_customer ?? null, opts.stripe_subscription ?? null,
-    opts.stripe_session ?? null, opts.email ?? null, opts.wallet ?? null, `${desk ? "carry desk" : "carry"} ${opts.via}`, expires, new Date().toISOString());
+    opts.stripe_session ?? null, opts.email ?? null, opts.wallet ?? null, opts.label ?? `${desk ? "carry desk" : "carry"} ${opts.via}`, expires, new Date().toISOString());
   return { id, key };
 }
 /** Is this raw key a live Carry Oracle subscription? */
@@ -110,6 +110,7 @@ export function keyStatus(raw: string) {
   if (!row) return null;
   const used = row.total_calls != null ? lifetimeUsage(row.id) : monthlyUsage(row.id);
   const budget = row.total_calls ?? row.monthly_calls;
+  if ((row.plan as string) === "trial") { const u = trialUsage(row.id); return { id: row.id, plan: "trial", status: row.status, budget: row.total_calls ?? TRIAL.calls, used: u, remaining: Math.max(0, (row.total_calls ?? TRIAL.calls) - u), expires_at: (row as any).expires_at, covers: "Carry Data routes (/v1/carry/funding-matrix, xdex, spot-perp, history, naked, watchdog) and the event feed; not the oracle", upgrade: "https://intel.degenscan.io/carry", created_at: row.created_at }; }
   if ((row.plan as string) === "carry_desk") return { id: row.id, plan: "carry_desk", status: row.status, product: "Carry Desk — US$450/month, unlimited /v1/carry/* incl. desk routes and alerts", expires_at: (row as any).expires_at ?? "renews (Stripe)", created_at: row.created_at };
   if ((row.plan as string) === "carry") return { id: row.id, plan: "carry", status: row.status, product: "Carry Oracle — flat US$100/month, unlimited /v1/carry/* calls", expires_at: (row as any).expires_at ?? "renews monthly (Stripe)", created_at: row.created_at };
   return { id: row.id, plan: row.plan, status: row.status, budget, used, remaining: Math.max(0, budget - used), period: row.total_calls != null ? "lifetime" : "calendar_month", created_at: row.created_at };
@@ -143,7 +144,36 @@ export function validateKey(raw: string): { id: string; plan: Plan | Pack | "leg
   if (legacy.has(raw)) return { id: `legacy:${raw.slice(0, 6)}`, plan: "legacy", remaining: Number.MAX_SAFE_INTEGER };
   const row = getDb().prepare("SELECT * FROM api_keys WHERE key_hash = ? AND status = 'active'").get(hash(raw)) as unknown as ApiKeyRow | undefined;
   if (!row) return null;
+  if ((row.plan as string) === "trial") {
+    if ((row as any).expires_at && Date.parse((row as any).expires_at) < Date.now()) return null;
+    return { id: row.id, plan: "trial" as any, remaining: Math.max(0, (row.total_calls ?? TRIAL.calls) - trialUsage(row.id)) };
+  }
   const budget = row.total_calls ?? row.monthly_calls;
   const used = row.total_calls != null ? lifetimeUsage(row.id) : monthlyUsage(row.id);
   return { id: row.id, plan: row.plan, remaining: Math.max(0, budget - used) };
+}
+
+// ------------------------------------------------------------------ free trial key (ordem 05/10 §1): 200 calls, 7 days, no card
+/** One per e-mail (ever) and one per IP per 24 h. Covers Carry Data routes and the event feed; the oracle (LLM cost) is excluded
+ *  while human sales of the oracle are on hold. Each call counts 1 (not credits). */
+export const TRIAL = { calls: 200, days: 7, excluded_tools: ["oracle_forecast"] } as const;
+export function trialUsage(id: string): number { return (getDb().prepare("SELECT COUNT(*) AS n FROM calls WHERE payer = ?").get(`key:${id}`) as any).n; }
+export function createTrialKey(email: string, ipHash: string): { id: string; key: string; expires_at: string } | { error: string } {
+  ensure();
+  const e = email.trim().toLowerCase();
+  if (getDb().prepare("SELECT 1 FROM api_keys WHERE plan = 'trial' AND email = ?").get(e)) return { error: "a trial key was already issued for this e-mail" };
+  if (getDb().prepare("SELECT 1 FROM api_keys WHERE plan = 'trial' AND wallet = ? AND created_at > ?").get(`ip:${ipHash}`, new Date(Date.now() - 86_400_000).toISOString())) return { error: "one trial key per network per 24 h" };
+  const id = "k_" + randomBytes(6).toString("hex");
+  const key = `dsi_trial_${randomBytes(24).toString("base64url")}`;
+  const expires_at = new Date(Date.now() + TRIAL.days * 86_400_000).toISOString();
+  getDb().prepare(`INSERT INTO api_keys (id, key_hash, plan, monthly_calls, status, total_calls, email, wallet, label, expires_at, created_at) VALUES (?,?,'trial',0,'active',?,?,?,?,?,?)`)
+    .run(id, hash(key), TRIAL.calls, e, `ip:${ipHash}`, "free trial", expires_at, new Date().toISOString());
+  return { id, key, expires_at };
+}
+/** Trial funnel: keys issued, and how many trial e-mails later bought a paid key (card) — x402 buyers have no e-mail. */
+export function trialMetrics() {
+  ensure();
+  const issued = (getDb().prepare("SELECT COUNT(*) AS n FROM api_keys WHERE plan = 'trial'").get() as any).n;
+  const converted = (getDb().prepare("SELECT COUNT(DISTINCT t.email) AS n FROM api_keys t JOIN api_keys p ON p.email = t.email AND p.plan NOT IN ('trial') AND p.status = 'active' AND p.created_at > t.created_at WHERE t.plan = 'trial'").get() as any).n;
+  return { trial_keys_issued: issued, trial_to_paid: converted };
 }

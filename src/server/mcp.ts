@@ -7,15 +7,16 @@ import { ForecastRequest, DISCLAIMER } from "../oracle/schema.js";
 import { enqueueForecast, _queue } from "../oracle/queue.js";
 import { boardLatest, getForecast, getJob, recentForecasts, trackRecord } from "../oracle/ledger.js";
 import { llmConfigured } from "../oracle/llm.js";
-import { carryAccess, CARRY } from "./keys.js";
+import { carryAccess, CARRY, createTrialKey, TRIAL, validateKey } from "./keys.js";
+import { createHash } from "node:crypto";
 import { fundingMatrix, crossDex, spotPerp, coinHistory, naked, watchdog } from "../carry/hl.js";
 
 const json = (x: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(x) }], structuredContent: x as Record<string, unknown> });
 const fail = (e: unknown) => ({ content: [{ type: "text" as const, text: `error: ${(e as Error).message}` }], isError: true });
 
 /** Build the MCP server. One instance per stateless HTTP request is fine (cheap). */
-export function buildMcpServer(ctx: { carryKey?: string; operator?: boolean; carryPaid?: boolean } = {}) {
-  const s = new McpServer({ name: "degenscan-intel", version: "0.10.33" }, {
+export function buildMcpServer(ctx: { carryKey?: string; operator?: boolean; carryPaid?: boolean; ip?: string } = {}) {
+  const s = new McpServer({ name: "degenscan-intel", version: "0.10.35" }, {
     instructions: [
       "Degenscan Intel: cross-asset event feed for trading agents. Events are normalized from ~40 primary sources (SEC, Fed, Federal Register, USGS, NHC, Nasdaq halts, DefiLlama, Polymarket…) and scored against an exposure graph into per-asset impacts.",
       "Cheapest probe: pulse ($0.001). One-call briefing per asset: brief ($0.10). Typical loop: regime_snapshot → events_since(since='4h', universe=[your book]) → impact_for(asset_id) for anything with confidence ≥ 0.4 → check tradable_now / next_open before acting. For prediction markets: polymarket_context(market) → compare yes_prob with fresh primary-source events.",
@@ -169,12 +170,15 @@ export function buildMcpServer(ctx: { carryKey?: string; operator?: boolean; car
   }, async () => json(sources()));
 
   // ---- Carry Oracle (subscription, flat US$100/month): the tools answer subscription_required without a live dsi_carry_ key.
+  const isTrial = (k?: string) => { if (!k) return false; const v = validateKey(k); return Boolean(v && String(v.plan) === "trial" && v.remaining >= 1); };
   const carryGuard = (fn: () => unknown) => {
-    const ok = ctx.operator || ctx.carryPaid || carryAccess(ctx.carryKey).ok;
+    const ok = ctx.operator || ctx.carryPaid || carryAccess(ctx.carryKey).ok || isTrial(ctx.carryKey);
     if (!ok) return json({ error: "subscription_required", product: "Carry Oracle", price: `US$${CARRY.usd_month}/month flat, unlimited calls`, pay_card: "https://intel.degenscan.io/v1/carry/checkout", pay_usdc: "POST https://intel.degenscan.io/v1/keys/x402/carry_month (x402, 100 USDC = 30 days)", then: "send X-API-KEY: dsi_carry_… on the MCP request — or pay this call with x402 (USDC)", docs: "https://intel.degenscan.io/docs/carry", disclaimer: "Market data and analytics only — not a signal, not investment advice." });
     try { return json({ ...(fn() as object), disclaimer: "Market data and analytics only — not a signal, not investment advice." }); } catch (e) { return fail(e); }
   };
   const ro = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true };
+  s.registerTool("keys_trial", { title: "Get a free trial key", description: `Free trial API key for Degenscan Intel: ${TRIAL.calls} calls, ${TRIAL.days} days, no card. Covers the Carry Data tools (carry_*) and the event feed; not the oracle. Then send it as X-API-KEY. One per e-mail.`, inputSchema: { email: z.string() }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } },
+    async (a: any) => { const r = createTrialKey(String(a.email ?? ""), createHash("sha256").update(String(ctx.ip ?? "mcp")).digest("hex").slice(0, 16)); return "error" in r ? json({ error: r.error, subscribe: "https://intel.degenscan.io/carry" }) : json({ api_key: r.key, calls: TRIAL.calls, expires_at: r.expires_at, usage: "send X-API-KEY on REST or MCP requests" }); });
   s.registerTool("carry_funding_matrix", { title: "Carry: funding matrix", description: "Current annualised funding for every perp on every Hyperliquid dex (main + HIP-3), with OI, 24h volume and spot mark when it exists. Data, not a signal. Requires a Carry Oracle key (US$100/month).", inputSchema: { dex: z.string().optional(), min_vol: z.number().optional() }, annotations: ro }, async (a: any) => carryGuard(() => fundingMatrix({ dex: a.dex, minVol: a.min_vol ?? 0 })));
   s.registerTool("carry_xdex", { title: "Carry: cross-dex spreads", description: "Same ticker listed on 2+ HIP-3 dexes: funding spread now and over 14 days, % positive hours, basis, thinner leg liquidity. Data, not a signal. Requires a Carry Oracle key.", inputSchema: { min_vol: z.number().optional(), limit: z.number().optional() }, annotations: ro }, async (a: any) => carryGuard(() => crossDex({ minVol: a.min_vol ?? 100_000, limit: a.limit ?? 50 })));
   s.registerTool("carry_spot_perp", { title: "Carry: spot × perp", description: "Main-dex perps with a spot market: funding now and over 14 days, % positive hours, perp/spot basis, liquidity of both legs. Data, not a signal. Requires a Carry Oracle key.", inputSchema: { min_vol: z.number().optional(), limit: z.number().optional() }, annotations: ro }, async (a: any) => carryGuard(() => spotPerp({ minVol: a.min_vol ?? 100_000, limit: a.limit ?? 50 })));

@@ -1,3 +1,4 @@
+process.env.DB_PATH = ":memory:";
 import { describe, it, expect, beforeAll, vi } from "vitest";
 
 describe("Carry Oracle data layer (Hyperliquid funding, all dexes)", () => {
@@ -165,5 +166,59 @@ describe("Carry Desk (Lote B): eligibility, capacity, realized, after-hours, ale
   it("carry tools are priced for pay-per-call and pack credits", async () => {
     const p = await import("../src/server/pricing.js");
     expect(p.PRICES.carry_xdex).toBe(0.05); expect(p.creditsFor("carry_xdex")).toBe(50); expect(p.CREDITS_SQL).toContain("carry_funding_matrix");
+  });
+});
+
+describe("Carry dataset durability", () => {
+  it("gap fill recovers missing hours without duplicating", async () => {
+    const c = await import("../src/carry/hl.js");
+    const { getDb } = await import("../src/store/db.js");
+    c.ensureCarryTables(); getDb().exec("DELETE FROM hl_funding; DELETE FROM hl_spot; DELETE FROM hl_backfill;");
+    await c.snapshot();
+    const g1 = await c.gapFill(72, 0); expect(g1.rows_added).toBe(6);
+    const g2 = await c.gapFill(72, 0); expect(g2.rows_added).toBe(0);
+  });
+});
+
+describe("Free trial key + public leaderboard (ordem 05/10)", () => {
+  it("issues one trial key per email, gives carry access, excludes the oracle, counts metrics", async () => {
+    const { buildHttp } = await import("../src/server/http.js");
+    const k = await import("../src/server/keys.js");
+    const app = await buildHttp();
+    const r = await app.inject({ method: "POST", url: "/v1/keys/trial", payload: { email: "dev1@example.com" }, headers: { "x-forwarded-for": "10.0.0.1" } });
+    expect(r.statusCode).toBe(201);
+    const j = r.json(); expect(j.api_key).toMatch(/^dsi_trial_/); expect(j.calls).toBe(200); expect(j.expires_at).toBeTruthy();
+    expect((await app.inject({ method: "POST", url: "/v1/keys/trial", payload: { email: "dev1@example.com" }, headers: { "x-forwarded-for": "10.0.0.2" } })).statusCode).toBeGreaterThanOrEqual(400);
+    expect((await app.inject({ method: "POST", url: "/v1/keys/trial", payload: { email: "not-an-email" } })).statusCode).toBe(400);
+    const ok = await app.inject({ url: "/v1/carry/funding-matrix", headers: { "x-api-key": j.api_key } });
+    expect(ok.statusCode).toBe(200);
+    expect(k.validateKey(j.api_key)?.plan).toBe("trial");
+    expect(k.TRIAL.excluded_tools).toContain("oracle_forecast");
+    expect(k.trialMetrics().trial_keys_issued).toBeGreaterThanOrEqual(1);
+    for (const u of ["/carry", "/pricing"]) expect((await app.inject({ url: u })).body).toContain("/v1/keys/trial");
+    expect((await app.inject({ url: "/llms.txt" })).body).toContain("/v1/keys/trial");
+    expect((await app.inject({ url: "/ajuda" })).body).toContain("Como consigo uma chave?");
+  });
+  it("leaderboard: server-rendered, top 5, SEO tags, JSON-LD, cache + ETag, 301 alias, coin pages, sitemap", async () => {
+    const { buildHttp } = await import("../src/server/http.js");
+    const app = await buildHttp();
+    const r = await app.inject({ url: "/carry/leaderboard" });
+    expect(r.statusCode).toBe(200);
+    expect(r.headers["cache-control"]).toContain("max-age=300"); expect(r.headers.etag).toBeTruthy();
+    expect(r.body).toContain("<title>Hyperliquid funding rates leaderboard — all dexes, HIP-3 included | Degenscan Intel</title>");
+    expect(r.body).toContain("<h1>Hyperliquid funding rates, every dex, every hour</h1>");
+    for (const h of ["Cross-dex funding spreads (HIP-3)", "Spot × perp funding", "Funding extremes without a hedge", "Dex health", "Get the full history"]) expect(r.body).toContain(h);
+    expect(r.body).toContain('"@type":"Dataset"'); expect(r.body).toContain('"@type":"Product"');
+    expect(r.body).toContain("Marbella Collins LLC"); expect(r.body).toContain("não é recomendação de investimento");
+    expect(r.body).not.toMatch(/\b(long|short)\b/i);
+    expect((await app.inject({ url: "/carry/leaderboard", headers: { "if-none-match": r.headers.etag as string } })).statusCode).toBe(304);
+    const a = await app.inject({ url: "/hyperliquid-funding-rates" });
+    expect(a.statusCode).toBe(301); expect(a.headers.location).toBe("/carry/leaderboard");
+    const c = await app.inject({ url: "/carry/coin/xyz:NBIS" });
+    expect(c.statusCode).toBe(200); expect(c.body).toContain("<title>xyz:NBIS funding rate history on Hyperliquid (xyz) | Degenscan Intel</title>");
+    expect(c.body).toContain("io:NBIS");
+    expect((await app.inject({ url: "/carry/coin/NOPE123" })).statusCode).toBe(404);
+    const sm = (await app.inject({ url: "/sitemap.xml" })).body;
+    for (const u of ["/carry/leaderboard", "/docs/carry", "/previsoes", "/pricing", "/carry/coin/xyz%3ANBIS"]) expect(sm).toContain(u);
   });
 });

@@ -70,12 +70,15 @@ export function decideAccess(req: FastifyRequest): Access | null {
     if (process.env.ORACLE_OPERATOR_KEY && req.headers["x-operator-key"] === process.env.ORACLE_OPERATOR_KEY) return { method: "free", payer: "operator", price: 0 };
     const c = carryAccess(key);
     if (c.ok) return { method: "api_key", payer: `key:${c.id}`, price: 0 };            // subscription: unlimited
-    if (key) { const v = validateKey(key); if (v && String(v.plan).startsWith("pack_") && v.remaining >= creditsFor(tool)) return { method: "api_key", payer: `key:${v.id}`, price }; }
+    if (key) { const v = validateKey(key);
+      if (v && String(v.plan).startsWith("pack_") && v.remaining >= creditsFor(tool)) return { method: "api_key", payer: `key:${v.id}`, price };
+      if (v && String(v.plan) === "trial" && v.remaining >= 1) return { method: "api_key", payer: `key:${v.id}`, price: 0 }; }
     return null;                                                                       // no free quota on carry: x402 or subscription
   }
   if (key) {
     const v = validateKey(key);
-    if (v && v.remaining >= creditsFor(tool)) return { method: "api_key", payer: `key:${v.id}`, price };
+    if (v && String(v.plan) === "trial") { if (tool !== "oracle_forecast" && v.remaining >= 1) return { method: "api_key", payer: `key:${v.id}`, price: 0 }; }
+    else if (v && v.remaining >= creditsFor(tool)) return { method: "api_key", payer: `key:${v.id}`, price };
     // invalid or exhausted key → fall through to x402 (agent may still pay per call)
   }
   // Free daily quota is opt-in (header X-Free-Trial: 1) so that unauthenticated probes from indexers see a real 402.

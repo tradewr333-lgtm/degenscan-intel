@@ -128,7 +128,7 @@ ul.tips{margin:10px 0 0;padding-left:18px;color:var(--mute);font-size:13px;line-
 </style>
 <div class="wrap">
 <h1>${T.h1}</h1><p class="lead">${T.lead}</p>
-<section class="card hide" id="keyBox"><h2>${T.keyH}</h2><p class="m">${T.keyP}</p><input id="key" placeholder="dsi_..." autocomplete="off"><button id="saveKey">${T.keySave}</button><div class="err hide" id="keyErr"></div><p class="m" style="margin-top:12px">${T.noKey} <a href="/pricing">${T.sub}</a></p></section>
+<section class="card hide" id="keyBox"><h2>${T.keyH}</h2><p class="m">${T.keyP}</p><input id="key" placeholder="dsi_..." autocomplete="off"><button id="saveKey">${T.keySave}</button><div class="err hide" id="keyErr"></div><p class="m" style="margin-top:12px">${T.noKey} <a href="/pricing">${T.sub}</a></p><p class="m" style="margin-top:8px">API · <a href="/carry#trial"><b>Free trial key / Chave de teste grátis</b></a> (200 calls, 7 days — Carry Data + feed)</p></section>
 <section class="hide" id="main">
 <div class="card"><div class="row"><div><span class="m">${T.plan}</span> <b id="plan">—</b></div><div><b id="left">—</b> <span class="m">${T.left}</span></div><button class="ghost" id="chg">${T.change}</button></div></div>
 <div class="card"><div class="m">${T.exH}</div><div class="chips">${T.ex.map((e, i) => `<button type="button" class="chip" data-i="${i}">${e[0]}</button>`).join("")}</div><label for="q">${T.qL}</label><textarea id="q" maxlength="500" placeholder="${T.qPh}"></textarea><label for="d">${T.dL}</label><input type="date" id="d"><div class="m hide" id="dHint" style="margin-top:6px">${T.dHint}</div><button id="ask">${T.ask}</button><div class="err hide" id="askErr"></div><ul class="tips">${T.tips.map(t => `<li>${t}</li>`).join("")}</ul></div>

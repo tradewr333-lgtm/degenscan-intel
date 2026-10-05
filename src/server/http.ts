@@ -7,7 +7,7 @@ import { EventsSinceArgs, ImpactForArgs, ExposureGraphArgs, PolymarketContextArg
 import { CONNECTORS } from "../ingest/registry.js";
 import { DB_PATH, getDb, recordCall, weeklyMetrics } from "../store/db.js";
 import { decideAccess, toolForRequest, FREE_MODE, type Access } from "./access.js";
-import { PACKS, CARRY, CARRY_DESK, deskSeats, setCarrySetting, deskAccess, createPackKey, createCarryKey, carryAccess, activatePackKey, dropPendingKey, keyStatus, type Pack } from "./keys.js";
+import { PACKS, CARRY, CARRY_DESK, TRIAL, createTrialKey, trialMetrics, validateKey, deskSeats, setCarrySetting, deskAccess, createPackKey, createCarryKey, carryAccess, activatePackKey, dropPendingKey, keyStatus, type Pack } from "./keys.js";
 import { installX402, PAY_TO_SOLANA, SOLANA_NETWORK } from "./x402v2.js";
 import { installDocs } from "./docs.js";
 import { installOracleRoutes } from "./oracle-routes.js";
@@ -33,7 +33,7 @@ const EXCLUDED_WALLETS = (process.env.EXCLUDED_WALLETS ?? "0x5344722b8D037827A9a
 const REST_FOR: Record<string, string> = { events_since: "/v1/events?since=4h&universe=NVDA,BTC", impact_for: "/v1/impact/{asset_id}?since=24h", exposure_graph: "/v1/graph/{asset_id}?depth=2", regime_snapshot: "/v1/regime", explain: "/v1/explain/{event_id}", polymarket_context: "/v1/polymarket/{market}?since=48h", pulse: "/v1/pulse", news_for: "/v1/news/{ticker}?since=24h", derivs_for: "/v1/derivs/{symbol}", price_for: "/v1/price/{symbol}", funding_alerts: "/v1/funding/alerts", whale_moves: "/v1/whales?min_usd=1000000", polymarket_top: "/v1/polymarket/top?sort=volume_24h", filings_for: "/v1/filings/{ticker}?since=7d", calendar: "/v1/calendar?days=7", brief: "/v1/brief/{asset_id}", token_verdict: "/v1/token/verdict/{address}?chain=base", oracle_board: "/v1/oracle/board", polymarket_edge: "/v1/oracle/edge?min_abs=0.02", oracle_forecast: "/v1/oracle/forecast" };
 const OPENAPI = (base: string) => ({
   openapi: "3.1.0",
-  info: { title: "Degenscan Intel", version: "0.10.33", description: "Cross-asset market event intelligence for AI trading agents. Priced routes return HTTP 402 with x402 v2 payment requirements (USDC on Base) unless X-API-KEY is sent or the free trial header X-Free-Trial: 1 is present (100 calls/day/IP). Information and analytics only — not investment advice.", contact: { name: "Marbella Collins LLC", email: "contact@degenscan.io" }, license: { name: "MIT" } },
+  info: { title: "Degenscan Intel", version: "0.10.35", description: "Cross-asset market event intelligence for AI trading agents. Priced routes return HTTP 402 with x402 v2 payment requirements (USDC on Base) unless X-API-KEY is sent or the free trial header X-Free-Trial: 1 is present (100 calls/day/IP). Information and analytics only — not investment advice.", contact: { name: "Marbella Collins LLC", email: "contact@degenscan.io" }, license: { name: "MIT" } },
   servers: [{ url: base }],
   components: { securitySchemes: { apiKey: { type: "apiKey", in: "header", name: "X-API-KEY" }, freeTrial: { type: "apiKey", in: "header", name: "X-Free-Trial", description: "Send the value 1 for 100 free calls/day per IP." }, x402: { type: "apiKey", in: "header", name: "PAYMENT-SIGNATURE", description: "x402 v2 payment payload (base64). Obtain requirements from the 402 response header PAYMENT-REQUIRED." } } },
   paths: {
@@ -67,6 +67,7 @@ const OPENAPI = (base: string) => ({
     "/v1/oracle/track-record": { get: { summary: "Oracle: public Brier track record overall, by domain and vs. market (free)", responses: { "200": { description: "brier, vs_market, by_domain, recent[]" } } } },
     "/v1/universe": { get: { summary: "Asset universe (free)", responses: { "200": { description: "assets[]" } } } },
     "/v1/sources": { get: { summary: "Connector health (free)", responses: { "200": { description: "sources[]" } } } },
+    "/v1/keys/trial": { post: { summary: "FREE TRIAL KEY — e-mail → 200 calls, 7 days, no card (Carry Data + event feed; not the oracle). One per e-mail, one per IP per 24 h.", requestBody: { content: { "application/json": { schema: { type: "object", properties: { email: { type: "string" } }, required: ["email"] }, example: { email: "you@example.com" } } } }, responses: { "201": { description: "{ api_key: dsi_trial_…, calls: 200, expires_at }" }, "429": { description: "already issued for this e-mail / network" } } } },
     "/v1/carry/stats": { get: { summary: "Carry Oracle dataset size, tiers and links (free)", responses: { "200": { description: "funding rows, coins, dexes, first/last hour, tiers" } } } },
     "/v1/carry/funding-matrix": { get: { summary: "Carry Oracle: annualised funding for every perp on every Hyperliquid dex (subscription: X-API-KEY dsi_carry_, US$100/month)", security: [{ apiKey: [] }], parameters: [{ name: "dex", in: "query", schema: { type: "string" } }, { name: "min_vol", in: "query", schema: { type: "number" } }], responses: { "200": { description: "items[] {coin, dex, base, funding_1h, funding_apr, mark, oi_usd, vol24_usd, spot}" }, "402": { description: "subscription required — how to pay" } } } },
     "/v1/carry/xdex": { get: { summary: "Carry Oracle: same ticker on 2+ HIP-3 dexes — funding spread now/14d, % positive hours, basis, liquidity (subscription)", security: [{ apiKey: [] }], parameters: [{ name: "min_vol", in: "query", schema: { type: "number" } }, { name: "limit", in: "query", schema: { type: "number" } }], responses: { "200": { description: "items[] {base, legs[], spread_apr_now, spread_apr_14d, basis_pct, min_leg_vol24_usd}" }, "402": { description: "subscription required" } } } },
@@ -121,7 +122,7 @@ export async function buildHttp() {
   const billing = (req: any, tool: string) => req.x402Context ? { tool, price_usd: PRICES[tool] ?? 0.005, method: "x402" } : { tool, price_usd: req.intelAccess?.price ?? 0, method: req.intelAccess?.method ?? "free" };
 
   app.get("/", async () => ({
-    name: "degenscan-intel", version: "0.10.33",
+    name: "degenscan-intel", version: "0.10.35",
     description: "No key required: market-event intelligence for trading agents — SEC filings, Fed/FOMC, regulators, disasters, Nasdaq halts, DeFi hacks, Polymarket odds, Hyperliquid funding/OI — scored per asset. 100 free calls/day, then USDC per call (x402, Base/Solana) or API key.",
     mcp: `${PUBLIC_URL}/mcp`, rest: `${PUBLIC_URL}/v1`, pricing: TOOL_DOCS, skill: `${PUBLIC_URL}/skill.md`, openapi: `${PUBLIC_URL}/openapi.json`, x402: `${PUBLIC_URL}/.well-known/x402`, plans: `${PUBLIC_URL}/v1/plans`, prepaid_keys: `${PUBLIC_URL}/v1/keys/packs`, metrics: `${PUBLIC_URL}/v1/metrics`, docs: `${PUBLIC_URL}/docs`, sdks: { js: "npm i @degenscan/intel", python: "pip install degenscan-intel" }, github: "https://github.com/tradewr333-lgtm/degenscan-intel", contact: "contact@degenscan.io",
     operator: OPERATOR, disclaimer: DISCLAIMER, license: "MIT",
@@ -129,7 +130,7 @@ export async function buildHttp() {
 
   // Public usage metrics (free): one row per week since launch; owner/test wallets listed separately, never counted as customers.
   const metrics = () => ({ since: METRICS_SINCE, excluded_owner_wallets: EXCLUDED_WALLETS, note: "Paid calls = settled x402 payments (USDC on Base, tx hashes verifiable on basescan.org). Free calls = daily quota. Owner/test wallets are excluded from customers and revenue.", weeks: weeklyMetrics(METRICS_SINCE, EXCLUDED_WALLETS) });
-  app.get("/v1/metrics", async () => metrics());
+  app.get("/v1/metrics", async () => ({ ...metrics(), trial: trialMetrics() }));
   app.get("/v1/metrics.csv", async (_r, reply) => {
     const m = metrics();
     const head = "week_start,week_end,calls_free,calls_api_key,calls_paid_x402,unique_paying_wallets,usdc_revenue,stripe_active_subscriptions,tx_hashes,excluded_owner_calls,excluded_owner_usdc,excluded_owner_tx_hashes";
@@ -162,13 +163,15 @@ export async function buildHttp() {
       ...Object.entries(PACKS).map(([k, v]) => ({ tool: `prepaid_key:${k}`, price_usd: v.usd, http: `POST ${PUBLIC_URL}/v1/keys/x402/${k}`, calls: v.calls })),
     ],
     free: [`GET ${PUBLIC_URL}/v1/universe`, `GET ${PUBLIC_URL}/v1/sources`, `GET ${PUBLIC_URL}/v1/metrics`, `GET ${PUBLIC_URL}/health`, "MCP initialize/tools/list"],
+    carry: { subscription: `US$${CARRY.usd_month}/month flat (unlimited): card ${PUBLIC_URL}/v1/carry/checkout · USDC POST ${PUBLIC_URL}/v1/keys/x402/carry_month`, desk: `US$${CARRY_DESK.usd_month}/month: POST ${PUBLIC_URL}/v1/keys/x402/carry_desk_month`, pay_per_call: ["funding-matrix", "xdex", "spot-perp", "history/{coin}", "naked", "watchdog"].map((r, i) => ({ http: `GET ${PUBLIC_URL}/v1/carry/${r}`, price_usd: [0.03, 0.05, 0.03, 0.02, 0.01, 0.01][i] })), docs: `${PUBLIC_URL}/docs/carry` },
+    trial_key: { http: `POST ${PUBLIC_URL}/v1/keys/trial`, body: { email: "you@example.com" }, calls: TRIAL.calls, days: TRIAL.days, covers: "Carry Data + event feed (not the oracle)" },
     free_trial: { header: "X-Free-Trial: 1", calls_per_day_per_ip: 100, note: "Priced REST routes return 402 unless this header is sent or payment/X-API-KEY is provided. MCP tools/call gets the trial automatically." },
     docs: { llms: `${PUBLIC_URL}/llms.txt`, skill: `${PUBLIC_URL}/skill.md`, openapi: `${PUBLIC_URL}/openapi.json`, owned_wallets: `${PUBLIC_URL}/wallets.json`, metrics: `${PUBLIC_URL}/v1/metrics` },
   }));
   // A2A Agent Card (a2a-protocol.org): lets A2A registries (a2aregistry.org, a2a-registry.org) and agents discover what we offer.
   // We expose HTTP+JSON (REST) and MCP; payment is x402 on each call. No A2A JSON-RPC task endpoint is claimed.
   const AGENT_CARD = () => ({
-    protocolVersion: "0.3.0", name: "Degenscan Intel", version: "0.10.33",
+    protocolVersion: "0.3.0", name: "Degenscan Intel", version: "0.10.35",
     description: "Market-event intelligence and calibrated probability forecasts for AI trading agents: ~40 primary sources (SEC, Fed, Polymarket, Hyperliquid, on-chain) scored into per-asset impacts; token contract risk verdicts; public Brier track record. Pay per call with x402 (USDC on Base or Solana) or an API key. Information and analytics only — not investment advice.",
     url: `${PUBLIC_URL}/a2a`, preferredTransport: "JSONRPC",
     additionalInterfaces: [{ url: `${PUBLIC_URL}/a2a`, transport: "JSONRPC" }, { url: `${PUBLIC_URL}/v1`, transport: "HTTP+JSON" }],
@@ -264,6 +267,8 @@ export async function buildHttp() {
     if (process.env.ORACLE_OPERATOR_KEY && req.headers["x-operator-key"] === process.env.ORACLE_OPERATOR_KEY) return true;
     const a = carryAccess(req.headers["x-api-key"] as string | undefined);
     if (a.ok) return true;
+    const tv = req.headers["x-api-key"] ? validateKey(String(req.headers["x-api-key"])) : null;
+    if (tv && String(tv.plan) === "trial" && tv.remaining >= 1) return true;
     carryPaywall(reply, a.reason); return false;
   };
   app.get("/carry", async (req: any, reply: any) => { const { carryPage } = await import("./carry-page.js"); return reply.type("text/html; charset=utf-8").send(carryPage(req.query?.lang === "en" ? "en" : "pt")); });
@@ -331,11 +336,59 @@ export async function buildHttp() {
     const b = req.body ?? {}; if (b.open != null) setCarrySetting("desk_open", b.open ? "1" : "0"); if (b.seats != null && Number(b.seats) >= 0) setCarrySetting("desk_seats", String(Math.floor(Number(b.seats))));
     return deskSeats();
   });
+  // Operator backup/export of the carry dataset (CSV, gzip). ?from=YYYY-MM-DD&to=YYYY-MM-DD&table=funding|spot
+  app.get("/v1/admin/carry/export", async (req: any, reply: any) => {
+    if (!process.env.ORACLE_OPERATOR_KEY || req.headers["x-operator-key"] !== process.env.ORACLE_OPERATOR_KEY) return reply.code(401).send({ error: "operator key required" });
+    const { gzipSync } = await import("node:zlib");
+    const from = Date.parse(String(req.query?.from ?? "2026-01-01")) || 0, to = Date.parse(String(req.query?.to ?? "2100-01-01")) || Date.now();
+    const spot = req.query?.table === "spot";
+    const rows = getDb().prepare(spot ? "SELECT ts, pair, base, mark, vol24 FROM hl_spot WHERE ts >= ? AND ts < ? ORDER BY ts, pair" : "SELECT ts, coin, dex, funding, premium, mark, oracle, oi, vol24, src FROM hl_funding WHERE ts >= ? AND ts < ? ORDER BY ts, coin").all(from, to) as any[];
+    const cols = spot ? ["ts", "pair", "base", "mark", "vol24"] : ["ts", "coin", "dex", "funding", "premium", "mark", "oracle", "oi", "vol24", "src"];
+    const csv = [cols.join(","), ...rows.map(r => cols.map(c => c === "ts" ? new Date(r.ts).toISOString() : (r[c] ?? "")).join(","))].join("\n") + "\n";
+    return reply.header("content-type", "application/gzip").header("content-disposition", `attachment; filename=carry-${spot ? "spot" : "funding"}-${String(req.query?.from ?? "all")}.csv.gz`).send(gzipSync(Buffer.from(csv)));
+  });
+  app.post("/v1/admin/carry/gapfill", async (req: any, reply: any) => {
+    if (!process.env.ORACLE_OPERATOR_KEY || req.headers["x-operator-key"] !== process.env.ORACLE_OPERATOR_KEY) return reply.code(401).send({ error: "operator key required" });
+    const { gapFill } = await import("../carry/hl.js"); gapFill(Number(req.body?.hours ?? 72)).catch(() => {}); return { started: true };
+  });
+  // Free trial key (ordem 05/10 §1): e-mail → 200 calls / 7 days, no card. One per e-mail, one per IP per 24 h.
+  app.post("/v1/keys/trial", async (req: any, reply: any) => {
+    const email = String(req.body?.email ?? "").trim().toLowerCase();
+    if (!/^[^@\s]{1,64}@[^@\s]{1,190}\.[a-z]{2,}$/i.test(email)) return reply.code(400).send({ error: "valid email required", example: { email: "you@example.com" } });
+    const r = createTrialKey(email, _ch("sha256").update(String(req.ip)).digest("hex").slice(0, 16));
+    if ("error" in r) return reply.code(429).send({ error: r.error, next: { subscribe: `${PUBLIC_URL}/carry`, pay_usdc: `POST ${PUBLIC_URL}/v1/keys/x402/carry_month` } });
+    return reply.code(201).send({ api_key: r.key, key_id: r.id, calls: TRIAL.calls, expires_at: r.expires_at,
+      covers: ["/v1/carry/funding-matrix", "/v1/carry/xdex", "/v1/carry/spot-perp", "/v1/carry/history/{coin}", "/v1/carry/naked", "/v1/carry/watchdog", "event feed (/v1/events, /v1/news, /v1/derivs, …)"], not_included: ["oracle_forecast", "Carry Desk routes"],
+      usage: "send header  X-API-KEY: <api_key>", check: `${PUBLIC_URL}/v1/keys/me`, docs: `${PUBLIC_URL}/docs/carry`,
+      after_trial: { carry_data: `US$${CARRY.usd_month}/month flat — ${PUBLIC_URL}/carry`, carry_desk: `US$${CARRY_DESK.usd_month}/month`, pay_per_call: "x402 USDC, no key" }, note: "Shown once. Store it now." });
+  });
+  // Operator: internal keys (e.g. the @degenscan_carry poster bot) — Desk tier, does not take a paid seat.
+  app.post("/v1/admin/carry/internal-key", async (req: any, reply: any) => {
+    if (!process.env.ORACLE_OPERATOR_KEY || req.headers["x-operator-key"] !== process.env.ORACLE_OPERATOR_KEY) return reply.code(401).send({ error: "operator key required" });
+    const label = `internal ${String(req.body?.label ?? "bot").slice(0, 40)}`;
+    const { id, key } = createCarryKey({ via: "internal", tier: req.body?.tier === "data" ? "data" : "desk", label });
+    return { api_key: key, key_id: id, label, note: "Internal key — excluded from Desk seats and from revenue metrics. Shown once." };
+  });
+  // public SEO pages (ordem 05/10 §4): top 5 per table, 1 h behind the paid API
+  const sendCached = (req: any, reply: any, page: { html: string; etag: string }) => {
+    reply.header("cache-control", "public, max-age=300").header("etag", page.etag);
+    if (req.headers["if-none-match"] === page.etag) return reply.code(304).send();
+    return reply.type("text/html; charset=utf-8").send(page.html);
+  };
+  app.get("/carry/leaderboard", async (req: any, reply: any) => { const { leaderboardPage } = await import("./leaderboard.js"); return sendCached(req, reply, leaderboardPage()); });
+  app.get("/hyperliquid-funding-rates", async (_req: any, reply: any) => reply.code(301).redirect("/carry/leaderboard"));
+  app.get("/carry/coin/:coin", async (req: any, reply: any) => {
+    const { coinPage } = await import("./leaderboard.js");
+    const coin = String(req.params.coin ?? "").slice(0, 40);
+    const p = /^[A-Za-z0-9:_.\-]{1,40}$/.test(coin) ? coinPage(coin) : null;
+    if (!p) return reply.code(404).type("text/html; charset=utf-8").send(`<!doctype html><title>Not found</title><p>Unknown market. <a href="/carry/leaderboard">Hyperliquid funding leaderboard</a></p>`);
+    return sendCached(req, reply, p);
+  });
   app.get("/docs/carry", async (req: any, reply: any) => { const { carryDocsPage } = await import("./carry-page.js"); return reply.type("text/html; charset=utf-8").send(carryDocsPage()); });
   app.get("/v1/carry/history/:coin", async (req: any, reply: any) => { if (!carryOk(req, reply)) return reply; return { ...coinHistory(decodeURIComponent(String(req.params.coin)), Number(req.query?.hours ?? 720) || 720), disclaimer: CARRY_DISCLAIMER }; });
   installHelpRoutes(app);
   app.get("/llms.txt", async (_r, reply) => reply.type("text/plain").send(
-    `# Degenscan Intel\n> Cross-asset event intelligence for trading agents: SEC, Fed, Federal Register, USGS, NHC, Nasdaq halts, DefiLlama, Polymarket and 30+ more primary sources normalized into one event schema and scored against an exposure graph into per-asset impacts.\n\n## Carry Oracle — Hyperliquid funding on every dex (subscription)\n- Hourly funding for every perp on every Hyperliquid dex (main + HIP-3: xyz, io, para, mkts…), kept beyond the 500 h the Hyperliquid API returns; cross-dex same-ticker spreads; spot×perp basis; funding extremes with no hedge; market health.\n- Routes (header X-API-KEY: dsi_carry_…): GET ${PUBLIC_URL}/v1/carry/funding-matrix · /v1/carry/xdex · /v1/carry/spot-perp · /v1/carry/history/{coin} (HIP-3 coins prefixed, e.g. xyz:NBIS) · /v1/carry/naked · /v1/carry/watchdog. Free: /v1/carry/stats.\n- Price: US$100/month flat, unlimited calls, no per-request metering. Card: ${PUBLIC_URL}/v1/carry/checkout · USDC (x402, Base or Solana): POST ${PUBLIC_URL}/v1/keys/x402/carry_month = 30 days. Without a carry key the routes answer 402 with how to pay.\n- MCP tools: carry_funding_matrix, carry_xdex, carry_spot_perp, carry_history, carry_naked, carry_watchdog (send X-API-KEY on the MCP request).\n- Docs with real sample responses and field dictionary: ${PUBLIC_URL}/docs/carry. Market data and analytics only — not a signal, not investment advice.\n\n## Endpoints\n- MCP (streamable HTTP): POST ${PUBLIC_URL}/mcp\n- REST: ${PUBLIC_URL}/v1/pulse ($0.001 probe) · /v1/events?since=4h&universe=NVDA,BTC · /v1/impact/{asset} · /v1/graph/{asset} · /v1/regime · /v1/explain/{event_id} · /v1/polymarket/{market}?since=48h · /v1/news/{ticker} · /v1/price/{symbol} ($0.001, no key) · /v1/funding/alerts ($0.001) · /v1/whales ($0.002) · /v1/polymarket/top ($0.002) · /v1/derivs/{symbol} (perp funding/OI, Hyperliquid) · /v1/filings/{ticker} · /v1/calendar?days=7 · /v1/brief/{asset} ($0.10 premium, replaces 6 calls) · /v1/token/verdict/{address}?chain=base ($0.01: token contract risk verdict — honeypot, taxes, mint/pause/blacklist, owner, holders, LP lock, liquidity; EVM + Solana) · POST /v1/oracle/forecast ($0.25, async: calibrated probability for a binary question, Monte Carlo agent societies + expert panel, public Brier record) · /v1/oracle/board ($0.002, daily standing forecasts) · /v1/oracle/edge ($0.002: Polymarket markets where the oracle disagrees most, sorted by |p − odds|) · /oracle (human scorecard page) · /v1/oracle/track-record (free) · /v1/universe (free) · /v1/sources (free)\n\n## Pricing\n${TOOL_DOCS.map(t => `- ${t.tool}: $${t.price_usd} per call`).join("\n")}\n- Free trial: send header  X-Free-Trial: 1  for 100 free calls/day per IP on REST (MCP tools/call gets it automatically). Without it, priced routes answer HTTP 402 with x402 v2 payment requirements (USDC on Base, eip155:8453). Or buy a prepaid key with USDC, no human needed: POST ${PUBLIC_URL}/v1/keys/x402/pack_1k → $5 for 1,000 calls (pack_10k $40, pack_100k $300), lifetime budget, check balance at /v1/keys/me. Or subscribe with a card: ${PUBLIC_URL}/v1/plans. Both give an X-API-KEY header.\n\n## SDKs\n- JavaScript/TypeScript: npm i @degenscan/intel  →  new Intel({ privateKey | apiKey }).eventsSince({ since: "4h", universe: ["NVDA","BTC"] })\n- Python: pip install degenscan-intel  →  Intel(private_key=... | api_key=...).events_since(since="4h", universe=["NVDA","BTC"])\nBoth pay the 402 automatically (USDC on Base) or send X-API-KEY.\n\n## Docs (one page per question, with curl/JS/Python)\n${PUBLIC_URL}/docs · full text: ${PUBLIC_URL}/llms-full.txt\n\n## Agent skill\n${PUBLIC_URL}/skill.md — when to call which tool, recommended loop, how to pay.\n\n## Operator\n${OPERATOR}. Public usage metrics: ${PUBLIC_URL}/v1/metrics (JSON) · ${PUBLIC_URL}/v1/metrics.csv\n\n## Disclaimer\n${DISCLAIMER}\n\n## Schema\nEvent { id, ts_event, kind, title, summary, entities[], severity, novelty, impacts[{asset_id, direction:-1|0|1, confidence, horizon, path[], rationale}], tradable_now[], next_open[], source{tier}, corroboration }\n`));
+    `# Degenscan Intel\n> Cross-asset event intelligence for trading agents: SEC, Fed, Federal Register, USGS, NHC, Nasdaq halts, DefiLlama, Polymarket and 30+ more primary sources normalized into one event schema and scored against an exposure graph into per-asset impacts.\n\n## Free trial key\n- POST ${PUBLIC_URL}/v1/keys/trial {\"email\":\"you@example.com\"} → dsi_trial_ key, 200 calls, 7 days, no card (Carry Data routes + event feed; not the oracle). MCP tool: keys_trial.\n- Clients: npm i degenscan-intel · pip install degenscan-intel · MCP: npx -y degenscan-intel-mcp\n\n## Carry Oracle — Hyperliquid funding on every dex (subscription)\n- Hourly funding for every perp on every Hyperliquid dex (main + HIP-3: xyz, io, para, mkts…), kept beyond the 500 h the Hyperliquid API returns; cross-dex same-ticker spreads; spot×perp basis; funding extremes with no hedge; market health.\n- Routes (header X-API-KEY: dsi_carry_…): GET ${PUBLIC_URL}/v1/carry/funding-matrix · /v1/carry/xdex · /v1/carry/spot-perp · /v1/carry/history/{coin} (HIP-3 coins prefixed, e.g. xyz:NBIS) · /v1/carry/naked · /v1/carry/watchdog. Free: /v1/carry/stats.\n- Price: US$100/month flat, unlimited calls, no per-request metering. Card: ${PUBLIC_URL}/v1/carry/checkout · USDC (x402, Base or Solana): POST ${PUBLIC_URL}/v1/keys/x402/carry_month = 30 days. Or pay per call in USDC (x402, no key): funding-matrix $0.03 · xdex $0.05 · spot-perp $0.03 · history $0.02 · naked $0.01 · watchdog $0.01. Carry Desk (US$450/month, POST ${PUBLIC_URL}/v1/keys/x402/carry_desk_month): /v1/carry/eligible, /capacity, /realized, /afterhours, /alerts. Public leaderboard: ${PUBLIC_URL}/carry/leaderboard.\n- MCP tools: carry_funding_matrix, carry_xdex, carry_spot_perp, carry_history, carry_naked, carry_watchdog (send X-API-KEY on the MCP request).\n- Docs with real sample responses and field dictionary: ${PUBLIC_URL}/docs/carry. Market data and analytics only — not a signal, not investment advice.\n\n## Endpoints\n- MCP (streamable HTTP): POST ${PUBLIC_URL}/mcp\n- REST: ${PUBLIC_URL}/v1/pulse ($0.001 probe) · /v1/events?since=4h&universe=NVDA,BTC · /v1/impact/{asset} · /v1/graph/{asset} · /v1/regime · /v1/explain/{event_id} · /v1/polymarket/{market}?since=48h · /v1/news/{ticker} · /v1/price/{symbol} ($0.001, no key) · /v1/funding/alerts ($0.001) · /v1/whales ($0.002) · /v1/polymarket/top ($0.002) · /v1/derivs/{symbol} (perp funding/OI, Hyperliquid) · /v1/filings/{ticker} · /v1/calendar?days=7 · /v1/brief/{asset} ($0.10 premium, replaces 6 calls) · /v1/token/verdict/{address}?chain=base ($0.01: token contract risk verdict — honeypot, taxes, mint/pause/blacklist, owner, holders, LP lock, liquidity; EVM + Solana) · POST /v1/oracle/forecast ($0.25, async: calibrated probability for a binary question, Monte Carlo agent societies + expert panel, public Brier record) · /v1/oracle/board ($0.002, daily standing forecasts) · /v1/oracle/edge ($0.002: Polymarket markets where the oracle disagrees most, sorted by |p − odds|) · /oracle (human scorecard page) · /v1/oracle/track-record (free) · /v1/universe (free) · /v1/sources (free)\n\n## Pricing\n${TOOL_DOCS.map(t => `- ${t.tool}: $${t.price_usd} per call`).join("\n")}\n- Free trial: send header  X-Free-Trial: 1  for 100 free calls/day per IP on REST (MCP tools/call gets it automatically). Without it, priced routes answer HTTP 402 with x402 v2 payment requirements (USDC on Base, eip155:8453). Or buy a prepaid key with USDC, no human needed: POST ${PUBLIC_URL}/v1/keys/x402/pack_1k → $5 for 1,000 calls (pack_10k $40, pack_100k $300), lifetime budget, check balance at /v1/keys/me. Or subscribe with a card: ${PUBLIC_URL}/v1/plans. Both give an X-API-KEY header.\n\n## SDKs\n- JavaScript/TypeScript: npm i @degenscan/intel  →  new Intel({ privateKey | apiKey }).eventsSince({ since: "4h", universe: ["NVDA","BTC"] })\n- Python: pip install degenscan-intel  →  Intel(private_key=... | api_key=...).events_since(since="4h", universe=["NVDA","BTC"])\nBoth pay the 402 automatically (USDC on Base) or send X-API-KEY.\n\n## Docs (one page per question, with curl/JS/Python)\n${PUBLIC_URL}/docs · full text: ${PUBLIC_URL}/llms-full.txt\n\n## Agent skill\n${PUBLIC_URL}/skill.md — when to call which tool, recommended loop, how to pay.\n\n## Operator\n${OPERATOR}. Public usage metrics: ${PUBLIC_URL}/v1/metrics (JSON) · ${PUBLIC_URL}/v1/metrics.csv\n\n## Disclaimer\n${DISCLAIMER}\n\n## Schema\nEvent { id, ts_event, kind, title, summary, entities[], severity, novelty, impacts[{asset_id, direction:-1|0|1, confidence, horizon, path[], rationale}], tradable_now[], next_open[], source{tier}, corroboration }\n`));
 
   // ---- REST
   const coerce = (q: any) => ({ ...q, universe: typeof q.universe === "string" ? q.universe.split(",") : q.universe, kinds: typeof q.kinds === "string" ? q.kinds.split(",") : q.kinds,
@@ -445,7 +498,7 @@ export async function buildHttp() {
       }
       if (result.type === "payment-verified") verified = result;
     }
-    const server = buildMcpServer({ carryKey: req.headers["x-api-key"] as string | undefined, operator: Boolean(process.env.ORACLE_OPERATOR_KEY && req.headers["x-operator-key"] === process.env.ORACLE_OPERATOR_KEY), carryPaid: !FREE_MODE && (Boolean(verified) || access?.method === "api_key") });
+    const server = buildMcpServer({ carryKey: req.headers["x-api-key"] as string | undefined, operator: Boolean(process.env.ORACLE_OPERATOR_KEY && req.headers["x-operator-key"] === process.env.ORACLE_OPERATOR_KEY), carryPaid: !FREE_MODE && (Boolean(verified) || access?.method === "api_key"), ip: req.ip });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     await server.connect(transport);
     reply.hijack();

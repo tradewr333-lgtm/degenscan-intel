@@ -1,4 +1,5 @@
 import { CARRY, CARRY_DESK, deskSeats } from "./keys.js";
+import { trialForm } from "./trial-form.js";
 import { carryStats, fundingMatrix, crossDex, spotPerp, coinHistory, naked, watchdog } from "../carry/hl.js";
 
 /** Public page for the Carry Oracle (pt default, ?lang=en). Flat US$100/month — card or USDC. */
@@ -49,6 +50,8 @@ export function carryPage(lang: "pt" | "en" = "pt"): string {
 .box{border:1px solid #2a2f36;border-radius:14px;padding:18px;margin:18px 0;background:#11151b}.price{font-size:34px;font-weight:700}.sub{color:#9aa0a6}.btn{display:inline-block;padding:12px 18px;border-radius:10px;text-decoration:none;font-weight:600;margin:8px 8px 0 0}
 .b1{background:#4f8cff;color:#fff}.b2{background:#1b2230;color:#aac4ff;border:1px solid #2b3a55}.stats{display:flex;flex-wrap:wrap;gap:18px}.stats div{min-width:120px}.stats b{font-size:22px;display:block}li{margin:6px 0}</style>
 <h1>${T.title}</h1><p>${T.lead}</p>
+${trialForm(pt)}
+<p style="color:#9aa0a6">${pt ? "Ver uma amostra pública (top 5, 1 h de atraso):" : "Public sample (top 5, 1 h delay):"} <a href="/carry/leaderboard">/carry/leaderboard</a></p>
 <div class="box"><div class="price">${T.price}</div><div class="sub">${T.priceSub}</div>
 <a class="btn b1" href="/v1/carry/checkout">${T.card}</a><a class="btn b2" href="#usdc">${T.usdc}</a>
 <p id="usdc" class="sub">${T.usdcHow}</p><p class="sub">${pt ? "Agentes também podem pagar por chamada em USDC (x402), sem assinatura: de US$ 0,01 a 0,05 por chamada — veja <a href=\"/docs/carry\">/docs/carry</a>." : "Agents can also pay per call in USDC (x402), no subscription: US$0.01–0.05 per call — see <a href=\"/docs/carry\">/docs/carry</a>."}</p></div>
@@ -118,6 +121,7 @@ export function carryDocsPage(): string {
 <style>body{font-family:system-ui,sans-serif;max-width:920px;margin:0 auto;padding:24px 16px;background:#0b0d10;color:#e8eaed;line-height:1.55}a{color:#7cc4ff}pre{background:#151a21;border-radius:8px;padding:12px;overflow:auto;font-size:12.5px;max-height:420px}code{background:#151a21;padding:1px 5px;border-radius:5px}table{border-collapse:collapse;width:100%;font-size:14px}td,th{border:1px solid #2a2f36;padding:6px 8px;text-align:left;vertical-align:top}</style>
 <h1>Carry Oracle — API docs</h1>
 <p>Hourly funding for every perp on every Hyperliquid dex (main + HIP-3), kept beyond the 500 h the Hyperliquid API returns. Below: <b>real responses</b> from the latest hourly snapshot, truncated to a few rows (subscribers get every row, in real time).</p>
+<p><b>Free trial key:</b> <code>POST /v1/keys/trial {"email":"you@example.com"}</code> → <code>dsi_trial_…</code>, 200 calls, 7 days, no card (or the form on <a href="/carry#trial">/carry</a>). Leaderboard (public, 1 h delay): <a href="/carry/leaderboard">/carry/leaderboard</a>.</p>
 <p><b>Access:</b> header <code>X-API-KEY: dsi_carry_…</code>. <b>Price:</b> US$100/month flat, unlimited calls. Card: <a href="/v1/carry/checkout">/v1/carry/checkout</a> · USDC (x402, Base or Solana): <code>POST /v1/keys/x402/carry_month</code> = 30 days. MCP tools <code>carry_*</code> at <code>/mcp</code>. Without a key every route answers <code>402</code> with how to pay. Free: <a href="/v1/carry/stats">/v1/carry/stats</a>. Product page: <a href="/carry">/carry</a>.</p>
 <p><b>Query parameters:</b> funding-matrix <code>?dex=xyz&amp;min_vol=</code> · xdex / spot-perp <code>?min_vol=100000&amp;limit=50</code> · history <code>/{coin}?hours=720</code> (HIP-3 coins prefixed, e.g. <code>xyz:NBIS</code>) · naked <code>?min_abs_apr=0.5&amp;min_vol=</code>.</p>
 ${blocks || "<p>(samples appear after the first hourly snapshot)</p>"}

@@ -292,6 +292,8 @@ export async function hourlyDesk() {
   const newNaked = nk.items.filter((i: any) => !nkPrev.includes(i.coin));
   const wd = watchdog(); const flagsNow = wd.markets.filter((m: any) => m.risk_flags.length).map((m: any) => `${m.coin}:${m.risk_flags.join("+")}`); const flagsPrev: string[] = stateGet("flags") ?? flagsNow; stateSet("flags", flagsNow);
   const newFlags = wd.markets.filter((m: any) => m.risk_flags.length && !flagsPrev.includes(`${m.coin}:${m.risk_flags.join("+")}`));
+  // public leaderboard headline (count only, never the coins): US equities on HIP-3 trading away from the last NYSE close
+  try { const a = await afterhours(); const away = a.items.filter((i: any) => Math.abs(i.premium_pct ?? 0) >= 1); stateSet("ah_summary", { at: a.as_of, session: a.session, n: a.count, n_away_1pct: away.length, median_abs_pct: away.length ? r4([...away.map((i: any) => Math.abs(i.premium_pct))].sort((x, y) => x - y)[Math.floor(away.length / 2)]) : null }); } catch { /* optional */ }
   const alerts = getDb().prepare("SELECT a.* FROM carry_alerts a JOIN api_keys k ON k.id = a.key_id WHERE k.status = 'active' AND k.plan = 'carry_desk' AND (k.expires_at IS NULL OR k.expires_at > ?)").all(new Date().toISOString()) as any[];
   if (!alerts.length) return { alerts: 0 };
   let ah: any = null;
@@ -312,4 +314,12 @@ export async function hourlyDesk() {
     }
   }
   return { alerts: alerts.length, eligible_on: on.length, eligible_off: off.length };
+}
+
+/** Aggregates for the public leaderboard: counts only. */
+export function publicDeskSummary() {
+  try { ensureDeskTables(); const d = getDb();
+    const elig = (d.prepare("SELECT COUNT(*) AS n FROM carry_eligibility WHERE eligible = 1").get() as any)?.n ?? 0;
+    return { eligible: elig, afterhours: stateGet("ah_summary") };
+  } catch { return { eligible: 0, afterhours: null }; }
 }

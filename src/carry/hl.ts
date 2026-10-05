@@ -122,6 +122,29 @@ export async function backfillMissing(coins: string[], gapMs = Number(process.en
   console.log(`[carry] backfill done: ${backfill.done} coins, +${backfill.rows} rows, ${backfill.errors} errors`);
 }
 
+let gap = { running: false, last_run: null as string | null, coins: 0, rows_added: 0, errors: 0 };
+export async function gapFill(hours = 72, gapMs = Number(process.env.CARRY_BACKFILL_GAP_MS ?? 1200)) {
+  if (gap.running || backfill.running) return gap;
+  ensureCarryTables();
+  const t = (getDb().prepare("SELECT MAX(ts) AS t FROM hl_funding WHERE src = 'snapshot'").get() as any)?.t;
+  if (!t) return gap;
+  const coins = (getDb().prepare("SELECT coin FROM hl_funding WHERE ts = ? AND src = 'snapshot'").all(t) as any[]).map(r => r.coin);
+  gap = { running: true, last_run: new Date().toISOString(), coins: coins.length, rows_added: 0, errors: 0 };
+  const ins = getDb().prepare("INSERT OR IGNORE INTO hl_funding (coin, dex, ts, funding, premium, src) VALUES (?,?,?,?,?, 'history')");
+  for (const coin of coins) {
+    try {
+      const rows = await info<any[]>({ type: "fundingHistory", coin, startTime: Date.now() - hours * HOUR });
+      const { dex } = splitCoin(coin); const db = getDb(); db.exec("BEGIN");
+      try { for (const r of rows ?? []) { const ts = Math.floor(Number(r.time) / HOUR) * HOUR; gap.rows_added += Number(ins.run(coin, dex, ts, num(r.fundingRate), num(r.premium)).changes); } db.exec("COMMIT"); }
+      catch (e) { db.exec("ROLLBACK"); throw e; }
+    } catch { gap.errors++; await sleep(5_000); }
+    await sleep(gapMs);
+  }
+  gap.running = false;
+  if (gap.rows_added) console.log(`[carry] gap fill: +${gap.rows_added} missing hours recovered across ${gap.coins} coins`);
+  return gap;
+}
+
 /** Hourly scheduler: snapshot at :03 every hour; first run 60 s after boot, then backfill whatever is missing. */
 export function startCarryCollector() {
   if (process.env.CARRY_COLLECTOR === "0") return;
@@ -132,6 +155,10 @@ export function startCarryCollector() {
       import("./desk.js").then(m => m.hourlyDesk()).catch(e => console.warn("[carry] desk:", (e as Error).message)); }
     catch (e) { lastSnapshot = { ...(lastSnapshot ?? { perps: 0, spot: 0, dexes: [] }), at: lastSnapshot?.at ?? "", error: (e as Error).message }; console.warn("[carry] snapshot:", (e as Error).message); }
   };
+  // Daily gap fill (00:10 UTC): re-pull the last 72 h of funding for every active coin, so an outage of the service never leaves a
+  // hole in the funding history (Hyperliquid keeps 500 h; INSERT OR IGNORE keeps what we already have).
+  let lastGapDay = "";
+  setInterval(() => { const d = new Date(); const day = d.toISOString().slice(0, 10); if (day !== lastGapDay && d.getUTCHours() === 0 && d.getUTCMinutes() >= 10) { lastGapDay = day; gapFill(72).catch(e => console.warn("[carry] gapfill:", (e as Error).message)); } }, 60_000).unref();
   setTimeout(() => { lastHour = Math.floor(Date.now() / HOUR); run(); }, 60_000);
   setInterval(() => { const d = new Date(); const h = Math.floor(d.getTime() / HOUR); if (h !== lastHour && d.getUTCMinutes() >= 3) { lastHour = h; run(); } }, 30_000).unref();
   console.log("[carry] Hyperliquid funding collector: hourly at :03 (all perp dexes + spot), 500h backfill per new coin");
@@ -146,7 +173,7 @@ export function carryStats() {
   const snaps = (d.prepare("SELECT COUNT(DISTINCT ts) AS n FROM hl_funding WHERE src = 'snapshot'").get() as any).n;
   return {
     funding: { rows: f.rows, coins: f.coins, dexes: f.dexes, first_hour: f.first ? new Date(f.first).toISOString() : null, last_hour: f.last ? new Date(f.last).toISOString() : null, hourly_snapshots: snaps },
-    spot: { rows: s.rows, pairs: s.pairs }, last_snapshot: lastSnapshot, backfill,
+    spot: { rows: s.rows, pairs: s.pairs }, last_snapshot: lastSnapshot, backfill, gap_fill: gap,
     note: "Hyperliquid's API keeps only 500 h of funding; this dataset keeps every hour from the first snapshot onward, for every dex.",
   };
 }
@@ -205,8 +232,8 @@ export function coinHistory(coin: string, hours = 24 * 30) {
 
 /** Spot × perp on the main dex: perp funding (now, 14 d, % positive hours) next to the spot market of the same asset and the
  *  perp/spot basis. The classic cash-and-carry leg pair. Statistics, not a trade call. */
-export function spotPerp(opts: { minVol?: number; limit?: number } = {}) {
-  const m = fundingMatrix({ dex: "main" });
+export function spotPerp(opts: { minVol?: number; limit?: number; delayH?: number } = {}) {
+  const m = fundingMatrix({ dex: "main", delayH: opts.delayH });
   if (!m.as_of) return { as_of: null, items: [] };
   const t = new Date(m.as_of).getTime(); const d = getDb();
   const avg = d.prepare("SELECT AVG(funding) AS a, SUM(CASE WHEN funding > 0 THEN 1 ELSE 0 END) * 1.0 / COUNT(*) AS pos, COUNT(*) AS n FROM hl_funding WHERE coin = ? AND ts > ? AND ts <= ?");
@@ -219,9 +246,9 @@ export function spotPerp(opts: { minVol?: number; limit?: number } = {}) {
 }
 
 /** Funding extremes with NO hedge leg on Hyperliquid (no spot market, no same-ticker listing on another HIP-3 dex). Raw data, not a call. */
-export function naked(opts: { minAbsApr?: number; minVol?: number; limit?: number } = {}) {
+export function naked(opts: { minAbsApr?: number; minVol?: number; limit?: number; delayH?: number } = {}) {
   const thr = opts.minAbsApr ?? 0.5;
-  const m = fundingMatrix();
+  const m = fundingMatrix({ delayH: opts.delayH });
   if (!m.as_of) return { as_of: null, threshold_apr: thr, items: [] };
   const t = new Date(m.as_of).getTime(); const d = getDb();
   const hip3Bases = new Map<string, number>();
