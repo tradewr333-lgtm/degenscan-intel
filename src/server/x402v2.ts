@@ -88,6 +88,15 @@ export function buildRoutes(): RoutesConfig {
       accepts: accept("funding_alerts"), description: "Coins with extreme perp funding right now on Hyperliquid, sorted by |rate|, with annualized %, side paying, open interest and predicted funding per venue (Binance, Bybit, Hyperliquid). Poll every 5–15 min to catch crowded positioning.", mimeType: "application/json", ...common,
       extensions: declareDiscoveryExtension({ input: { min_abs_rate_1h: 0.0003, limit: 15 }, inputSchema: { properties: { min_abs_rate_1h: { type: "number" }, limit: { type: "number" } } }, output: { example: { count: 2, alerts: [{ symbol: "HYPE", funding_1h: 0.0008, annualized_pct: 700.8, side_paying: "longs", open_interest_usd: 1798314282 }] } } }),
     },
+    ...Object.fromEntries(([
+      ["GET /v1/br/premium", "br_premium", "Brazil premium: USDT/USDC-BRL on Mercado Bitcoin vs the official BCB PTAX, and BTC-BRL vs BTC-USD — how much Brazilians pay over the official dollar and over the global BTC price.", {}],
+      ["GET /v1/stablecoins", "stablecoin_supply", "Stablecoin supply: circulating and 1d/7d/30d net change per stablecoin and in total (proxy for fresh on-chain dollar liquidity), plus depegs over 50 bps.", { limit: 25 }],
+      ["GET /v1/treasury/auctions", "treasury_auctions", "U.S. Treasury auctions: recent results (high yield, bid-to-cover, indirect/direct/primary-dealer share) and upcoming auctions with size. Public-domain Fiscal Data.", { days: 14 }],
+      ["GET /v1/defi/yields", "defi_yields", "DeFi yields: stablecoin pools above a TVL floor with APY, 30-day mean, share paid in reward tokens and outlier flag.", { min_tvl: 10000000, limit: 25 }],
+    ] as const).map(([route, tool, d, input]) => [route, {
+      accepts: accept(tool), description: `${d} Market data and analytics only — not investment advice.`, mimeType: "application/json", ...common,
+      extensions: declareDiscoveryExtension({ input, inputSchema: { properties: Object.fromEntries(Object.keys(input).map(k => [k, { type: "number" }])) } }),
+    } as RouteConfig])),
     "GET /v1/whales": {
       accepts: accept("whale_moves"), description: "Large stablecoin transfers (USDC/USDT) on Base and Ethereum from public explorers, no key: size in USD, best-effort exchange labels, flow tag (to_exchange / from_exchange / mint / burn / wallet_to_wallet), totals by flow. 60 s cache.", mimeType: "application/json", ...common,
       extensions: declareDiscoveryExtension({ input: { min_usd: 1000000, limit: 25 }, inputSchema: { properties: { min_usd: { type: "number" }, chains: { type: "string" }, limit: { type: "number" } } }, output: { example: { count: 3, totals_usd: { to_exchange: 25000000, from_exchange: 0 }, moves: [{ chain: "ethereum", token: "USDC", usd: 25000000, from_label: "unlabeled", to_label: "Coinbase 10", flow: "to_exchange" }] } } }),

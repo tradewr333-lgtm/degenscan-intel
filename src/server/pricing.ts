@@ -26,6 +26,8 @@ export const PRICES: Record<string, number> = {
   sources_status: 0,
   health: 0,
   keys_trial: 0,
+  // Lote public-apis (06/10): derived from free public sources (Mercado Bitcoin, BCB, DefiLlama, U.S. Treasury Fiscal Data)
+  br_premium: 0.002, stablecoin_supply: 0.002, treasury_auctions: 0.003, defi_yields: 0.003,
   // Carry Data routes/tools (Renato 04/10, seller's order): pay per call in USDC OR the flat US$100/month subscription (unlimited).
   // Prices cross US$100 around 3,000 calls/month so heavy use converges to the subscription. Desk routes are subscription-only.
   carry_funding_matrix: 0.03, carry_xdex: 0.05, carry_spot_perp: 0.03, carry_history: 0.02, carry_naked: 0.01, carry_watchdog: 0.01,
