@@ -16,7 +16,7 @@ const fail = (e: unknown) => ({ content: [{ type: "text" as const, text: `error:
 
 /** Build the MCP server. One instance per stateless HTTP request is fine (cheap). */
 export function buildMcpServer(ctx: { carryKey?: string; operator?: boolean; carryPaid?: boolean; ip?: string } = {}) {
-  const s = new McpServer({ name: "degenscan-intel", version: "0.10.36" }, {
+  const s = new McpServer({ name: "degenscan-intel", version: "0.10.38" }, {
     instructions: [
       "Degenscan Intel: cross-asset event feed for trading agents. Events are normalized from ~40 primary sources (SEC, Fed, Federal Register, USGS, NHC, Nasdaq halts, DefiLlama, Polymarket…) and scored against an exposure graph into per-asset impacts.",
       "Cheapest probe: pulse ($0.001). One-call briefing per asset: brief ($0.10). Typical loop: regime_snapshot → events_since(since='4h', universe=[your book]) → impact_for(asset_id) for anything with confidence ≥ 0.4 → check tradable_now / next_open before acting. For prediction markets: polymarket_context(market) → compare yes_prob with fresh primary-source events.",
@@ -91,7 +91,7 @@ export function buildMcpServer(ctx: { carryKey?: string; operator?: boolean; car
       async (a: any) => { try { return json(await (await import("./macro.js")).stablecoinSupply(a)); } catch (e) { return fail(e); } });
     s.registerTool("treasury_auctions", { title: "U.S. Treasury auctions", description: `Recent U.S. Treasury auction results (high yield, bid-to-cover, indirect/direct/primary-dealer share) and upcoming auctions with size, from public-domain Fiscal Data. $${PRICES.treasury_auctions}/call.`, inputSchema: { days: z.number().int().min(1).max(90).optional(), type: z.enum(["Bill", "Note", "Bond", "TIPS", "FRN", "CMB"]).optional() }, annotations: ro },
       async (a: any) => { try { return json(await (await import("./macro.js")).treasuryAuctions(a)); } catch (e) { return fail(e); } });
-    s.registerTool("defi_yields", { title: "DeFi yields", description: `Stablecoin (or all) DeFi pools above a TVL floor with APY, 30-day mean APY, share paid in reward tokens and DefiLlama outlier flag. Not a risk rating. $${PRICES.defi_yields}/call.`, inputSchema: { min_tvl: z.number().optional(), stable_only: z.boolean().optional(), chain: z.string().optional(), limit: z.number().int().min(1).max(200).optional() }, annotations: ro },
+    s.registerTool("defi_yields", { title: "DeFi yields", description: `Stablecoin (or all) DeFi pools above a TVL floor with APY, 30-day mean APY, share paid in reward tokens and DefiLlama outlier flag. Not a risk rating. $${PRICES.defi_yields}/call.`, inputSchema: { min_tvl: z.number().optional(), stable_only: z.boolean().optional(), chain: z.string().optional(), limit: z.number().int().min(1).max(200).optional(), include_extreme: z.boolean().optional() }, annotations: ro },
       async (a: any) => { try { return json(await (await import("./macro.js")).defiYields(a)); } catch (e) { return fail(e); } });
   }
   s.registerTool("polymarket_top", {

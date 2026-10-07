@@ -35,6 +35,9 @@ export function toolForRequest(req: FastifyRequest): string | null {
   if (url.startsWith("/v1/carry/history/")) return "carry_history";
   if (url === "/v1/carry/naked") return "carry_naked";
   if (url === "/v1/carry/watchdog") return "carry_watchdog";
+  if (url.startsWith("/v1/carry/now/")) return "carry_now";
+  if (url === "/v1/carry/top") return "carry_top";
+  if (url.startsWith("/v1/carry/spread/")) return "carry_spread";
   if (url.startsWith("/v1/carry/")) return null;
   if (url === "/v1/oracle/edge") return "polymarket_edge";
   if (url === "/v1/oracle/board/questions" || (url.startsWith("/v1/oracle/board") && req.method === "POST")) return null;  // free list / operator actions
@@ -58,6 +61,10 @@ export function toolForRequest(req: FastifyRequest): string | null {
   if (url.startsWith("/v1/brief/")) return "brief";
   if (url.startsWith("/v1/token/verdict/")) return "token_verdict";
   if (url === "/v1/br/premium") return "br_premium";
+  if (url === "/v1/br/ptax") return "br_ptax";
+  if (url === "/v1/hl/markets") return "hl_markets";
+  if (url === "/v1/stablecoins/total") return "stablecoins_total";
+  if (url === "/v1/treasury/next") return "treasury_next";
   if (url === "/v1/stablecoins") return "stablecoin_supply";
   if (url === "/v1/treasury/auctions") return "treasury_auctions";
   if (url === "/v1/defi/yields") return "defi_yields";

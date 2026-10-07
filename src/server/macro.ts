@@ -58,14 +58,15 @@ export async function stablecoinSupply(opts: { limit?: number } = {}) {
     return { symbol: a.symbol, name: a.name, peg: a.pegType, mechanism: a.pegMechanism, price: n(a.price), circulating: Math.round(now),
       change_1d: Math.round(now - d), change_7d: Math.round(now - w), change_30d: Math.round(now - m),
       change_7d_pct: w ? r((now / w - 1) * 100, 3) : null, change_30d_pct: m ? r((now / m - 1) * 100, 3) : null,
-      depeg_bps: a.pegType === "peggedUSD" && n(a.price) != null ? Math.round(((n(a.price) as number) - 1) * 10_000) : null, chains: (a.chains ?? []).length };
+      depeg_bps: a.pegType === "peggedUSD" && (n(a.price) ?? 0) > 0 ? Math.round(((n(a.price) as number) - 1) * 10_000) : null, chains: (a.chains ?? []).length };
   }).filter(i => i.circulating > 0).sort((a, b) => b.circulating - a.circulating);
   const usd = items.filter(i => i.peg === "peggedUSD");
   const tot = (k: "circulating" | "change_1d" | "change_7d" | "change_30d") => usd.reduce((a, i) => a + i[k], 0);
   return {
     as_of: new Date().toISOString(),
     totals_usd_pegged: { circulating: tot("circulating"), change_1d: tot("change_1d"), change_7d: tot("change_7d"), change_30d: tot("change_30d") },
-    depegged_over_50bps: usd.filter(i => i.depeg_bps != null && Math.abs(i.depeg_bps) >= 50 && i.circulating >= 10_000_000).map(i => ({ symbol: i.symbol, price: i.price, depeg_bps: i.depeg_bps, circulating: i.circulating })),
+    // below peg only (yield-bearing dollars like USYC/USDY trade above 1 by design); price must exist and be plausible; ≥ US$50M
+    depegged_over_50bps: usd.filter(i => i.depeg_bps != null && i.depeg_bps <= -50 && (i.price ?? 0) >= 0.5 && i.circulating >= 50_000_000).map(i => ({ symbol: i.symbol, price: i.price, depeg_bps: i.depeg_bps, circulating: i.circulating })),
     items: items.slice(0, Math.min(Math.max(Number(opts.limit) || 25, 1), 200)),
     note: "Net new stablecoin supply is a proxy for fresh on-chain dollar liquidity. Mints/burns per transfer: see /v1/whales.",
     sources: ["DefiLlama stablecoins (https://stablecoins.llama.fi)"], disclaimer: MACRO_DISCLAIMER,
@@ -96,7 +97,7 @@ export async function treasuryAuctions(opts: { days?: number; type?: string } = 
 }
 
 // ───────────────────────── DeFi yields
-export async function defiYields(opts: { min_tvl?: number; stable_only?: boolean; chain?: string; limit?: number } = {}) {
+export async function defiYields(opts: { min_tvl?: number; stable_only?: boolean; chain?: string; limit?: number; include_extreme?: boolean } = {}) {
   const j = await memo("yields", 30 * 60_000, () => fetchJson<any>("https://yields.llama.fi/pools", { timeoutMs: 30_000 }));
   const minTvl = Math.max(Number(opts.min_tvl) || 10_000_000, 100_000), stableOnly = opts.stable_only !== false, chain = opts.chain ? String(opts.chain).toLowerCase() : null;
   const items = (j.data as any[]).filter(p => (p.tvlUsd ?? 0) >= minTvl && (!stableOnly || p.stablecoin) && (!chain || String(p.chain).toLowerCase() === chain) && n(p.apy) != null)
@@ -104,7 +105,11 @@ export async function defiYields(opts: { min_tvl?: number; stable_only?: boolean
       apy_mean_30d_pct: r(n(p.apyMean30d), 3), apy_change_7d_pp: r(n(p.apyPct7D), 3), stablecoin: !!p.stablecoin, il_risk: p.ilRisk, exposure: p.exposure, outlier: !!p.outlier,
       reward_share_pct: n(p.apy) && n(p.apyReward) ? r((n(p.apyReward) as number) / (n(p.apy) as number) * 100, 1) : 0, pool_id: p.pool }))
     .sort((a, b) => (b.apy_pct ?? 0) - (a.apy_pct ?? 0));
-  return { as_of: new Date().toISOString(), filters: { min_tvl: minTvl, stable_only: stableOnly, chain }, count: items.length, items: items.slice(0, Math.min(Math.max(Number(opts.limit) || 25, 1), 200)),
+  // extreme = DefiLlama outlier, or APY ≥ 50 %, or APY > 3× its 30-day mean: usually a one-off spike or an incentive about to end
+  const isExtreme = (i: any) => i.outlier || (i.apy_pct ?? 0) >= 50 || (i.apy_mean_30d_pct != null && i.apy_mean_30d_pct > 0 && (i.apy_pct ?? 0) > 3 * i.apy_mean_30d_pct);
+  const extreme = items.filter(isExtreme);
+  const shown = opts.include_extreme ? items : items.filter(i => !isExtreme(i));
+  return { as_of: new Date().toISOString(), filters: { min_tvl: minTvl, stable_only: stableOnly, chain, include_extreme: !!opts.include_extreme }, count: shown.length, extreme_excluded: opts.include_extreme ? 0 : extreme.length, items: shown.slice(0, Math.min(Math.max(Number(opts.limit) || 25, 1), 200)),
     note: "APY as reported by each protocol via DefiLlama. reward_share_pct = part of the APY paid in incentive tokens (can stop or fall). outlier = flagged by DefiLlama as statistically unusual. Not a risk rating.",
     sources: ["DefiLlama yields (https://yields.llama.fi/pools)"], disclaimer: MACRO_DISCLAIMER };
 }

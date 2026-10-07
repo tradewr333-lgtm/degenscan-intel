@@ -222,3 +222,30 @@ describe("Free trial key + public leaderboard (ordem 05/10)", () => {
     for (const u of ["/carry/leaderboard", "/docs/carry", "/previsoes", "/pricing", "/carry/coin/xyz%3ANBIS"]) expect(sm).toContain(u);
   });
 });
+
+describe("Micro-routes for agent loops (vendedor 07/10)", () => {
+  it("carry now/top/spread and hl markets answer one small object; priced and in discovery; metrics has the trust block", async () => {
+    const { buildHttp } = await import("../src/server/http.js");
+    const k = await import("../src/server/keys.js");
+    const app = await buildHttp();
+    const c = k.createCarryKey({ via: "stripe", stripe_subscription: "sub_test_micro" });
+    const H = { "x-api-key": c.key };
+    const now = await app.inject({ url: "/v1/carry/now/btc", headers: H });
+    expect(now.statusCode).toBe(200); expect(now.json().coin).toBe("BTC"); expect(now.json().funding_apr).toBeCloseTo(0.1095, 3);
+    expect((await app.inject({ url: "/v1/carry/now/XYZ:nbis", headers: H })).json().coin).toBe("xyz:NBIS");
+    expect((await app.inject({ url: "/v1/carry/now/NOPE", headers: H })).statusCode).toBe(404);
+    expect((await app.inject({ url: "/v1/carry/now/BTC" })).statusCode).toBe(402);
+    const top = await app.inject({ url: "/v1/carry/top?n=3", headers: H });
+    expect(top.statusCode).toBe(200); expect(top.json().xdex[0].base).toBe("NBIS");
+    const sp = await app.inject({ url: "/v1/carry/spread/nbis", headers: H });
+    expect(sp.statusCode).toBe(200); expect(sp.json().legs.length).toBe(2);
+    const mk = await app.inject({ url: "/v1/hl/markets" });
+    expect(mk.statusCode).toBe(200); expect(mk.json().dexes.xyz).toContain("xyz:NBIS");
+    const { PRICES } = await import("../src/server/pricing.js");
+    for (const t of ["carry_now", "carry_spread", "hl_markets", "br_ptax", "stablecoins_total", "treasury_next"]) expect(PRICES[t]).toBe(0.001);
+    expect(PRICES.carry_top).toBe(0.002);
+    expect((await app.inject({ url: "/llms.txt" })).body).toContain("/v1/carry/now/{coin}");
+    const m = (await app.inject({ url: "/v1/metrics" })).json();
+    expect(Array.isArray(m.routes_30d)).toBe(true); expect(m.latency_ms).toBeTruthy(); expect(m.price_integrity).toContain("tx hash");
+  });
+});

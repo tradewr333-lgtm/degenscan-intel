@@ -22,6 +22,30 @@ import { FREE_MODE } from "./access.js";
 const NETWORK = (process.env.X402_NETWORK === "base-sepolia" ? "eip155:84532" : "eip155:8453") as `eip155:${number}`;
 const PAY_TO = process.env.X402_PAY_TO ?? "0x0000000000000000000000000000000000000000";
 const FACILITATOR = process.env.X402_FACILITATOR_URL ?? "https://facilitator.payai.network";
+// Output examples for the Bazaar catalog (metadata completeness is a ranking factor). Real shapes, truncated values.
+const CARRY_OUT: Record<string, any> = {
+  carry_funding_matrix: { as_of: "2026-10-07T20:00:00.000Z", count: 330, items: [{ coin: "xyz:NBIS", dex: "xyz", base: "NBIS", funding_1h: 0.0000412, funding_apr: 0.3609, mark: 101.2, oi_usd: 8120000, vol24_usd: 22400000, spot: null }] },
+  carry_xdex: { as_of: "2026-10-07T20:00:00.000Z", count: 12, items: [{ base: "NBIS", legs: [{ coin: "xyz:NBIS", dex: "xyz", funding_apr: 0.36, funding_apr_14d: 0.29 }, { coin: "io:NBIS", dex: "io", funding_apr: 0.05, funding_apr_14d: 0.08 }], spread_apr_now: 0.31, spread_apr_14d: 0.21, basis_pct: 0.42, min_leg_vol24_usd: 1900000 }] },
+  carry_spot_perp: { as_of: "2026-10-07T20:00:00.000Z", count: 25, items: [{ base: "PURR", perp: "PURR", funding_apr: 0.41, funding_apr_14d: 0.37, hours_positive_14d: 0.88, basis_pct: 0.11, spot_pair: "PURR/USDC" }] },
+  carry_history: { coin: "xyz:NBIS", dex: "xyz", hours: 168, items: [{ at: "2026-10-07T19:00:00.000Z", funding_1h: 0.0000412, funding_apr: 0.3609, premium: 0.0004, mark: 101.2, oi_usd: 8120000, vol24_usd: 22400000 }] },
+  carry_naked: { as_of: "2026-10-07T20:00:00.000Z", threshold_apr: 0.5, count: 4, items: [{ coin: "kPEPE", dex: "main", funding_apr_now: 1.12, funding_apr_14d: 0.64, hours_above_threshold_14d: 210, oi_usd: 3400000, why_no_hedge: "no_spot" }] },
+  carry_watchdog: { as_of: "2026-10-07T20:00:00.000Z", dexes: [{ dex: "xyz", markets: 64, active: 61, zero_oi: 2, delisted: 1, oi_usd: 412000000, vol24h_usd: 980000000, risk_flags: [] }], markets: [] },
+};
+const MACRO_OUT: Record<string, any> = {
+  br_premium: { ptax: { usd_brl: 4.9698, date_ddmmyyyy: "06/10/2026" }, crypto_dollar: { usdt_brl: 5.0038, usdt_premium_vs_ptax_pct: 0.684 }, btc: { btc_brl: 427802, btc_usd_coinbase: 85486.6, premium_vs_ptax_pct: 0.695, premium_vs_usdt_pct: 0.01 } },
+  stablecoin_supply: { totals_usd_pegged: { circulating: 314148353181, change_1d: 940735252, change_7d: 1821497520, change_30d: 4209239492 }, depegged_over_50bps: [], items: [{ symbol: "USDT", circulating: 184196143424, change_7d_pct: 0.195 }] },
+  treasury_auctions: { window_days: 14, results: [{ auction_date: "2026-10-06", security_term: "3-Year", high_yield_pct: 4.932, bid_to_cover: 2.62, indirect_pct: 55.3, direct_pct: 30.4, primary_dealer_pct: 10.3 }], upcoming: [{ auction_date: "2026-10-08", security_term: "29-Year 10-Month", offering_usd: 22000000000 }] },
+  defi_yields: { count: 320, extreme_excluded: 9, items: [{ project: "sky-lending", chain: "Ethereum", symbol: "SUSDS", tvl_usd: 4827061985, apy_pct: 3.6, apy_mean_30d_pct: 3.6, reward_share_pct: 0, outlier: false }] },
+};
+const MICRO_OUT: Record<string, any> = {
+  carry_now: { coin: "BTC", dex: "main", as_of: "2026-10-07T20:00:00.000Z", funding_1h: 0.0000125, funding_apr: 0.1095, funding_apr_8h: 0.0981, funding_apr_24h: 0.1012, mark: 85480, oracle: 85460, oi_usd: 2140000000, vol24_usd: 3900000000 },
+  carry_top: { as_of: "2026-10-07T20:00:00.000Z", n: 5, xdex: [{ base: "NBIS", legs: ["xyz:NBIS", "io:NBIS"], spread_apr_now: 0.31, spread_apr_14d: 0.21 }], spot_perp: [{ base: "PURR", perp: "PURR", funding_apr: 0.41, funding_apr_14d: 0.37, basis_pct: 0.11 }] },
+  carry_spread: { base: "NBIS", as_of: "2026-10-07T20:00:00.000Z", legs: [{ coin: "xyz:NBIS", dex: "xyz", funding_apr: 0.36, funding_apr_14d: 0.29 }, { coin: "io:NBIS", dex: "io", funding_apr: 0.05, funding_apr_14d: 0.08 }], spread_apr_now: 0.31, spread_apr_14d: 0.21, basis_pct: 0.42 },
+  hl_markets: { active: 330, delisted: 41, dexes: { main: ["BTC", "ETH", "HYPE"], xyz: ["xyz:NBIS", "xyz:TSLA"] } },
+  br_ptax: { ptax_usd_brl: 4.9698, ptax_date: "06/10/2026", usdt_brl: 5.0038, usdt_premium_vs_ptax_pct: 0.684, btc_premium_vs_ptax_pct: 0.695 },
+  stablecoins_total: { circulating_usd: 314148353181, change_24h_usd: 940735252, change_7d_usd: 1821497520, top3: [{ symbol: "USDT", circulating: 184196143424 }], depegs: 0 },
+  treasury_next: { next: [{ auction_date: "2026-10-08", security_type: "Bond", security_term: "29-Year 10-Month", offering_usd: 22000000000 }], last_result: { auction_date: "2026-10-06", security_term: "3-Year", high_yield_pct: 4.932, bid_to_cover: 2.62 } },
+};
 const PUBLIC_URL = process.env.PUBLIC_URL ?? "https://intel.degenscan.io";
 const usd = (n: number) => `$${n}`;
 /** Second rail: Solana mainnet (USDC, gasless via PayAI). Enabled only when a Solana receiving address is configured. */
@@ -88,6 +112,19 @@ export function buildRoutes(): RoutesConfig {
       accepts: accept("funding_alerts"), description: "Coins with extreme perp funding right now on Hyperliquid, sorted by |rate|, with annualized %, side paying, open interest and predicted funding per venue (Binance, Bybit, Hyperliquid). Poll every 5–15 min to catch crowded positioning.", mimeType: "application/json", ...common,
       extensions: declareDiscoveryExtension({ input: { min_abs_rate_1h: 0.0003, limit: 15 }, inputSchema: { properties: { min_abs_rate_1h: { type: "number" }, limit: { type: "number" } } }, output: { example: { count: 2, alerts: [{ symbol: "HYPE", funding_1h: 0.0008, annualized_pct: 700.8, side_paying: "longs", open_interest_usd: 1798314282 }] } } }),
     },
+    // Micro-routes for agent loops: one small object, US$0.001–0.002, 60 s cache (vendedor 07/10)
+    ...Object.fromEntries(([
+      ["GET /v1/carry/now/:coin", "carry_now", "Hyperliquid funding for one perp right now: annualised funding now, 8h and 24h average, mark, oracle, open interest, 24h volume. Every dex incl. HIP-3 (xyz:NBIS, io:…).", { pathParams: { coin: "BTC" }, pathParamsSchema: { properties: { coin: { type: "string", description: "BTC, ETH, HYPE… or HIP-3 dex:coin, e.g. xyz:NBIS" } }, required: ["coin"] } }],
+      ["GET /v1/carry/top", "carry_top", "Top Hyperliquid funding spreads right now: top-N same-ticker spreads across HIP-3 dexes and top-N perp-vs-spot funding (numbers only).", { input: { n: 5 }, inputSchema: { properties: { n: { type: "number", description: "1–10, default 5" } } } }],
+      ["GET /v1/carry/spread/:base", "carry_spread", "Funding spread for one asset listed on 2+ Hyperliquid HIP-3 dexes: each leg's annualised funding now and 14d, spread now and 14d, basis.", { pathParams: { base: "NBIS" }, pathParamsSchema: { properties: { base: { type: "string", description: "Asset ticker without dex prefix, e.g. NBIS, SNDK" } }, required: ["base"] } }],
+      ["GET /v1/hl/markets", "hl_markets", "Active Hyperliquid perp markets by dex (main + HIP-3: xyz, io, para, mkts…) and the count of delisted ones.", {}],
+      ["GET /v1/br/ptax", "br_ptax", "Brazil FX: today's official BCB PTAX (USD/BRL), USDT/BRL on Mercado Bitcoin now and the crypto-dollar premium over PTAX.", {}],
+      ["GET /v1/stablecoins/total", "stablecoins_total", "Total stablecoin supply (USD-pegged) and its 24h / 7d net change, top-3 stablecoins, count of depegs.", {}],
+      ["GET /v1/treasury/next", "treasury_next", "Next U.S. Treasury auctions (date, term, size) and the last auction result (high yield, bid-to-cover).", {}],
+    ] as const).map(([route, tool, d, ext]) => [route, {
+      accepts: accept(tool), description: `${d} Market data only — not investment advice.`, mimeType: "application/json", ...common,
+      extensions: declareDiscoveryExtension({ ...(ext as any), output: { example: MICRO_OUT[tool] } }),
+    } as RouteConfig])),
     ...Object.fromEntries(([
       ["GET /v1/br/premium", "br_premium", "Brazil premium: USDT/USDC-BRL on Mercado Bitcoin vs the official BCB PTAX, and BTC-BRL vs BTC-USD — how much Brazilians pay over the official dollar and over the global BTC price.", {}],
       ["GET /v1/stablecoins", "stablecoin_supply", "Stablecoin supply: circulating and 1d/7d/30d net change per stablecoin and in total (proxy for fresh on-chain dollar liquidity), plus depegs over 50 bps.", { limit: 25 }],
@@ -95,7 +132,7 @@ export function buildRoutes(): RoutesConfig {
       ["GET /v1/defi/yields", "defi_yields", "DeFi yields: stablecoin pools above a TVL floor with APY, 30-day mean, share paid in reward tokens and outlier flag.", { min_tvl: 10000000, limit: 25 }],
     ] as const).map(([route, tool, d, input]) => [route, {
       accepts: accept(tool), description: `${d} Market data and analytics only — not investment advice.`, mimeType: "application/json", ...common,
-      extensions: declareDiscoveryExtension({ input, inputSchema: { properties: Object.fromEntries(Object.keys(input).map(k => [k, { type: "number" }])) } }),
+      extensions: declareDiscoveryExtension({ input, inputSchema: { properties: Object.fromEntries(Object.keys(input).map(k => [k, { type: "number" }])) }, output: { example: MACRO_OUT[tool] } }),
     } as RouteConfig])),
     "GET /v1/whales": {
       accepts: accept("whale_moves"), description: "Large stablecoin transfers (USDC/USDT) on Base and Ethereum from public explorers, no key: size in USD, best-effort exchange labels, flow tag (to_exchange / from_exchange / mint / burn / wallet_to_wallet), totals by flow. 60 s cache.", mimeType: "application/json", ...common,
@@ -162,7 +199,7 @@ export function buildRoutes(): RoutesConfig {
     ] as const).map(([route, tool, d]) => [route, {
       accepts: accept(tool), description: `Carry Oracle — ${d} Or subscribe: US$${CARRY.usd_month}/month flat, unlimited (card ${PUBLIC_URL}/v1/carry/checkout or POST /v1/keys/x402/carry_month). Docs ${PUBLIC_URL}/docs/carry. Market data and analytics only — not a signal, not investment advice.`,
       mimeType: "application/json", ...common,
-      extensions: declareDiscoveryExtension(route.includes(":coin") ? { pathParams: { coin: "xyz:NBIS" }, pathParamsSchema: { properties: { coin: { type: "string" } }, required: ["coin"] }, input: { hours: 168 }, inputSchema: { properties: { hours: { type: "number" } } } } : { input: {}, inputSchema: { properties: { min_vol: { type: "number" }, limit: { type: "number" } } } }),
+      extensions: declareDiscoveryExtension(route.includes(":coin") ? { pathParams: { coin: "xyz:NBIS" }, pathParamsSchema: { properties: { coin: { type: "string", description: "Hyperliquid coin; HIP-3 coins prefixed by dex, e.g. xyz:NBIS" } }, required: ["coin"] }, input: { hours: 168 }, inputSchema: { properties: { hours: { type: "number" } } }, output: { example: CARRY_OUT[tool] } } : { input: {}, inputSchema: { properties: { min_vol: { type: "number" }, limit: { type: "number" } } }, output: { example: CARRY_OUT[tool] } }),
     } as RouteConfig])),
     "POST /v1/keys/x402/carry_desk_month": {
       accepts: rails(usd(CARRY_DESK.usd_month)),
