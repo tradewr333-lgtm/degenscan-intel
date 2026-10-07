@@ -16,7 +16,7 @@ const fail = (e: unknown) => ({ content: [{ type: "text" as const, text: `error:
 
 /** Build the MCP server. One instance per stateless HTTP request is fine (cheap). */
 export function buildMcpServer(ctx: { carryKey?: string; operator?: boolean; carryPaid?: boolean; ip?: string } = {}) {
-  const s = new McpServer({ name: "degenscan-intel", version: "0.10.38" }, {
+  const s = new McpServer({ name: "degenscan-intel", version: "0.10.39" }, {
     instructions: [
       "Degenscan Intel: cross-asset event feed for trading agents. Events are normalized from ~40 primary sources (SEC, Fed, Federal Register, USGS, NHC, Nasdaq halts, DefiLlama, Polymarket…) and scored against an exposure graph into per-asset impacts.",
       "Cheapest probe: pulse ($0.001). One-call briefing per asset: brief ($0.10). Typical loop: regime_snapshot → events_since(since='4h', universe=[your book]) → impact_for(asset_id) for anything with confidence ≥ 0.4 → check tradable_now / next_open before acting. For prediction markets: polymarket_context(market) → compare yes_prob with fresh primary-source events.",
@@ -27,6 +27,47 @@ export function buildMcpServer(ctx: { carryKey?: string; operator?: boolean; car
       "Information and analytics only — not investment advice.",
     ].join("\n"),
   });
+  // Disambiguation (Glama TDQS): every tool says when to use it and which sibling to use instead.
+  const WHEN: Record<string, string> = {
+    pulse: "Use first as a cheap heartbeat; for the events themselves use events_since, for one asset use brief.",
+    events_since: "Use to pull the event list for a window/universe; for one asset's scored impacts use impact_for, for a one-call asset summary use brief.",
+    impact_for: "Use for one asset's scored impacts; for raw events use events_since, for a full asset briefing use brief.",
+    exposure_graph: "Use to see which assets are linked to one asset; not for prices or events.",
+    regime_snapshot: "Use for the market-wide state (venues open, pressure by asset); for one asset use brief.",
+    explain: "Use only with an event_id returned by events_since or impact_for.",
+    brief: "Use when you want everything about ONE asset in one call (replaces ~6 calls); for many assets use events_since + impact_for.",
+    price_for: "Use for one coin's price/basis/funding now; for funding history use carry_history, for all perps at once use carry_funding_matrix.",
+    derivs_for: "Use for one perp's funding/OI with event pressure; for price only use price_for, for every perp use carry_funding_matrix.",
+    funding_alerts: "Use to find which perps have extreme funding now (cross-venue); for every Hyperliquid dex incl. HIP-3 use carry_funding_matrix.",
+    whale_moves: "Use for individual large stablecoin transfers; for total supply change use stablecoin_supply.",
+    stablecoin_supply: "Use for total stablecoin supply and net change; for individual large transfers use whale_moves.",
+    br_premium: "Use for Brazil's crypto-dollar/BTC premium vs the official PTAX; not for other FX.",
+    treasury_auctions: "Use for U.S. Treasury auction results and the upcoming calendar; for all macro releases use calendar.",
+    defi_yields: "Use for stablecoin pool APYs; not a risk rating.",
+    calendar: "Use for upcoming scheduled macro/earnings catalysts; for Treasury auction details use treasury_auctions.",
+    news_for: "Use for headlines about one ticker; for SEC filings use filings_for.",
+    filings_for: "Use for SEC filings of one issuer; for headlines use news_for.",
+    polymarket_top: "Use to find the most active prediction markets; for one market's evidence use polymarket_context, for oracle disagreement use polymarket_edge.",
+    polymarket_context: "Use for one market's odds plus related primary-source events; to discover markets use polymarket_top.",
+    polymarket_edge: "Use to list markets where the oracle and market odds disagree most; for one new question use oracle_forecast.",
+    oracle_forecast: "Use to ask a NEW binary question (async, returns forecast_id); then poll oracle_get. For today's standing forecasts use oracle_board.",
+    oracle_get: "Use only to poll a forecast_id returned by oracle_forecast (free).",
+    oracle_board: "Use for today's standing forecasts without waiting; to ask your own question use oracle_forecast.",
+    oracle_track_record: "Use to audit the oracle's public accuracy (free).",
+    universe: "Use to list valid asset ids for other tools (free).",
+    sources_status: "Use to check the health of each primary source (free).",
+    keys_trial: "Use once to get a free trial key (200 calls, 7 days); then send it as X-API-KEY.",
+    token_verdict: "Use for one token contract's risk checks; not a price or a recommendation.",
+    carry_funding_matrix: "Use for ALL perps on ALL Hyperliquid dexes at once; for one coin use price_for or carry_history.",
+    carry_xdex: "Use for the same ticker priced on 2+ HIP-3 dexes; for perp vs spot use carry_spot_perp.",
+    carry_spot_perp: "Use for main-dex perp vs its spot market; for cross-dex HIP-3 pairs use carry_xdex.",
+    carry_history: "Use for one coin's hourly history beyond 500 h; for the current snapshot of all coins use carry_funding_matrix.",
+    carry_naked: "Use for funding extremes that cannot be hedged on Hyperliquid; for hedgeable pairs use carry_xdex or carry_spot_perp.",
+    carry_watchdog: "Use for market and dex health (delistings, OI drops); not for funding levels.",
+  };
+  const _reg = s.registerTool.bind(s) as any;
+  (s as any).registerTool = (name: string, cfg: any, cb: any) => _reg(name, WHEN[name] && cfg?.description ? { ...cfg, description: `${cfg.description} ${WHEN[name]}` } : cfg, cb);
+
 
   s.registerTool("events_since", {
     title: "Events since", description: `List market-moving events since a point in time (natural disasters, regulator actions, central-bank releases, federal rules, SEC filings, trading halts, on-chain hacks, prediction-market shifts), each scored into per-asset impacts (direction −1/0/+1, confidence 0..1, horizon) with tradable_now / next_open per asset. Use it to answer "what happened in the last N hours that affects my book" or, with a past \`since\`, to backtest. Filter with universe=["NVDA","BTC"] and min_confidence≥0.4 to act on. $${PRICES.events_since}/call; 100 free calls/day.`,
@@ -87,7 +128,7 @@ export function buildMcpServer(ctx: { carryKey?: string; operator?: boolean; car
     const ro = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true };
     s.registerTool("br_premium", { title: "Brazil crypto premium", description: `Crypto-dollar and BTC premium in Brazil: USDT/USDC-BRL on Mercado Bitcoin vs the official BCB PTAX, BTC-BRL vs BTC-USD (Coinbase) at PTAX and at the on-exchange USDT rate. $${PRICES.br_premium}/call.`, inputSchema: {}, annotations: ro },
       async () => { try { return json(await (await import("./macro.js")).brPremium()); } catch (e) { return fail(e); } });
-    s.registerTool("stablecoin_supply", { title: "Stablecoin supply", description: `Circulating supply and 1d/7d/30d net change for every stablecoin and in total (DefiLlama), plus depegs over 50 bps — a proxy for fresh on-chain dollar liquidity. $${PRICES.stablecoin_supply}/call.`, inputSchema: { limit: z.number().int().min(1).max(200).optional() }, annotations: ro },
+    s.registerTool("stablecoin_supply", { title: "Stablecoin supply", description: `Stablecoin supply from DefiLlama. Returns totals_usd_pegged {circulating, change_1d, change_7d, change_30d} in USD, depegged_over_50bps[] (USD stablecoins trading below $0.995 with ≥ $50M supply: symbol, price, depeg_bps, circulating), and items[] per stablecoin (symbol, peg, mechanism, price, circulating, change_1d/7d/30d, change_7d_pct, change_30d_pct, chains), sorted by supply. Net new supply is a proxy for fresh on-chain dollar liquidity. $${PRICES.stablecoin_supply}/call.`, inputSchema: { limit: z.number().int().min(1).max(200).optional().describe("How many stablecoins in items[], default 25") }, annotations: ro },
       async (a: any) => { try { return json(await (await import("./macro.js")).stablecoinSupply(a)); } catch (e) { return fail(e); } });
     s.registerTool("treasury_auctions", { title: "U.S. Treasury auctions", description: `Recent U.S. Treasury auction results (high yield, bid-to-cover, indirect/direct/primary-dealer share) and upcoming auctions with size, from public-domain Fiscal Data. $${PRICES.treasury_auctions}/call.`, inputSchema: { days: z.number().int().min(1).max(90).optional(), type: z.enum(["Bill", "Note", "Bond", "TIPS", "FRN", "CMB"]).optional() }, annotations: ro },
       async (a: any) => { try { return json(await (await import("./macro.js")).treasuryAuctions(a)); } catch (e) { return fail(e); } });
@@ -190,11 +231,11 @@ export function buildMcpServer(ctx: { carryKey?: string; operator?: boolean; car
   const ro = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true };
   s.registerTool("keys_trial", { title: "Get a free trial key", description: `Free trial API key for Degenscan Intel: ${TRIAL.calls} calls, ${TRIAL.days} days, no card. Covers the Carry Data tools (carry_*) and the event feed; not the oracle. Then send it as X-API-KEY. One per e-mail.`, inputSchema: { email: z.string() }, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true } },
     async (a: any) => { const r = createTrialKey(String(a.email ?? ""), createHash("sha256").update(String(ctx.ip ?? "mcp")).digest("hex").slice(0, 16)); return "error" in r ? json({ error: r.error, subscribe: "https://intel.degenscan.io/carry" }) : json({ api_key: r.key, calls: TRIAL.calls, expires_at: r.expires_at, usage: "send X-API-KEY on REST or MCP requests" }); });
-  s.registerTool("carry_funding_matrix", { title: "Carry: funding matrix", description: "Current annualised funding for every perp on every Hyperliquid dex (main + HIP-3), with OI, 24h volume and spot mark when it exists. Data, not a signal. Requires a Carry Oracle key (US$100/month).", inputSchema: { dex: z.string().optional(), min_vol: z.number().optional() }, annotations: ro }, async (a: any) => carryGuard(() => fundingMatrix({ dex: a.dex, minVol: a.min_vol ?? 0 })));
-  s.registerTool("carry_xdex", { title: "Carry: cross-dex spreads", description: "Same ticker listed on 2+ HIP-3 dexes: funding spread now and over 14 days, % positive hours, basis, thinner leg liquidity. Data, not a signal. Requires a Carry Oracle key.", inputSchema: { min_vol: z.number().optional(), limit: z.number().optional() }, annotations: ro }, async (a: any) => carryGuard(() => crossDex({ minVol: a.min_vol ?? 100_000, limit: a.limit ?? 50 })));
-  s.registerTool("carry_spot_perp", { title: "Carry: spot × perp", description: "Main-dex perps with a spot market: funding now and over 14 days, % positive hours, perp/spot basis, liquidity of both legs. Data, not a signal. Requires a Carry Oracle key.", inputSchema: { min_vol: z.number().optional(), limit: z.number().optional() }, annotations: ro }, async (a: any) => carryGuard(() => spotPerp({ minVol: a.min_vol ?? 100_000, limit: a.limit ?? 50 })));
-  s.registerTool("carry_history", { title: "Carry: funding history", description: "Hourly funding/premium/mark/OI/volume for one coin, kept beyond Hyperliquid's 500 h window. HIP-3 coins are prefixed (xyz:NBIS). Requires a Carry Oracle key.", inputSchema: { coin: z.string(), hours: z.number().optional() }, annotations: ro }, async (a: any) => carryGuard(() => coinHistory(a.coin, a.hours ?? 720)));
-  s.registerTool("carry_naked", { title: "Carry: unhedgeable funding extremes", description: "Perps whose |annualised funding| exceeds a threshold (default 50%) and that have no hedge leg on Hyperliquid (no spot, no same-ticker HIP-3 listing). Raw data, not a call. Requires a Carry Oracle key.", inputSchema: { min_abs_apr: z.number().optional() }, annotations: ro }, async (a: any) => carryGuard(() => naked({ minAbsApr: a.min_abs_apr ?? 0.5 })));
+  s.registerTool("carry_funding_matrix", { title: "Carry: funding matrix", description: "Current annualised funding for every perp on every Hyperliquid dex (main + HIP-3), with OI, 24h volume and spot mark when it exists. Data, not a signal. Requires a Carry Oracle key (US$100/month).", inputSchema: { dex: z.string().optional().describe("Filter to one dex: main, xyz, io, para, mkts…"), min_vol: z.number().optional().describe("Minimum 24h volume in USD, default 0") }, annotations: ro }, async (a: any) => carryGuard(() => fundingMatrix({ dex: a.dex, minVol: a.min_vol ?? 0 })));
+  s.registerTool("carry_xdex", { title: "Carry: cross-dex spreads", description: "Assets listed on two or more Hyperliquid HIP-3 dexes (xyz, io, para, mkts…), e.g. NBIS on xyz and io. Returns items[] with base, legs[] (coin, dex, funding_apr now, funding_apr_14d, hours_positive_14d, vol24_usd, oi_usd, mark), spread_apr_now and spread_apr_14d (highest minus lowest leg, annualised), basis_pct (mark difference between legs, %), min_leg_vol24_usd; sorted by 14-day spread. Main-dex tickers are excluded because they can be different assets. Data, not a signal. Requires a Carry key, the free trial key, or x402 per call.", inputSchema: { min_vol: z.number().optional().describe("Minimum 24h volume per leg in USD, default 100000"), limit: z.number().optional().describe("Max rows, default 50") }, annotations: ro }, async (a: any) => carryGuard(() => crossDex({ minVol: a.min_vol ?? 100_000, limit: a.limit ?? 50 })));
+  s.registerTool("carry_spot_perp", { title: "Carry: spot × perp", description: "Hyperliquid main-dex perps that also have a Hyperliquid spot market (e.g. HYPE, PURR, BTC via UBTC). Returns items[] with base, perp, funding_apr (annualised, now), funding_apr_14d (14-day mean), hours_positive_14d (share of hours with positive funding, 0–1), perp_mark, spot_mark, spot_pair, basis_pct (perp vs spot, %), perp_vol24_usd, spot_vol24_usd, oi_usd, sorted by 14-day funding. Data, not a signal. Requires a Carry key (X-API-KEY), the free trial key, or x402 per call.", inputSchema: { min_vol: z.number().optional().describe("Minimum perp 24h volume in USD, default 100000"), limit: z.number().optional().describe("Max rows, default 50") }, annotations: ro }, async (a: any) => carryGuard(() => spotPerp({ minVol: a.min_vol ?? 100_000, limit: a.limit ?? 50 })));
+  s.registerTool("carry_history", { title: "Carry: funding history", description: "Hourly funding/premium/mark/OI/volume for one coin, kept beyond Hyperliquid's 500 h window. HIP-3 coins are prefixed (xyz:NBIS). Requires a Carry Oracle key.", inputSchema: { coin: z.string().describe("Hyperliquid coin: BTC, ETH… or HIP-3 dex:coin, e.g. xyz:NBIS"), hours: z.number().optional().describe("Hours of history, default 720") }, annotations: ro }, async (a: any) => carryGuard(() => coinHistory(a.coin, a.hours ?? 720)));
+  s.registerTool("carry_naked", { title: "Carry: unhedgeable funding extremes", description: "Perps whose |annualised funding| exceeds a threshold (default 50%) and that have no hedge leg on Hyperliquid (no spot, no same-ticker HIP-3 listing). Raw data, not a call. Requires a Carry Oracle key.", inputSchema: { min_abs_apr: z.number().optional().describe("Threshold on |annualised funding| as a fraction, default 0.5 = 50%") }, annotations: ro }, async (a: any) => carryGuard(() => naked({ minAbsApr: a.min_abs_apr ?? 0.5 })));
   s.registerTool("carry_watchdog", { title: "Carry: market health", description: "Every Hyperliquid perp market and dex: status (active/zero_oi/delisted), OI and volume with 7-day change, growth mode, risk flags. Requires a Carry Oracle key.", inputSchema: {}, annotations: ro }, async () => carryGuard(() => watchdog()));
 
   return s;
