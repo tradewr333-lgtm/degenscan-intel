@@ -83,7 +83,8 @@ export function decideAccess(req: FastifyRequest): Access | null {
     if (c.ok) return { method: "api_key", payer: `key:${c.id}`, price: 0 };            // subscription: unlimited
     if (key) { const v = validateKey(key);
       if (v && String(v.plan).startsWith("pack_") && v.remaining >= creditsFor(tool)) return { method: "api_key", payer: `key:${v.id}`, price };
-      if (v && String(v.plan) === "trial" && v.remaining >= 1) return { method: "api_key", payer: `key:${v.id}`, price: 0 }; }
+      if (v && String(v.plan) === "trial" && v.remaining >= 1) return { method: "api_key", payer: `key:${v.id}`, price: 0 };
+      if (v && String(v.plan) === "enterprise" && v.remaining >= 1) return { method: "api_key", payer: `key:${v.id}`, price: 0 }; }
     return null;                                                                       // no free quota on carry: x402 or subscription
   }
   if (key) {

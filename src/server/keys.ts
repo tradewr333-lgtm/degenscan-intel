@@ -173,7 +173,10 @@ export function createTrialKey(email: string, ipHash: string): { id: string; key
 /** Trial funnel: keys issued, and how many trial e-mails later bought a paid key (card) — x402 buyers have no e-mail. */
 export function trialMetrics() {
   ensure();
-  const issued = (getDb().prepare("SELECT COUNT(*) AS n FROM api_keys WHERE plan = 'trial'").get() as any).n;
-  const converted = (getDb().prepare("SELECT COUNT(DISTINCT t.email) AS n FROM api_keys t JOIN api_keys p ON p.email = t.email AND p.plan NOT IN ('trial') AND p.status = 'active' AND p.created_at > t.created_at WHERE t.plan = 'trial'").get() as any).n;
-  return { trial_keys_issued: issued, trial_to_paid: converted };
+  const em = (process.env.OWNER_EMAILS ?? "").split(",").map(e => e.trim().toLowerCase()).filter(Boolean);
+  try { for (const r of getDb().prepare("SELECT value FROM owner_marks WHERE kind = 'email'").all() as any[]) em.push(r.value); } catch { /* none yet */ }
+  const owner = em.length ? ` AND LOWER(COALESCE(email,'')) NOT IN (${em.map(() => "?").join(",")})` : "";
+  const issued = (getDb().prepare(`SELECT COUNT(*) AS n FROM api_keys WHERE plan = 'trial'${owner}`).get(...em) as any).n;
+  const converted = (getDb().prepare(`SELECT COUNT(DISTINCT t.email) AS n FROM api_keys t JOIN api_keys p ON p.email = t.email AND p.plan NOT IN ('trial') AND p.status = 'active' AND p.created_at > t.created_at WHERE t.plan = 'trial'${owner.replace(/email/g, "t.email")}`).get(...em) as any).n;
+  return { trial_keys_issued: issued, trial_to_paid: converted, owner_trials_excluded: em.length > 0 };
 }

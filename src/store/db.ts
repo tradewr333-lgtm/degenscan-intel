@@ -151,19 +151,50 @@ export function recordCall(tool: string, payer: string | null, price: number, ok
 
 /** Public usage metrics, one row per week since `since` (ISO date). Wallets in `exclude` (owner/test wallets) are
  *  reported separately and never counted as customers. payer format: "x402:<wallet>" | "key:<id>" | "<ip>" (quota). */
+/** Owner marks (Renato 17/10): the owner's own keys, IPs and e-mails, so his own usage (tests, his ChatGPT skill…)
+ *  never mixes with customers in /v1/metrics. Sources: table owner_marks (admin endpoint), env OWNER_KEY_IDS / OWNER_IPS /
+ *  OWNER_EMAILS, and every key labelled "internal…" / "owner…" or tagged "renato-owner". */
+function ensureOwner() { getDb().exec("CREATE TABLE IF NOT EXISTS owner_marks (kind TEXT NOT NULL, value TEXT NOT NULL, note TEXT, added_at TEXT NOT NULL, PRIMARY KEY (kind, value))"); }
+export function addOwnerMark(kind: "key" | "ip" | "email", value: string, note?: string) {
+  ensureOwner(); const v = kind === "ip" ? value.trim() : value.trim().toLowerCase();
+  getDb().prepare("INSERT OR REPLACE INTO owner_marks (kind, value, note, added_at) VALUES (?,?,?,?)").run(kind, v, note ?? null, new Date().toISOString());
+  return { kind, value: v };
+}
+export function listOwnerMarks() { ensureOwner(); return getDb().prepare("SELECT kind, value, note, added_at FROM owner_marks ORDER BY added_at").all(); }
+const envList = (k: string) => (process.env[k] ?? "").split(",").map(s => s.trim()).filter(Boolean);
+export function ownerSet() {
+  ensureOwner();
+  const marks = getDb().prepare("SELECT kind, value FROM owner_marks").all() as unknown as { kind: string; value: string }[];
+  const keys = new Set(envList("OWNER_KEY_IDS")); const ips = new Set(envList("OWNER_IPS")); const emails = new Set(envList("OWNER_EMAILS").map(e => e.toLowerCase()));
+  for (const m of marks) (m.kind === "key" ? keys : m.kind === "ip" ? ips : emails).add(m.value);
+  try {
+    const rows = getDb().prepare("SELECT id, email, label FROM api_keys").all() as unknown as { id: string; email: string | null; label: string | null }[];
+    for (const r of rows) { const l = (r.label ?? "").toLowerCase();
+      if (l.startsWith("internal") || l.startsWith("owner") || l.includes("renato-owner") || (r.email && emails.has(r.email.toLowerCase()))) keys.add(r.id); }
+  } catch { /* no keys table yet */ }
+  return { keys, ips, emails };
+}
+export function isOwnerPayer(p: string, o = ownerSet()) {
+  if (p === "operator") return true;
+  if (p.startsWith("key:")) return o.keys.has(p.slice(4));
+  if (!p.startsWith("x402:")) return o.ips.has(p);
+  return false;
+}
+
 export function weeklyMetrics(since: string, exclude: string[]) {
-  const ex = new Set(exclude.map(a => a.toLowerCase()));
+  const ex = new Set(exclude.map(a => a.toLowerCase())); const own = ownerSet();
   const rows = getDb().prepare("SELECT ts, payer, price_usd, ok, tx FROM calls WHERE ts >= ? AND ok = 1 ORDER BY ts").all(since) as unknown as { ts: string; payer: string | null; price_usd: number; ok: number; tx: string | null }[];
   const start = new Date(since).getTime(); const W = 7 * 86_400_000;
-  const weeks = new Map<number, { week_start: string; week_end: string; calls_free: number; calls_api_key: number; calls_x402: number; calls_x402_excluded: number; wallets: Set<string>; wallets_excluded: Set<string>; usdc_revenue: number; usdc_excluded: number; txs: string[]; txs_excluded: string[] }>();
-  const bucket = (ts: string) => { const i = Math.max(0, Math.floor((new Date(ts).getTime() - start) / W)); if (!weeks.has(i)) { const ws = new Date(start + i * W); const we = new Date(start + (i + 1) * W - 1); weeks.set(i, { week_start: ws.toISOString().slice(0, 10), week_end: we.toISOString().slice(0, 10), calls_free: 0, calls_api_key: 0, calls_x402: 0, calls_x402_excluded: 0, wallets: new Set(), wallets_excluded: new Set(), usdc_revenue: 0, usdc_excluded: 0, txs: [], txs_excluded: [] }); } return weeks.get(i)!; };
+  const weeks = new Map<number, { week_start: string; week_end: string; calls_free: number; calls_api_key: number; calls_x402: number; calls_x402_excluded: number; wallets: Set<string>; wallets_excluded: Set<string>; usdc_revenue: number; usdc_excluded: number; txs: string[]; txs_excluded: string[]; owner_key: number; owner_free: number }>();
+  const bucket = (ts: string) => { const i = Math.max(0, Math.floor((new Date(ts).getTime() - start) / W)); if (!weeks.has(i)) { const ws = new Date(start + i * W); const we = new Date(start + (i + 1) * W - 1); weeks.set(i, { week_start: ws.toISOString().slice(0, 10), week_end: we.toISOString().slice(0, 10), calls_free: 0, calls_api_key: 0, calls_x402: 0, calls_x402_excluded: 0, wallets: new Set(), wallets_excluded: new Set(), usdc_revenue: 0, usdc_excluded: 0, txs: [], txs_excluded: [], owner_key: 0, owner_free: 0 }); } return weeks.get(i)!; };
   for (const r of rows) {
     const w = bucket(r.ts); const p = r.payer ?? "";
     if (p.startsWith("x402:")) {
       const wallet = p.slice(5).toLowerCase();
       if (ex.has(wallet)) { w.calls_x402_excluded++; w.wallets_excluded.add(wallet); w.usdc_excluded += r.price_usd; if (r.tx) w.txs_excluded.push(r.tx); }
       else { w.calls_x402++; w.wallets.add(wallet); w.usdc_revenue += r.price_usd; if (r.tx) w.txs.push(r.tx); }
-    } else if (p.startsWith("key:")) w.calls_api_key++;
+    } else if (isOwnerPayer(p, own)) { if (p.startsWith("key:")) w.owner_key++; else w.owner_free++; }
+    else if (p.startsWith("key:")) w.calls_api_key++;
     else w.calls_free++;
   }
   // make sure every week from `since` to now exists, even with zero calls
@@ -175,6 +206,7 @@ export function weeklyMetrics(since: string, exclude: string[]) {
     unique_paying_wallets: w.wallets.size, usdc_revenue: Math.round(w.usdc_revenue * 1e6) / 1e6, tx_hashes: w.txs,
     stripe_active_subscriptions: active,
     excluded_owner_wallets: { calls: w.calls_x402_excluded, wallets: [...w.wallets_excluded], usdc: Math.round(w.usdc_excluded * 1e6) / 1e6, tx_hashes: w.txs_excluded },
+    excluded_owner_usage: { calls_api_key: w.owner_key, calls_free: w.owner_free },
   }));
 }
 

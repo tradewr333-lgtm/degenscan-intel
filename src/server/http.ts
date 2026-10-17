@@ -5,9 +5,9 @@ import { buildMcpServer } from "./mcp.js";
 import { PRICES } from "./pricing.js";
 import { EventsSinceArgs, ImpactForArgs, ExposureGraphArgs, PolymarketContextArgs, NewsArgs, FilingsArgs, CalendarArgs, BriefArgs, DerivsArgs, PriceArgs, FundingAlertsArgs, WhaleArgs, PolyTopArgs, eventsSince, impactFor, exposureGraph, universe, sources, regimeSnapshot, explain, polymarketContext, pulse, newsFor, filingsFor, calendar, brief, derivsFor, priceFor, fundingAlerts, whaleMoves, polymarketTop, TOOL_DOCS } from "./tools.js";
 import { CONNECTORS } from "../ingest/registry.js";
-import { DB_PATH, getDb, recordCall, weeklyMetrics } from "../store/db.js";
+import { DB_PATH, getDb, recordCall, weeklyMetrics, ownerSet, isOwnerPayer, addOwnerMark, listOwnerMarks } from "../store/db.js";
 import { decideAccess, toolForRequest, FREE_MODE, type Access } from "./access.js";
-import { PACKS, CARRY, CARRY_DESK, TRIAL, createTrialKey, trialMetrics, validateKey, deskSeats, setCarrySetting, deskAccess, createPackKey, createCarryKey, carryAccess, activatePackKey, dropPendingKey, keyStatus, type Pack } from "./keys.js";
+import { PACKS, CARRY, CARRY_DESK, TRIAL, createTrialKey, createKey, trialMetrics, validateKey, deskSeats, setCarrySetting, deskAccess, createPackKey, createCarryKey, carryAccess, activatePackKey, dropPendingKey, keyStatus, type Pack } from "./keys.js";
 import { installX402, PAY_TO_SOLANA, SOLANA_NETWORK } from "./x402v2.js";
 import { installDocs } from "./docs.js";
 import { installOracleRoutes } from "./oracle-routes.js";
@@ -33,7 +33,7 @@ const EXCLUDED_WALLETS = (process.env.EXCLUDED_WALLETS ?? "0x5344722b8D037827A9a
 const REST_FOR: Record<string, string> = { events_since: "/v1/events?since=4h&universe=NVDA,BTC", impact_for: "/v1/impact/{asset_id}?since=24h", exposure_graph: "/v1/graph/{asset_id}?depth=2", regime_snapshot: "/v1/regime", explain: "/v1/explain/{event_id}", polymarket_context: "/v1/polymarket/{market}?since=48h", pulse: "/v1/pulse", news_for: "/v1/news/{ticker}?since=24h", derivs_for: "/v1/derivs/{symbol}", price_for: "/v1/price/{symbol}", funding_alerts: "/v1/funding/alerts", whale_moves: "/v1/whales?min_usd=1000000", polymarket_top: "/v1/polymarket/top?sort=volume_24h", filings_for: "/v1/filings/{ticker}?since=7d", calendar: "/v1/calendar?days=7", brief: "/v1/brief/{asset_id}", token_verdict: "/v1/token/verdict/{address}?chain=base", oracle_board: "/v1/oracle/board", polymarket_edge: "/v1/oracle/edge?min_abs=0.02", oracle_forecast: "/v1/oracle/forecast", br_premium: "/v1/br/premium", stablecoin_supply: "/v1/stablecoins", treasury_auctions: "/v1/treasury/auctions?days=14", defi_yields: "/v1/defi/yields?min_tvl=10000000", carry_now: "/v1/carry/now/{coin}", carry_top: "/v1/carry/top?n=5", carry_spread: "/v1/carry/spread/{base}", hl_markets: "/v1/hl/markets", br_ptax: "/v1/br/ptax", stablecoins_total: "/v1/stablecoins/total", treasury_next: "/v1/treasury/next" };
 const OPENAPI = (base: string) => ({
   openapi: "3.1.0",
-  info: { title: "Degenscan Intel", version: "0.10.39", description: "Cross-asset market event intelligence for AI trading agents. Priced routes return HTTP 402 with x402 v2 payment requirements (USDC on Base) unless X-API-KEY is sent or the free trial header X-Free-Trial: 1 is present (100 calls/day/IP). Information and analytics only — not investment advice.", contact: { name: "Marbella Collins LLC", email: "contact@degenscan.io" }, license: { name: "MIT" } },
+  info: { title: "Degenscan Intel", version: "0.10.40", description: "Cross-asset market event intelligence for AI trading agents. Priced routes return HTTP 402 with x402 v2 payment requirements (USDC on Base) unless X-API-KEY is sent or the free trial header X-Free-Trial: 1 is present (100 calls/day/IP). Information and analytics only — not investment advice.", contact: { name: "Marbella Collins LLC", email: "contact@degenscan.io" }, license: { name: "MIT" } },
   servers: [{ url: base }],
   components: { securitySchemes: { apiKey: { type: "apiKey", in: "header", name: "X-API-KEY" }, freeTrial: { type: "apiKey", in: "header", name: "X-Free-Trial", description: "Send the value 1 for 100 free calls/day per IP." }, x402: { type: "apiKey", in: "header", name: "PAYMENT-SIGNATURE", description: "x402 v2 payment payload (base64). Obtain requirements from the 402 response header PAYMENT-REQUIRED." } } },
   paths: {
@@ -134,7 +134,7 @@ export async function buildHttp() {
   const billing = (req: any, tool: string) => req.x402Context ? { tool, price_usd: PRICES[tool] ?? 0.005, method: "x402" } : { tool, price_usd: req.intelAccess?.price ?? 0, method: req.intelAccess?.method ?? "free" };
 
   app.get("/", async () => ({
-    name: "degenscan-intel", version: "0.10.39",
+    name: "degenscan-intel", version: "0.10.40",
     description: "No key required: market-event intelligence for trading agents — SEC filings, Fed/FOMC, regulators, disasters, Nasdaq halts, DeFi hacks, Polymarket odds, Hyperliquid funding/OI — scored per asset. 100 free calls/day, then USDC per call (x402, Base/Solana) or API key.",
     mcp: `${PUBLIC_URL}/mcp`, rest: `${PUBLIC_URL}/v1`, pricing: TOOL_DOCS, skill: `${PUBLIC_URL}/skill.md`, openapi: `${PUBLIC_URL}/openapi.json`, x402: `${PUBLIC_URL}/.well-known/x402`, plans: `${PUBLIC_URL}/v1/plans`, prepaid_keys: `${PUBLIC_URL}/v1/keys/packs`, metrics: `${PUBLIC_URL}/v1/metrics`, docs: `${PUBLIC_URL}/docs`, sdks: { js: "npm i @degenscan/intel", python: "pip install degenscan-intel" }, github: "https://github.com/tradewr333-lgtm/degenscan-intel", contact: "contact@degenscan.io",
     operator: OPERATOR, disclaimer: DISCLAIMER, license: "MIT",
@@ -144,12 +144,13 @@ export async function buildHttp() {
   /** Trust block (vendedor 07/10): per route, last 30 days — paid calls and DISTINCT paying buyers (x402 wallets + API keys),
    *  owner/test wallets excluded; free-quota calls counted separately. */
   const routeTrust = () => {
-    const ex = new Set(EXCLUDED_WALLETS.map(a => a.toLowerCase()));
+    const ex = new Set(EXCLUDED_WALLETS.map(a => a.toLowerCase())); const own = ownerSet();
     const since = new Date(Date.now() - 30 * 86_400_000).toISOString();
     const rows = getDb().prepare("SELECT tool, payer, price_usd FROM calls WHERE ts >= ? AND ok = 1").all(since) as any[];
     const by = new Map<string, { paid_calls: number; buyers: Set<string>; free_calls: number; usd: number }>();
     for (const r of rows) {
       const p = String(r.payer ?? ""); const t = by.get(r.tool) ?? { paid_calls: 0, buyers: new Set<string>(), free_calls: 0, usd: 0 }; by.set(r.tool, t);
+      if (isOwnerPayer(p, own)) continue;
       if (p.startsWith("x402:")) { const w = p.slice(5).toLowerCase(); if (ex.has(w)) continue; t.paid_calls++; t.buyers.add(p); t.usd += r.price_usd; }
       else if (p.startsWith("key:")) { t.paid_calls++; t.buyers.add(p); }
       else t.free_calls++;
@@ -157,7 +158,7 @@ export async function buildHttp() {
     return [...by.entries()].map(([tool, t]) => ({ tool, price_usd: PRICES[tool] ?? null, paid_calls: t.paid_calls, distinct_buyers: t.buyers.size, free_calls: t.free_calls, usdc: Math.round(t.usd * 1e6) / 1e6 }))
       .sort((a, b) => b.distinct_buyers - a.distinct_buyers || b.paid_calls - a.paid_calls);
   };
-  const metrics = () => ({ since: METRICS_SINCE, excluded_owner_wallets: EXCLUDED_WALLETS, note: "Paid calls = settled x402 payments (USDC on Base, tx hashes verifiable on basescan.org). Free calls = daily quota. Owner/test wallets are excluded from customers and revenue.", weeks: weeklyMetrics(METRICS_SINCE, EXCLUDED_WALLETS) });
+  const metrics = () => ({ since: METRICS_SINCE, excluded_owner_wallets: EXCLUDED_WALLETS, note: "Paid calls = settled x402 payments (USDC on Base, tx hashes verifiable on basescan.org). Free calls = daily quota. Owner/test wallets are excluded from customers and revenue; the owner's own keys and IPs are counted apart (excluded_owner_usage), never as customers.", owner_marks: (() => { const o = ownerSet(); return { keys: o.keys.size, ips: o.ips.size }; })(), weeks: weeklyMetrics(METRICS_SINCE, EXCLUDED_WALLETS) });
   app.get("/v1/metrics", async () => {
     const { latencyStats } = await import("./micro.js");
     return { ...metrics(), trial: trialMetrics(), routes_30d: routeTrust(), latency_ms: latencyStats(), uptime_s: Math.round(process.uptime()),
@@ -203,7 +204,7 @@ export async function buildHttp() {
   // A2A Agent Card (a2a-protocol.org): lets A2A registries (a2aregistry.org, a2a-registry.org) and agents discover what we offer.
   // We expose HTTP+JSON (REST) and MCP; payment is x402 on each call. No A2A JSON-RPC task endpoint is claimed.
   const AGENT_CARD = () => ({
-    protocolVersion: "0.3.0", name: "Degenscan Intel", version: "0.10.39",
+    protocolVersion: "0.3.0", name: "Degenscan Intel", version: "0.10.40",
     description: "Market-event intelligence and calibrated probability forecasts for AI trading agents: ~40 primary sources (SEC, Fed, Polymarket, Hyperliquid, on-chain) scored into per-asset impacts; token contract risk verdicts; public Brier track record. Pay per call with x402 (USDC on Base or Solana) or an API key. Information and analytics only — not investment advice.",
     url: `${PUBLIC_URL}/a2a`, preferredTransport: "JSONRPC",
     additionalInterfaces: [{ url: `${PUBLIC_URL}/a2a`, transport: "JSONRPC" }, { url: `${PUBLIC_URL}/v1`, transport: "HTTP+JSON" }],
@@ -397,6 +398,25 @@ export async function buildHttp() {
       covers: ["/v1/carry/funding-matrix", "/v1/carry/xdex", "/v1/carry/spot-perp", "/v1/carry/history/{coin}", "/v1/carry/naked", "/v1/carry/watchdog", "event feed (/v1/events, /v1/news, /v1/derivs, …)"], not_included: ["oracle_forecast", "Carry Desk routes"],
       usage: "send header  X-API-KEY: <api_key>", check: `${PUBLIC_URL}/v1/keys/me`, docs: `${PUBLIC_URL}/docs/carry`,
       after_trial: { carry_data: `US$${CARRY.usd_month}/month flat — ${PUBLIC_URL}/carry`, carry_desk: `US$${CARRY_DESK.usd_month}/month`, pay_per_call: "x402 USDC, no key" }, note: "Shown once. Store it now." });
+  });
+  // Operator: mark the owner's own keys / IPs / e-mails (Renato 17/10) so his usage never counts as customers.
+  // kind "ip" without value marks the caller's current IP. Values are never shown publicly (only counts in /v1/metrics).
+  app.post("/v1/admin/owner", async (req: any, reply: any) => {
+    if (!process.env.ORACLE_OPERATOR_KEY || req.headers["x-operator-key"] !== process.env.ORACLE_OPERATOR_KEY) return reply.code(401).send({ error: "operator key required" });
+    const kind = req.body?.kind; if (!["key", "ip", "email"].includes(kind)) return reply.code(400).send({ error: "kind must be key | ip | email" });
+    const value = String(req.body?.value ?? (kind === "ip" ? req.ip : "")).trim(); if (!value) return reply.code(400).send({ error: "value required" });
+    return addOwnerMark(kind, value, String(req.body?.note ?? "").slice(0, 80) || undefined);
+  });
+  app.get("/v1/admin/owner", async (req: any, reply: any) => {
+    if (!process.env.ORACLE_OPERATOR_KEY || req.headers["x-operator-key"] !== process.env.ORACLE_OPERATOR_KEY) return reply.code(401).send({ error: "operator key required" });
+    const o = ownerSet(); return { marks: listOwnerMarks(), effective: { keys: [...o.keys], ips: [...o.ips], emails: [...o.emails] }, your_ip: req.ip };
+  });
+  // Operator: owner key (enterprise, label "owner …") for the owner's own tools (e.g. his ChatGPT skill) — feed + carry, never counted.
+  app.post("/v1/admin/owner-key", async (req: any, reply: any) => {
+    if (!process.env.ORACLE_OPERATOR_KEY || req.headers["x-operator-key"] !== process.env.ORACLE_OPERATOR_KEY) return reply.code(401).send({ error: "operator key required" });
+    const label = `owner ${String(req.body?.label ?? "tools").slice(0, 40)}`;
+    const { id, key } = createKey({ plan: "enterprise", label });
+    return { api_key: key, key_id: id, label, note: "Owner key — feed + carry routes, excluded from all customer metrics. Shown once." };
   });
   // Operator: internal keys (e.g. the @degenscan_carry poster bot) — Desk tier, does not take a paid seat.
   app.post("/v1/admin/carry/internal-key", async (req: any, reply: any) => {
