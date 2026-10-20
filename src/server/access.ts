@@ -63,6 +63,10 @@ export function toolForRequest(req: FastifyRequest): string | null {
   if (url === "/v1/br/premium") return "br_premium";
   if (url === "/v1/br/ptax") return "br_ptax";
   if (url === "/v1/hl/markets") return "hl_markets";
+  if (url === "/v1/hl/liquidations") return "hl_liq_near";
+  if (url.startsWith("/v1/hl/liquidations/")) return "hl_liquidations";
+  if (url.startsWith("/v1/options/maxpain/")) return "options_maxpain";
+  if (url.startsWith("/v1/options/")) return "options_summary";
   if (url === "/v1/stablecoins/total") return "stablecoins_total";
   if (url === "/v1/treasury/next") return "treasury_next";
   if (url === "/v1/stablecoins") return "stablecoin_supply";

@@ -29,6 +29,8 @@ export const PRICES: Record<string, number> = {
   // Lote public-apis (06/10): derived from free public sources (Mercado Bitcoin, BCB, DefiLlama, U.S. Treasury Fiscal Data)
   br_premium: 0.002, stablecoin_supply: 0.002, treasury_auctions: 0.003, defi_yields: 0.003,
   // micro-routes for agent loops (vendedor 07/10): one small object, 60 s cache
+  // Liquidations (Hyperliquid) and crypto options (Deribit) — Renato 17/10
+  hl_liquidations: 0.002, hl_liq_near: 0.001, options_summary: 0.002, options_maxpain: 0.001,
   carry_now: 0.001, carry_top: 0.002, carry_spread: 0.001, hl_markets: 0.001, br_ptax: 0.001, stablecoins_total: 0.001, treasury_next: 0.001,
   // Carry Data routes/tools (Renato 04/10, seller's order): pay per call in USDC OR the flat US$100/month subscription (unlimited).
   // Prices cross US$100 around 3,000 calls/month so heavy use converges to the subscription. Desk routes are subscription-only.

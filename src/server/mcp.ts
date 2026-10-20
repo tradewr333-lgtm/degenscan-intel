@@ -16,7 +16,7 @@ const fail = (e: unknown) => ({ content: [{ type: "text" as const, text: `error:
 
 /** Build the MCP server. One instance per stateless HTTP request is fine (cheap). */
 export function buildMcpServer(ctx: { carryKey?: string; operator?: boolean; carryPaid?: boolean; ip?: string } = {}) {
-  const s = new McpServer({ name: "degenscan-intel", version: "0.10.40" }, {
+  const s = new McpServer({ name: "degenscan-intel", version: "0.10.41" }, {
     instructions: [
       "Degenscan Intel: cross-asset event feed for trading agents. Events are normalized from ~40 primary sources (SEC, Fed, Federal Register, USGS, NHC, Nasdaq halts, DefiLlama, Polymarket…) and scored against an exposure graph into per-asset impacts.",
       "Cheapest probe: pulse ($0.001). One-call briefing per asset: brief ($0.10). Typical loop: regime_snapshot → events_since(since='4h', universe=[your book]) → impact_for(asset_id) for anything with confidence ≥ 0.4 → check tradable_now / next_open before acting. For prediction markets: polymarket_context(market) → compare yes_prob with fresh primary-source events.",
@@ -41,6 +41,10 @@ export function buildMcpServer(ctx: { carryKey?: string; operator?: boolean; car
     funding_alerts: "Use to find which perps have extreme funding now (cross-venue); for every Hyperliquid dex incl. HIP-3 use carry_funding_matrix.",
     whale_moves: "Use for individual large stablecoin transfers; for total supply change use stablecoin_supply.",
     stablecoin_supply: "Use for total stablecoin supply and net change; for individual large transfers use whale_moves.",
+    hl_liquidations: "Use for where Hyperliquid positions get liquidated for one coin; for funding use carry_now.",
+    hl_liq_near: "Use to scan which Hyperliquid coins have the most positions close to liquidation.",
+    options_summary: "Use for BTC/ETH options implied vol, skew, put/call and max pain; for perp funding use derivs_for.",
+    options_maxpain: "Use for one expiry's max pain and open interest only.",
     br_premium: "Use for Brazil's crypto-dollar/BTC premium vs the official PTAX; not for other FX.",
     treasury_auctions: "Use for U.S. Treasury auction results and the upcoming calendar; for all macro releases use calendar.",
     defi_yields: "Use for stablecoin pool APYs; not a risk rating.",
@@ -126,6 +130,14 @@ export function buildMcpServer(ctx: { carryKey?: string; operator?: boolean; car
 
   {
     const ro = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true };
+    s.registerTool("hl_liquidations", { title: "Hyperliquid liquidation map", description: `Liquidation map for one Hyperliquid main-dex coin from the most active accounts (public leaderboard, refreshed every 15 min): longs/shorts {positions, notional_usd, avg_entry}, liquidation_bands[] (side, from_pct/to_pct from mark, price range, notional_usd), nearest_long/short_liquidation {price, distance_pct, cluster_notional_usd}, liquidations_24h (confirmed by Hyperliquid's liquidation marker), coverage_pct_of_oi. A sample, not the whole book. $${PRICES.hl_liquidations}/call.`, inputSchema: { coin: z.string().describe("Main-dex coin, e.g. BTC, ETH, HYPE") }, annotations: ro },
+      async (a: any) => { try { const v = await (await import("../carry/liq.js")).liqMap(a.coin); return v ? json(v) : fail(new Error("unknown coin")); } catch (e) { return fail(e); } });
+    s.registerTool("hl_liq_near", { title: "Hyperliquid positions near liquidation", description: `Hyperliquid coins ranked by tracked notional within within_pct% of liquidation (longs_near_liq_usd, shorts_near_liq_usd) plus confirmed liquidations 24h. $${PRICES.hl_liq_near}/call.`, inputSchema: { within_pct: z.number().min(0.5).max(20).optional().describe("Distance from liquidation, %, default 5"), n: z.number().int().min(1).max(25).optional() }, annotations: ro },
+      async (a: any) => { try { return json(await (await import("../carry/liq.js")).liqNear(a.within_pct, a.n)); } catch (e) { return fail(e); } });
+    s.registerTool("options_summary", { title: "Crypto options (Deribit)", description: `BTC or ETH options from Deribit public data: term_structure[] {expiry, days, forward, atm_iv %, rr25 (25d call IV − 25d put IV, vol pts), bf25, open_interest {calls, puts}, max_pain, max_pain_distance_pct}, put_call {oi_ratio, volume_24h_ratio}, dvol {now, change_24h}, top_open_interest[]. $${PRICES.options_summary}/call.`, inputSchema: { currency: z.enum(["BTC", "ETH"]) }, annotations: ro },
+      async (a: any) => { try { return json(await (await import("./options.js")).optionsSummary(a.currency)); } catch (e) { return fail(e); } });
+    s.registerTool("options_maxpain", { title: "Options max pain", description: `Max pain, open interest and put/call ratio for one Deribit expiry (default the next with open interest), BTC or ETH. $${PRICES.options_maxpain}/call.`, inputSchema: { currency: z.enum(["BTC", "ETH"]), expiry: z.string().optional().describe("DDMMMYY, e.g. 31OCT26") }, annotations: ro },
+      async (a: any) => { try { const v = await (await import("./options.js")).optionsMaxPain(a.currency, a.expiry); return v ? json(v) : fail(new Error("unknown expiry")); } catch (e) { return fail(e); } });
     s.registerTool("br_premium", { title: "Brazil crypto premium", description: `Crypto-dollar and BTC premium in Brazil: USDT/USDC-BRL on Mercado Bitcoin vs the official BCB PTAX, BTC-BRL vs BTC-USD (Coinbase) at PTAX and at the on-exchange USDT rate. $${PRICES.br_premium}/call.`, inputSchema: {}, annotations: ro },
       async () => { try { return json(await (await import("./macro.js")).brPremium()); } catch (e) { return fail(e); } });
     s.registerTool("stablecoin_supply", { title: "Stablecoin supply", description: `Stablecoin supply from DefiLlama. Returns totals_usd_pegged {circulating, change_1d, change_7d, change_30d} in USD, depegged_over_50bps[] (USD stablecoins trading below $0.995 with ≥ $50M supply: symbol, price, depeg_bps, circulating), and items[] per stablecoin (symbol, peg, mechanism, price, circulating, change_1d/7d/30d, change_7d_pct, change_30d_pct, chains), sorted by supply. Net new supply is a proxy for fresh on-chain dollar liquidity. $${PRICES.stablecoin_supply}/call.`, inputSchema: { limit: z.number().int().min(1).max(200).optional().describe("How many stablecoins in items[], default 25") }, annotations: ro },
