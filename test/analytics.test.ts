@@ -2,7 +2,7 @@ process.env.DB_PATH = ":memory:";
 import { describe, it, expect, beforeAll } from "vitest";
 import { getDb } from "../src/store/db.js";
 import { ensureCarryTables, HOUR } from "../src/carry/hl.js";
-import { regime, calendar, oracleHealth, extremes, aftermath, breakeven, depthFromBook } from "../src/carry/analytics.js";
+import { regime, calendar, oracleHealth, extremes, aftermath, breakeven, depthFromBook, bookDepth } from "../src/carry/analytics.js";
 
 const T0 = Math.floor(Date.now() / HOUR) * HOUR + 400 * 24 * HOUR;  // far future: isolated from any persisted test data
 describe("carry analytics", () => {
@@ -45,5 +45,12 @@ describe("carry analytics", () => {
   it("depth from an l2Book snapshot", () => {
     const d = depthFromBook([[{ px: "99.99", sz: "10" }, { px: "99.5", sz: "100" }], [{ px: "100.01", sz: "5" }, { px: "100.6", sz: "50" }]]);
     expect(Math.round(d.bid5)).toBe(1000); expect(Math.round(d.bid50)).toBe(1000 + 9950); expect(Math.round(d.ask50)).toBe(500);
+  });
+
+  it("deep books: each band measured on the finest book that reaches it", async () => {
+    const lv = (step: number, sz: number) => [Array.from({ length: 20 }, (_, i) => ({ px: String(100000 - 0.5 - i * step), sz: String(sz) })), Array.from({ length: 20 }, (_, i) => ({ px: String(100000 + 0.5 + i * step), sz: String(sz) }))];
+    const books: Record<string, any> = { full: { levels: lv(1, 1) }, "5": { levels: lv(10, 10) }, "4": { levels: lv(100, 100) }, "3": { levels: lv(1000, 1000) } };
+    const d: any = await bookDepth("BTC", async sig => books[sig ? String(sig) : "full"]);
+    expect(d.bid5).toBeGreaterThan(0); expect(d.bid50).toBeGreaterThan(d.bid20); expect(d.bid20).toBeGreaterThan(d.bid5);
   });
 });

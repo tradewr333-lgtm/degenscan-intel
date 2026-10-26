@@ -177,12 +177,30 @@ export function breakeven(q: { spread_apr?: unknown; lev?: unknown; mode?: unkno
 let depthReady = false;
 function ensureDepth() { if (depthReady) return; getDb().exec(`CREATE TABLE IF NOT EXISTS hl_depth (coin TEXT NOT NULL, ts INTEGER NOT NULL, mid REAL, spread_bps REAL,
   bid5 REAL, ask5 REAL, bid10 REAL, ask10 REAL, bid20 REAL, ask20 REAL, bid50 REAL, ask50 REAL, PRIMARY KEY (coin, ts))`); depthReady = true; }
-export function depthFromBook(levels: any[][]) {
+export function depthFromBook(levels: any[][], midIn?: number) {
   const bids = (levels?.[0] ?? []).map((l: any) => ({ px: Number(l.px), sz: Number(l.sz) })), asks = (levels?.[1] ?? []).map((l: any) => ({ px: Number(l.px), sz: Number(l.sz) }));
   if (!bids.length || !asks.length) return null;
-  const mid = (bids[0].px + asks[0].px) / 2;
+  const mid = midIn ?? (bids[0].px + asks[0].px) / 2;
   const within = (side: { px: number; sz: number }[], bps: number, isBid: boolean) => side.filter(l => isBid ? l.px >= mid * (1 - bps / 1e4) : l.px <= mid * (1 + bps / 1e4)).reduce((s, l) => s + l.px * l.sz, 0);
   return { mid, spread_bps: (asks[0].px - bids[0].px) / mid * 1e4, ...Object.fromEntries([5, 10, 20, 50].flatMap(b => [[`bid${b}`, within(bids, b, true)], [`ask${b}`, within(asks, b, false)]])) } as any;
+}
+/** l2Book returns 20 levels per side; for deep books (BTC) the full-precision book covers only a few bps. Each band is
+ *  measured on the finest book whose last level lies beyond the band (full precision, then nSigFigs 5, 4, 3, 2);
+ *  a band no book reaches is null rather than a wrong number. */
+const reach = (levels: any[][], mid: number) => { const b = levels?.[0] ?? [], a = levels?.[1] ?? []; if (!b.length || !a.length) return 0;
+  return Math.min((mid - Number(b[b.length - 1].px)) / mid, (Number(a[a.length - 1].px) - mid) / mid) * 1e4; };
+export async function bookDepth(coin: string, fetchBook: (sig?: number) => Promise<any> = sig => info<any>(sig ? { type: "l2Book", coin, nSigFigs: sig } : { type: "l2Book", coin })) {
+  const base = await fetchBook(); const d0 = depthFromBook(base?.levels); if (!d0) return null;
+  const out: any = { mid: d0.mid, spread_bps: d0.spread_bps };
+  let books: { levels: any[][]; reach: number }[] = [{ levels: base.levels, reach: reach(base.levels, d0.mid) }];
+  for (const bps of [5, 10, 20, 50]) {
+    let bk = books.find(x => x.reach > bps);
+    for (const sig of [5, 4, 3, 2]) { if (bk) break; if (books.length > 5) break;
+      try { const b = await fetchBook(sig); if (b?.levels) { const e = { levels: b.levels, reach: reach(b.levels, d0.mid) }; books.push(e); if (e.reach > bps) bk = e; } } catch { /* next */ } }
+    const d = bk ? depthFromBook(bk.levels, d0.mid) : null;
+    out[`bid${bps}`] = d ? d[`bid${bps}`] : null; out[`ask${bps}`] = d ? d[`ask${bps}`] : null;
+  }
+  return out;
 }
 /** Hourly: depth of the N most traded perps (all dexes) + their spot markets are not included (perp book only). */
 export async function collectDepth(n = Number(process.env.DEPTH_COINS ?? 40), gapMs = 400) {
@@ -191,7 +209,7 @@ export async function collectDepth(n = Number(process.env.DEPTH_COINS ?? 40), ga
   const ins = getDb().prepare("INSERT OR REPLACE INTO hl_depth (coin, ts, mid, spread_bps, bid5, ask5, bid10, ask10, bid20, ask20, bid50, ask50) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)");
   const hour = Math.floor(Date.now() / HOUR) * HOUR; let ok = 0;
   for (const coin of coins) {
-    try { const b = await info<any>({ type: "l2Book", coin }); const d = depthFromBook(b?.levels); if (d) { ins.run(coin, hour, d.mid, d.spread_bps, d.bid5, d.ask5, d.bid10, d.ask10, d.bid20, d.ask20, d.bid50, d.ask50); ok++; } } catch { /* skip */ }
+    try { const d = await bookDepth(coin); if (d) { ins.run(coin, hour, d.mid, d.spread_bps, d.bid5, d.ask5, d.bid10, d.ask10, d.bid20, d.ask20, d.bid50, d.ask50); ok++; } } catch { /* skip */ }
     await new Promise(r => setTimeout(r, gapMs));
   }
   getDb().prepare("DELETE FROM hl_depth WHERE ts < ?").run(hour - 180 * 24 * HOUR);
@@ -203,7 +221,10 @@ export function depth(coinRaw: string, hoursRaw?: unknown) {
   if (!rows.length) return null;
   const u = (x: number | null) => x == null ? null : Math.round(x);
   const fmt = (r: any) => ({ at: new Date(r.ts).toISOString(), mid: r.mid, spread_bps: r2(r.spread_bps), depth_usd: Object.fromEntries([5, 10, 20, 50].map(b => [`${b}bps`, { bid: u(r[`bid${b}`]), ask: u(r[`ask${b}`]) }])) });
-  const med = (k: string) => { const a = rows.map(r => Math.min(r[`bid${k}`], r[`ask${k}`])).sort((x, y) => x - y); return u(a[Math.floor(a.length / 2)]); };
+  const t0 = Date.UTC(2026, 9, 26, 15);   // snapshots before 0.10.44 measured every band on the 20-level book only
+  rows.splice(0, rows.length, ...rows.filter(r => r.ts >= t0 || r.bid5 !== r.bid50));
+  if (!rows.length) return null;
+  const med = (k: string) => { const a = rows.filter(r => r[`bid${k}`] != null && r[`ask${k}`] != null).map(r => Math.min(r[`bid${k}`], r[`ask${k}`])).sort((x, y) => x - y); return a.length ? u(a[Math.floor(a.length / 2)]) : null; };
   return { coin, ...splitCoin(coin), hours: rows.length, latest: fmt(rows[rows.length - 1]), median_min_side_depth_usd: { "5bps": med("5"), "10bps": med("10"), "20bps": med("20"), "50bps": med("50") },
     history: rows.map(fmt), note: `Perp order book, one snapshot per hour from Hyperliquid l2Book (which keeps no history). ${ANALYTICS_NOTE}` };
 }
