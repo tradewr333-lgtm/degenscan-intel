@@ -144,7 +144,7 @@ describe("oracle HTTP (async jobs, board, resolve, discovery)", () => {
     const s: any = buildMcpServer();
     const names = Object.keys(s._registeredTools ?? {});
     expect(names).toEqual(expect.arrayContaining(["oracle_forecast", "oracle_get", "oracle_board", "oracle_track_record"]));
-    expect(names.length).toBe(39);   // + keys_trial + 4 public-apis tools + 4 liquidation/options tools
+    expect(names.length).toBe(42);   // + keys_trial + 4 public-apis tools + 4 liquidation/options tools
   });
 });
 
@@ -155,7 +155,7 @@ describe("oracle board (scheduler logic, mocked sources)", () => {
     tools._ext.reset(); tools._hl.reset();
     tools._hl.post = (async () => { throw new Error("offline"); }) as any;   // no dynamic ±10/20% questions without a spot
     tools._ext.get = (async (url: string) => {
-      if (url.includes("gamma-api.polymarket.com/markets?active=true")) return [{ id: "9", slug: "fed-cut-october-2026", question: "Will the Fed cut rates in October 2026?", outcomePrices: '["0.62","0.38"]', volume24hr: 5e6, liquidity: 1e6, endDate: "2026-10-29T00:00:00Z" }];
+      if (url.includes("gamma-api.polymarket.com/markets?active=true")) return [{ id: "9", slug: "fed-cut-october-2026", question: "Will the Fed cut rates in October 2026?", outcomePrices: '["0.62","0.38"]', volume24hr: 5e6, liquidity: 1e6, endDate: new Date(Date.now() + 20 * 86_400_000).toISOString() }];
       if (url.includes("gamma-api.polymarket.com/markets?slug=fed-cut-october-2026")) return [{ slug: "fed-cut-october-2026", closed: true, outcomePrices: '["1","0"]' }];
       throw new Error("unexpected url " + url);
     }) as any;
@@ -245,7 +245,7 @@ describe("polymarketSearch pulls the whole event for sibling summing", () => {
       { question: "Will the Fed increase interest rates by 25 bps after the October 2026 meeting?", outcomePrices: '["0.435","0.565"]', active: true, closed: false, slug: "fed-inc-25" },
     ] };
     tools._ext.get = (async (url: string) => {
-      if (url.includes("gamma-api.polymarket.com/markets?active=true")) return [{ id: "1", slug: "fed-dec-50", question: ev.markets[0].question, outcomePrices: ev.markets[0].outcomePrices, volume24hr: 1e6, liquidity: 1e5, endDate: "2026-10-29T00:00:00Z" }, { id: "2", slug: "fed-hold", question: ev.markets[2].question, outcomePrices: ev.markets[2].outcomePrices, volume24hr: 9e6, liquidity: 1e6, endDate: "2026-10-29T00:00:00Z" }];
+      if (url.includes("gamma-api.polymarket.com/markets?active=true")) return [{ id: "1", slug: "fed-dec-50", question: ev.markets[0].question, outcomePrices: ev.markets[0].outcomePrices, volume24hr: 1e6, liquidity: 1e5, endDate: new Date(Date.now() + 20 * 86_400_000).toISOString() }, { id: "2", slug: "fed-hold", question: ev.markets[2].question, outcomePrices: ev.markets[2].outcomePrices, volume24hr: 9e6, liquidity: 1e6, endDate: new Date(Date.now() + 20 * 86_400_000).toISOString() }];
       if (url.includes("gamma-api.polymarket.com/markets?slug=fed-dec-50")) return [{ slug: "fed-dec-50", events: [{ slug: "fed-decision-in-october" }] }];
       if (url.includes("gamma-api.polymarket.com/events?slug=fed-decision-in-october")) return [ev];
       throw new Error("unexpected " + url);

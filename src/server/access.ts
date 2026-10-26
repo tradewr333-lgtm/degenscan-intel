@@ -64,6 +64,9 @@ export function toolForRequest(req: FastifyRequest): string | null {
   if (url === "/v1/br/ptax") return "br_ptax";
   if (url === "/v1/hl/markets") return "hl_markets";
   if (url === "/v1/hl/liquidations") return "hl_liq_near";
+  if (url === "/v1/hl/smart-money") return "hl_smart_flow";
+  if (url.startsWith("/v1/hl/smart-money/")) return "hl_smart_coin";
+  if (url.startsWith("/v1/coin/")) return "coin_snapshot";
   if (url.startsWith("/v1/hl/liquidations/")) return "hl_liquidations";
   if (url.startsWith("/v1/options/maxpain/")) return "options_maxpain";
   if (url.startsWith("/v1/options/")) return "options_summary";
