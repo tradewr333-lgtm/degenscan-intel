@@ -35,6 +35,13 @@ export function toolForRequest(req: FastifyRequest): string | null {
   if (url.startsWith("/v1/carry/history/")) return "carry_history";
   if (url === "/v1/carry/naked") return "carry_naked";
   if (url === "/v1/carry/watchdog") return "carry_watchdog";
+  if (url === "/v1/carry/regime" || url.startsWith("/v1/carry/regime/")) return "carry_regime";
+  if (url === "/v1/carry/calendar") return "carry_calendar";
+  if (url === "/v1/carry/oracle-health") return "carry_oracle_health";
+  if (url === "/v1/carry/extremes") return "carry_extremes";
+  if (url === "/v1/carry/extremes/aftermath") return "carry_aftermath";
+  if (url === "/v1/carry/breakeven") return "carry_breakeven";
+  if (url.startsWith("/v1/carry/depth/")) return "carry_depth";
   if (url.startsWith("/v1/carry/now/")) return "carry_now";
   if (url === "/v1/carry/top") return "carry_top";
   if (url.startsWith("/v1/carry/spread/")) return "carry_spread";

@@ -34,6 +34,8 @@ export const PRICES: Record<string, number> = {
   carry_now: 0.001, carry_top: 0.002, carry_spread: 0.001, hl_markets: 0.001, br_ptax: 0.001, stablecoins_total: 0.001, treasury_next: 0.001,
   // Carry Data routes/tools (Renato 04/10, seller's order): pay per call in USDC OR the flat US$100/month subscription (unlimited).
   // Prices cross US$100 around 3,000 calls/month so heavy use converges to the subscription. Desk routes are subscription-only.
+  // Carry analytics (HI Carry report 26/10): statistics from our hourly history — also covered by the Carry subscription
+  carry_regime: 0.002, carry_calendar: 0.003, carry_oracle_health: 0.003, carry_extremes: 0.003, carry_aftermath: 0.005, carry_breakeven: 0.001, carry_depth: 0.002,
   carry_funding_matrix: 0.03, carry_xdex: 0.05, carry_spot_perp: 0.03, carry_history: 0.02, carry_naked: 0.01, carry_watchdog: 0.01,
 };
 

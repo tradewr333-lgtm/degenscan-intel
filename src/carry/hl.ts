@@ -152,7 +152,8 @@ export function startCarryCollector() {
   let lastHour = -1;
   const run = async () => {
     try { const coins = await snapshot(); backfillMissing(coins).catch(e => console.warn("[carry] backfill:", (e as Error).message));
-      import("./desk.js").then(m => m.hourlyDesk()).catch(e => console.warn("[carry] desk:", (e as Error).message)); }
+      import("./desk.js").then(m => m.hourlyDesk()).catch(e => console.warn("[carry] desk:", (e as Error).message));
+      if (process.env.DEPTH_COLLECTOR !== "0") import("./analytics.js").then(m => m.collectDepth()).catch(e => console.warn("[carry] depth:", (e as Error).message)); }
     catch (e) { lastSnapshot = { ...(lastSnapshot ?? { perps: 0, spot: 0, dexes: [] }), at: lastSnapshot?.at ?? "", error: (e as Error).message }; console.warn("[carry] snapshot:", (e as Error).message); }
   };
   // Daily gap fill (00:10 UTC): re-pull the last 72 h of funding for every active coin, so an outage of the service never leaves a
