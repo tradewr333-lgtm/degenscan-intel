@@ -113,3 +113,24 @@ export async function defiYields(opts: { min_tvl?: number; stable_only?: boolean
     note: "APY as reported by each protocol via DefiLlama. reward_share_pct = part of the APY paid in incentive tokens (can stop or fall). outlier = flagged by DefiLlama as statistically unusual. Not a risk rating.",
     sources: ["DefiLlama yields (https://yields.llama.fi/pools)"], disclaimer: MACRO_DISCLAIMER };
 }
+
+/** Micro (x402-scout 29/10: USDC yield sellers at US$0.0018–0.002): best stablecoin supply APY per asset and, for USDC/USDT,
+ *  per chain — base APY shown apart from incentives, extreme/outlier pools excluded. Not a risk rating. */
+export const STABLE_ASSETS = ["USDC", "USDT", "DAI", "USDS", "USDE", "PYUSD", "FRAX", "GHO", "USD1", "RLUSD"];
+export function bestYields(items: any[], asset?: string) {
+  const want = asset ? String(asset).toUpperCase() : null;
+  const single = items.filter(i => !String(i.symbol).includes("-") && STABLE_ASSETS.includes(String(i.symbol).toUpperCase()) && (!want || String(i.symbol).toUpperCase() === want));
+  const pick = (i: any) => ({ project: i.project, chain: i.chain, apy_pct: i.apy_pct, apy_base_pct: i.apy_base_pct, reward_share_pct: i.reward_share_pct, apy_mean_30d_pct: i.apy_mean_30d_pct, tvl_usd: i.tvl_usd, pool_id: i.pool_id });
+  const by = new Map<string, any[]>(); for (const i of single) { const k = String(i.symbol).toUpperCase(); (by.get(k) ?? by.set(k, []).get(k)!).push(i); }
+  const best_by_asset = [...by.entries()].map(([a, l]) => ({ asset: a, pools: l.length, best: pick(l.sort((x, y) => (y.apy_pct ?? 0) - (x.apy_pct ?? 0))[0]),
+    best_base_only: pick([...l].sort((x, y) => (y.apy_base_pct ?? 0) - (x.apy_base_pct ?? 0))[0]) })).sort((a, b) => b.pools - a.pools);
+  const chains = (a: string) => { const m = new Map<string, any>(); for (const i of by.get(a) ?? []) { const c = m.get(i.chain); if (!c || (i.apy_pct ?? 0) > (c.apy_pct ?? 0)) m.set(i.chain, i); }
+    return [...m.values()].sort((x, y) => (y.apy_pct ?? 0) - (x.apy_pct ?? 0)).slice(0, 10).map(pick); };
+  return { best_by_asset, usdc_by_chain: !want || want === "USDC" ? chains("USDC") : undefined, usdt_by_chain: !want || want === "USDT" ? chains("USDT") : undefined };
+}
+export async function stableYieldBest(q: { asset?: unknown; min_tvl?: unknown } = {}) {
+  const y = await defiYields({ min_tvl: Number(q.min_tvl) || 5_000_000, stable_only: true, limit: 200 });
+  return { as_of: y.as_of, min_tvl_usd: y.filters.min_tvl, ...bestYields(y.items, q.asset ? String(q.asset) : undefined), extreme_excluded: y.extreme_excluded,
+    fields: { apy_base_pct: "APY without incentive tokens", reward_share_pct: "share of APY paid in incentive tokens" },
+    note: "Single-asset stablecoin pools only. Not a risk rating.", sources: y.sources, disclaimer: MACRO_DISCLAIMER };
+}

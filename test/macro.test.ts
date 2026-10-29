@@ -53,3 +53,10 @@ describe("Lote public-apis: Brazil premium, stablecoins, Treasury auctions, DeFi
     for (const n of ["br_premium", "stablecoin_supply", "treasury_auctions", "defi_yields"]) expect(names).toContain(n);
   });
 });
+import { bestYields } from "../src/server/macro.js";
+describe("best stable yields", () => { it("groups single-asset pools", () => {
+  const it = [{ project: "a", chain: "Base", symbol: "USDC", apy_pct: 6, apy_base_pct: 4, tvl_usd: 1, pool_id: "1" }, { project: "b", chain: "Ethereum", symbol: "USDC", apy_pct: 5, apy_base_pct: 5, tvl_usd: 1, pool_id: "2" },
+    { project: "c", chain: "Base", symbol: "USDC-USDT", apy_pct: 9, tvl_usd: 1, pool_id: "3" }, { project: "d", chain: "Base", symbol: "USDT", apy_pct: 3, apy_base_pct: 3, tvl_usd: 1, pool_id: "4" }];
+  const r = bestYields(it); const u = r.best_by_asset.find(x => x.asset === "USDC")!;
+  expect(u.best.project).toBe("a"); expect(u.best_base_only.project).toBe("b"); expect(r.usdc_by_chain!.map(x => x.chain)).toEqual(["Base", "Ethereum"]);
+  expect(bestYields(it, "usdt").best_by_asset.map(x => x.asset)).toEqual(["USDT"]); }); });

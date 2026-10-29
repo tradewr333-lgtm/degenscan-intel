@@ -93,6 +93,7 @@ export function toolForRequest(req: FastifyRequest): string | null {
   if (url === "/v1/stablecoins") return "stablecoin_supply";
   if (url === "/v1/treasury/auctions") return "treasury_auctions";
   if (url === "/v1/defi/yields") return "defi_yields";
+  if (url === "/v1/defi/yields/best") return "stable_yield_best";
   return null;
 }
 

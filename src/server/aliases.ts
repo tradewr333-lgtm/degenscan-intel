@@ -41,6 +41,8 @@ export const ALIASES: Record<string, Alias> = {
   "/ai-adoption": { to: "/v1/ai/adoption", name: "AI adoption — AI framework downloads and stars", desc: "AI adoption: weekly downloads and GitHub stars of AI SDKs and frameworks (LangChain, LlamaIndex, CrewAI, MCP…)." },
   "/ai-research": { to: "/v1/ai/research", name: "AI research — arXiv paper trends", desc: "AI research trends: new arXiv papers per topic (RAG, agents, MCP, fine-tuning) in 7 and 30 days." },
   "/ai-regulation": { to: "/v1/ai/regulation/{jurisdiction}", params: ["jurisdiction"], name: "AI regulation — EU AI Act and AI law dates", desc: "AI regulation: EU AI Act deadlines after the Digital Omnibus, Colorado AI law, Brazil AI bill — dates, status, sources." },
+  "/stablecoin-yield": { to: "/v1/defi/yields/best", name: "Stablecoin yield — best USDC and USDT yield now", desc: "Stablecoin yield: best supply APY per stablecoin and best USDC/USDT pool per chain, base APY apart from incentives." },
+  "/usdc-yield": { to: "/v1/defi/yields/best", name: "USDC yield — best USDC APY by chain", desc: "USDC yield: best USDC supply APY now and by chain (Base, Ethereum, Arbitrum…), base APY apart from incentives." },
   "/coin-snapshot": { to: "/v1/coin/{symbol}", params: ["symbol"], name: "Coin snapshot — everything about one coin", desc: "Coin snapshot in one call: price, funding rate, liquidations, smart money, options and news events for one coin." },
 };
 
