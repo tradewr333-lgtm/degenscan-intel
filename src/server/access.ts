@@ -75,6 +75,8 @@ export function toolForRequest(req: FastifyRequest): string | null {
   if (url.startsWith("/v1/hl/smart-money/")) return "hl_smart_coin";
   if (url.startsWith("/v1/coin/")) return "coin_snapshot";
   if (url.startsWith("/v1/hl/liquidations/")) return "hl_liquidations";
+  if (url === "/v1/gas/base") return "gas_base";
+  if (url.startsWith("/v1/hl/basis/")) return "hl_basis";
   if (url.startsWith("/v1/options/maxpain/")) return "options_maxpain";
   if (url.startsWith("/v1/options/")) return "options_summary";
   if (url === "/v1/stablecoins/total") return "stablecoins_total";

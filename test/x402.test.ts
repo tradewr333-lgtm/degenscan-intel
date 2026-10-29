@@ -43,6 +43,13 @@ describe("x402 v2 paid mode", () => {
     // no header, no payment → 402 immediately (indexer probes must see a real 402)
     const probe = await app.inject({ method: "GET", url: "/v1/regime" });
     expect(probe.statusCode).toBe(402);
+    // CORS: browser agents on other origins can read the challenge and send payment headers
+    expect(probe.headers["access-control-allow-origin"]).toBe("*");
+    expect(String(probe.headers["access-control-expose-headers"])).toContain("PAYMENT-REQUIRED");
+    expect(String(probe.headers["access-control-expose-headers"])).toContain("PAYMENT-RESPONSE");
+    expect(probe.headers["payment-required"]).toBeTruthy();
+    const pre = await app.inject({ method: "OPTIONS", url: "/v1/regime", headers: { origin: "https://agent.example", "access-control-request-method": "GET", "access-control-request-headers": "payment-signature, x-api-key" } });
+    expect(pre.statusCode).toBe(204); expect(String(pre.headers["access-control-allow-headers"])).toContain("payment-signature");
     // opt-in free trial header → quota (1 call in this test), then 402
     const first = await app.inject({ method: "GET", url: "/v1/regime", headers: { "x-free-trial": "1" } });
     expect(first.statusCode).toBe(200);
