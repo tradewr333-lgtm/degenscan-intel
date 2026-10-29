@@ -25,3 +25,20 @@ describe("scout replicas", () => {
     expect(b.open_interest_usd).toBe(1001);
   });
 });
+import { candlesFrom, leaderboardFrom } from "../src/server/scoutrep.js";
+describe("scout replicas 2", () => {
+  it("candles summary", () => {
+    const o = candlesFrom("BTC", "1h", [{ t: 0, o: "100", h: "110", l: "95", c: "105", v: "2", n: 5 }, { t: 3600000, o: "105", h: "120", l: "100", c: "118", v: "1", n: 3 }])!;
+    expect(o.n).toBe(2); expect(o.summary.change_pct).toBe(18); expect(o.summary.high).toBe(120); expect(o.summary.low).toBe(95);
+    expect(o.summary.range_pct).toBeCloseTo(26.316, 2); expect(o.candles[1].trades).toBe(3);
+  });
+  it("leaderboard compact", () => {
+    const l = leaderboardFrom([{ rank: "1", proxyWallet: "0xabc", userName: "Bob", vol: 1000, pnl: 50, profileImage: "x" }, { rank: "2", proxyWallet: "0xdef", userName: "0xb0e74DF9430A089Aa102e2207Af5fde1967439D2-1789545517033", vol: 0, pnl: 5 }]);
+    expect(l[0]).toEqual({ rank: 1, wallet: "0xabc", name: "Bob", pnl_usd: 50, volume_usd: 1000, pnl_to_volume_pct: 5 });
+    expect(l[1].name).toBeNull(); expect(l[1].pnl_to_volume_pct).toBeNull();
+  });
+});
+import { abiString } from "../src/server/scoutrep.js";
+describe("abiString", () => { it("decodes dynamic and bytes32", () => {
+  expect(abiString("0x" + "20".padStart(64, "0") + "4".padStart(64, "0") + Buffer.from("USDC").toString("hex").padEnd(64, "0"))).toBe("USDC");
+  expect(abiString("0x" + Buffer.from("MKR").toString("hex").padEnd(64, "0"))).toBe("MKR"); }); });

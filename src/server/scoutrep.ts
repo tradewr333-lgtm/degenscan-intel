@@ -114,3 +114,84 @@ export async function hlBasis(raw: string) {
       sources: ["Hyperliquid info API (metaAndAssetCtxs, predictedFundings)", "Degenscan hourly funding history"], disclaimer: REP_DISCLAIMER };
   });
 }
+
+// ── Réplicas da fila (relatório 48 h, 29/10) ─────────────────────────────────────────────────────────────
+const INTERVALS: Record<string, number> = { "1m": 60_000, "5m": 300_000, "15m": 900_000, "1h": 3_600_000, "4h": 14_400_000, "1d": 86_400_000 };
+/** Pure: Hyperliquid candleSnapshot rows → OHLCV + summary. Exported for tests. */
+export function candlesFrom(coin: string, interval: string, rows: any[]) {
+  const c = (rows ?? []).map(x => ({ t: new Date(Number(x.t)).toISOString(), o: Number(x.o), h: Number(x.h), l: Number(x.l), c: Number(x.c), v: Number(x.v), trades: Number(x.n) || 0 }))
+    .filter(x => Number.isFinite(x.c));
+  if (!c.length) return null;
+  const first = c[0], last = c[c.length - 1];
+  const hi = Math.max(...c.map(x => x.h)), lo = Math.min(...c.map(x => x.l));
+  const vol = c.reduce((a, x) => a + x.v, 0); const vwap = vol ? c.reduce((a, x) => a + x.v * (x.h + x.l + x.c) / 3, 0) / vol : null;
+  return { coin, interval, n: c.length, from: first.t, to: last.t,
+    summary: { open: first.o, close: last.c, change_pct: first.o ? r((last.c - first.o) / first.o * 100, 3) : null, high: hi, low: lo,
+      range_pct: lo ? r((hi - lo) / lo * 100, 3) : null, volume_base: r(vol, 4), vwap: vwap == null ? null : r(vwap, 6) },
+    candles: c };
+}
+export async function hlCandles(raw: string, intervalRaw?: unknown, limitRaw?: unknown) {
+  const s = String(decodeURIComponent(raw ?? "")).trim(); const i = s.indexOf(":");
+  const coin = i > 0 ? `${s.slice(0, i).toLowerCase()}:${s.slice(i + 1).toUpperCase()}` : s.toUpperCase().replace(/-PERP$|USDT?$|USDC$|-USD$/, "");
+  if (!/^([a-z0-9]{1,10}:)?[A-Z0-9]{1,15}$/.test(coin)) throw Object.assign(new Error("coin like BTC, ETH, HYPE or xyz:NBIS"), { status: 400 });
+  const interval = String(intervalRaw ?? "1h").toLowerCase(); const ms = INTERVALS[interval];
+  if (!ms) throw Object.assign(new Error(`interval one of ${Object.keys(INTERVALS).join(", ")}`), { status: 400 });
+  const limit = Math.min(Math.max(Number(limitRaw) || 100, 1), 500);
+  return cached(`cdl:${coin}:${interval}:${limit}`, Math.min(ms / 2, 60_000), async () => {
+    const end = Date.now(); const rows = await info<any[]>({ type: "candleSnapshot", req: { coin, interval, startTime: end - ms * limit, endTime: end } });
+    const o = candlesFrom(coin, interval, (rows ?? []).slice(-limit)); if (!o) return null;
+    return { ...o, as_of: new Date(end).toISOString(), source: "Hyperliquid info API (candleSnapshot)", disclaimer: REP_DISCLAIMER };
+  });
+}
+
+const PM_PERIOD: Record<string, string> = { day: "DAY", week: "WEEK", month: "MONTH", all: "ALL" };
+/** Pure: Polymarket data-api leaderboard rows → compact list. Exported for tests. */
+export function leaderboardFrom(rows: any[]) {
+  return (rows ?? []).map((x: any) => ({ rank: Number(x.rank), wallet: String(x.proxyWallet ?? ""), name: x.userName && !/^0x[0-9a-f]{40}-\d+$/i.test(x.userName) ? String(x.userName) : null,
+    pnl_usd: r(Number(x.pnl), 2), volume_usd: r(Number(x.vol), 2), pnl_to_volume_pct: Number(x.vol) > 0 ? r(Number(x.pnl) / Number(x.vol) * 100, 2) : null }))
+    .filter(x => x.wallet && Number.isFinite(x.rank));
+}
+export async function polymarketLeaderboard(periodRaw?: unknown, byRaw?: unknown, limitRaw?: unknown) {
+  const period = PM_PERIOD[String(periodRaw ?? "week").toLowerCase()]; if (!period) throw Object.assign(new Error("period one of day, week, month, all"), { status: 400 });
+  const by = String(byRaw ?? "pnl").toLowerCase() === "volume" ? "VOL" : "PNL";
+  const limit = Math.min(Math.max(Number(limitRaw) || 20, 1), 50);
+  return cached(`pmlb:${period}:${by}:${limit}`, 300_000, async () => {
+    const res = await fetch(`https://data-api.polymarket.com/v1/leaderboard?timePeriod=${period}&orderBy=${by}&limit=${limit}`, { headers: { "user-agent": UA }, signal: AbortSignal.timeout(15_000) });
+    if (!res.ok) throw new Error(`polymarket ${res.status}`);
+    const items = leaderboardFrom(await res.json());
+    return { period: period.toLowerCase(), order_by: by === "VOL" ? "volume" : "pnl", n: items.length, items, as_of: new Date().toISOString(),
+      source: "Polymarket public data API (leaderboard)", disclaimer: REP_DISCLAIMER };
+  });
+}
+
+// ── Base balance (réplica onesource erc20-balance / live-balance: 412 e 338 compradores a US$ 0,003) ─────────
+const USDC_BASE = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
+const word = (a: string) => a.toLowerCase().replace(/^0x/, "").padStart(64, "0");
+/** Pure: decode an ABI string/bytes32 return (symbol()). Exported for tests. */
+export function abiString(hexRet: string | null | undefined): string | null {
+  const h = String(hexRet ?? "").replace(/^0x/, ""); if (!h) return null;
+  try {
+    if (h.length === 64) return Buffer.from(h, "hex").toString("utf8").replace(/\0+$/, "") || null;
+    const len = parseInt(h.slice(64, 128), 16); return Buffer.from(h.slice(128, 128 + len * 2), "hex").toString("utf8") || null;
+  } catch { return null; }
+}
+export async function baseBalance(addrRaw: string, tokenRaw?: unknown) {
+  const addr = String(addrRaw ?? "").trim().toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(addr)) throw Object.assign(new Error("address must be 0x + 40 hex"), { status: 400 });
+  const token = tokenRaw ? String(tokenRaw).trim().toLowerCase() : null;
+  if (token && !/^0x[0-9a-f]{40}$/.test(token)) throw Object.assign(new Error("token must be 0x + 40 hex"), { status: 400 });
+  return cached(`bal:${addr}:${token}`, 10_000, async () => {
+    const call = (to: string, data: string) => rpc<string>("eth_call", [{ to, data }, "latest"]);
+    const bal = (t: string) => call(t, "0x70a08231" + word(addr));
+    const [eth, usdc, block, tb, td, ts] = await Promise.all([
+      rpc<string>("eth_getBalance", [addr, "latest"]), bal(USDC_BASE), rpc<string>("eth_blockNumber", []),
+      token ? bal(token) : Promise.resolve(null), token ? call(token, "0x313ce567").catch(() => null) : Promise.resolve(null),
+      token ? call(token, "0x95d89b41").catch(() => null) : Promise.resolve(null)]);
+    const dec = td ? Number(BigInt(td)) : 18;
+    const fmt = (v: string | null, d: number) => v == null || v === "0x" ? null : Number(BigInt(v)) / 10 ** d;
+    return { chain: "base", chain_id: 8453, address: addr, block: Number(BigInt(block)),
+      eth: fmt(eth, 18), usdc: fmt(usdc, 6),
+      token: token ? { address: token, symbol: abiString(ts), decimals: dec, balance: fmt(tb, dec) } : null,
+      as_of: new Date().toISOString(), source: "Base public RPC (eth_getBalance, balanceOf)", disclaimer: REP_DISCLAIMER };
+  });
+}
