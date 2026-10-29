@@ -3,7 +3,7 @@
   "name": "io.github.tradewr333-lgtm/degenscan-intel",
   "title": "Degenscan Intel",
   "description": "Hyperliquid funding on every dex incl. HIP-3, event feed and macro data for agents. x402 from $0.001",
-  "version": "0.10.49",
+  "version": "0.10.50",
   "websiteUrl": "https://intel.degenscan.io",
   "repository": {
     "url": "https://github.com/tradewr333-lgtm/degenscan-intel",

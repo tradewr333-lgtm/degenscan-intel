@@ -164,8 +164,8 @@ export async function fillResearch() {
   try {
     for (const t of Object.keys(TOPICS)) {
       const c = memo.get(`arxiv:${t}`); if (c && Date.now() - c.at < 12 * 3_600_000) continue;
-      try { const d7 = await arxivCount(TOPICS[t], 7); await pause(3100); const d30 = await arxivCount(TOPICS[t], 30); await pause(3100);
-        memo.set(`arxiv:${t}`, { at: Date.now(), v: { topic: t, papers_7d: d7, papers_30d: d30, weekly_pace_vs_30d: d7 != null && d30 ? r(d7 / (d30 / (30 / 7)), 2) : null } }); } catch { /* next */ }
+      try { const { d7, d30, capped_30d } = await arxivRecent(TOPICS[t]); await pause(3100);
+        memo.set(`arxiv:${t}`, { at: Date.now(), v: { topic: t, papers_7d: d7, papers_30d: d30, papers_30d_is_lower_bound: capped_30d, weekly_pace_vs_30d: d30 && !capped_30d ? r(d7 / (d30 / (30 / 7)), 2) : null } }); } catch { await pause(3100); }
     }
   } finally { researchBusy = false; }
 }
@@ -174,11 +174,19 @@ export function startAiCollector() {
   const run = () => { void fillAdoption(); void fillResearch(); };
   setTimeout(run, 90_000).unref?.(); setInterval(run, 6 * 3_600_000).unref?.();
 }
-async function arxivCount(query: string, days: number) {
-  const now = Date.now(); const q = `(${query}) AND submittedDate:[${ymd(now - days * 86_400_000)} TO ${ymd(now)}]`;
-  const res = await fetch(`https://export.arxiv.org/api/query?search_query=${encodeURIComponent(q)}&max_results=0`, { headers: { "user-agent": UA }, signal: AbortSignal.timeout(25_000) });
+/** Pure: count <published> dates inside the last 7/30 days. Exported for tests. arXiv's submittedDate range filter
+ *  answers HTTP 500 (29/10), so we sort by submittedDate and count the newest entries instead. */
+export function countRecent(xml: string, now: number, max: number) {
+  const ds = [...xml.matchAll(/<published>([^<]+)<\/published>/g)].map(m => Date.parse(m[1])).filter(Number.isFinite);
+  const c = (d: number) => ds.filter(t => t >= now - d * 86_400_000).length;
+  const oldest = ds.length ? Math.min(...ds) : null;
+  return { d7: c(7), d30: c(30), capped_30d: ds.length >= max && oldest != null && oldest >= now - 30 * 86_400_000 };
+}
+async function arxivRecent(query: string) {
+  const max = 1000;
+  const res = await fetch(`https://export.arxiv.org/api/query?search_query=${encodeURIComponent(query)}&sortBy=submittedDate&sortOrder=descending&max_results=${max}`, { headers: { "user-agent": UA }, signal: AbortSignal.timeout(60_000) });
   if (!res.ok) throw new Error(`arxiv ${res.status}`);
-  const m = /<opensearch:totalResults[^>]*>(\d+)</.exec(await res.text()); return m ? Number(m[1]) : null;
+  return countRecent(await res.text(), Date.now(), max);
 }
 export async function aiResearch(q: any = {}) {
   const topic = q.topic ? String(q.topic).toLowerCase() : null;
@@ -189,7 +197,7 @@ export async function aiResearch(q: any = {}) {
   const items = list.map(t => memo.get(`arxiv:${t}`)?.v).filter(Boolean) as any[];
   if (!items.length) throw warming();
   return { items: items.sort((a, b) => (b.papers_7d ?? 0) - (a.papers_7d ?? 0)), topics: Object.keys(TOPICS), fields: { weekly_pace_vs_30d: ">1 = last week above the 30-day weekly average" },
-    source: "arXiv API (submittedDate, abstract match)", as_of: new Date().toISOString(), disclaimer: AI_DISCLAIMER };
+    source: "arXiv API (newest 1,000 matches by submission date, abstract match)", as_of: new Date().toISOString(), disclaimer: AI_DISCLAIMER };
 }
 
 // ── Regulation milestones (curated; verified 29/10/2026) ─────────────────────────────────────────────────────────

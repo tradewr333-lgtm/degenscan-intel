@@ -28,3 +28,8 @@ describe("ai intel", () => {
     expect(Object.keys(aiRegulation().jurisdictions)).toEqual(["eu", "us_colorado", "brazil"]);
   });
 });
+import { countRecent } from "../src/server/aiintel.js";
+describe("arxiv count", () => { it("counts recent published", () => {
+  const now = Date.parse("2026-10-29T00:00:00Z"); const x = ["2026-10-28", "2026-10-25", "2026-10-10", "2026-09-01"].map(d => `<published>${d}T10:00:00Z</published>`).join("");
+  expect(countRecent(x, now, 1000)).toEqual({ d7: 2, d30: 3, capped_30d: false });
+  expect(countRecent(x.split("<published>2026-09-01")[0], now, 3).capped_30d).toBe(true); }); });

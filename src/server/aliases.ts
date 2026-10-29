@@ -5,6 +5,8 @@
  * rewritten (Fastify rewriteUrl) to the canonical /v1 route — same handler, same price, same x402 payment.
  */
 export interface Alias { to: string; params?: string[]; name: string; desc: string }
+/** Defaults used when a crawler probes an alias without its parameter: the request still reaches the paid route (HTTP 402), never a 400. */
+const DEFAULTS: Record<string, string> = { coin: "BTC", symbol: "BTC", currency: "BTC", ticker: "NVDA", jurisdiction: "eu", address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" };
 
 export const ALIASES: Record<string, Alias> = {
   "/funding-rate": { to: "/v1/carry/now/{coin}", params: ["coin"], name: "Funding rate — Hyperliquid perp funding rate now", desc: "Funding rate for one perpetual future on Hyperliquid (any coin, incl. HIP-3 stocks): current funding rate annualised, 8h and 24h average, mark, oracle, open interest." },
@@ -42,13 +44,14 @@ export const ALIASES: Record<string, Alias> = {
   "/coin-snapshot": { to: "/v1/coin/{symbol}", params: ["symbol"], name: "Coin snapshot — everything about one coin", desc: "Coin snapshot in one call: price, funding rate, liquidations, smart money, options and news events for one coin." },
 };
 
-/** Rewrites "/funding-rate?coin=BTC&x=1" → "/v1/carry/now/BTC?x=1". Unknown paths and aliases missing a parameter pass through. */
+/** Rewrites "/funding-rate?coin=BTC&x=1" → "/v1/carry/now/BTC?x=1"; a missing parameter takes its default. Unknown paths pass through. */
 export function rewriteAlias(url: string): string {
   const q = url.indexOf("?"); const path = q < 0 ? url : url.slice(0, q);
   const a = ALIASES[path.length > 1 ? path.replace(/\/$/, "") : path]; if (!a) return url;
   const sp = new URLSearchParams(q < 0 ? "" : url.slice(q + 1));
   let to = a.to;
-  for (const p of a.params ?? []) { const v = sp.get(p); if (!v) return url; to = to.replace(`{${p}}`, encodeURIComponent(v)); sp.delete(p); }
+  for (const p of a.params ?? []) { const v = sp.get(p) || DEFAULTS[p]; if (!v) return url; to = to.replace(`{${p}}`, encodeURIComponent(v)); sp.delete(p); }
+  if (a.to.startsWith("/v1/token/verdict/") && !sp.get("chain")) sp.set("chain", "base");
   const rest = sp.toString(); return rest ? `${to}?${rest}` : to;
 }
 
@@ -57,7 +60,7 @@ export function aliasPaths(paths: Record<string, any>) {
   const out: Record<string, any> = {};
   for (const [alias, a] of Object.entries(ALIASES)) {
     const base = paths[a.to]?.get; if (!base) continue;
-    const params = [...(a.params ?? []).map(p => ({ name: p, in: "query", required: true, schema: { type: "string" } })), ...((base.parameters ?? []) as any[]).filter(p => p.in !== "path")];
+    const params = [...(a.params ?? []).map(p => ({ name: p, in: "query", required: false, schema: { type: "string", default: DEFAULTS[p] } })), ...((base.parameters ?? []) as any[]).filter(p => p.in !== "path")];
     out[alias] = { get: { ...base, operationId: alias.slice(1).replace(/-/g, "_"), summary: a.name, description: `${a.desc} Same data and price as ${a.to}. Market data only — not investment advice.`, parameters: params, "x-canonical": a.to } };
   }
   return out;

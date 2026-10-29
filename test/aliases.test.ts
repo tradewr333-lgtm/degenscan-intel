@@ -7,7 +7,8 @@ describe("keyword aliases", () => {
     expect(rewriteAlias("/token-risk?address=0xabc&chain=base")).toBe("/v1/token/verdict/0xabc?chain=base");
     expect(rewriteAlias("/candles?coin=xyz:NBIS&interval=1h")).toBe("/v1/hl/candles/xyz%3ANBIS?interval=1h");
     expect(rewriteAlias("/gas-price")).toBe("/v1/gas/base");
-    expect(rewriteAlias("/funding-rate")).toBe("/funding-rate");
+    expect(rewriteAlias("/funding-rate")).toBe("/v1/carry/now/BTC");
+    expect(rewriteAlias("/token-risk?address=0xabc")).toBe("/v1/token/verdict/0xabc?chain=base");
     expect(rewriteAlias("/v1/pulse?x=1")).toBe("/v1/pulse?x=1");
   });
   it("served: 402 on alias, openapi lists aliases, missing param 400", async () => {
@@ -17,7 +18,7 @@ describe("keyword aliases", () => {
     const c = await app.inject({ method: "GET", url: "/v1/pulse" });
     expect(r.statusCode).toBe(c.statusCode);
     const m = await app.inject({ method: "GET", url: "/funding-rate" });
-    expect(m.statusCode).toBe(400);
+    expect(m.statusCode).not.toBe(400);
     const o = (await app.inject({ method: "GET", url: "/openapi.json" })).json();
     const missing = Object.keys(ALIASES).filter(a => !o.paths[a]);
     expect(missing).toEqual([]);
