@@ -16,7 +16,7 @@ const fail = (e: unknown) => ({ content: [{ type: "text" as const, text: `error:
 
 /** Build the MCP server. One instance per stateless HTTP request is fine (cheap). */
 export function buildMcpServer(ctx: { carryKey?: string; operator?: boolean; carryPaid?: boolean; ip?: string } = {}) {
-  const s = new McpServer({ name: "degenscan-intel", version: "0.10.48" }, {
+  const s = new McpServer({ name: "degenscan-intel", version: "0.10.49" }, {
     instructions: [
       "Degenscan Intel: cross-asset event feed for trading agents. Events are normalized from ~40 primary sources (SEC, Fed, Federal Register, USGS, NHC, Nasdaq halts, DefiLlama, Polymarket…) and scored against an exposure graph into per-asset impacts.",
       "Cheapest probe: pulse ($0.001). One-call briefing per asset: brief ($0.10). Typical loop: regime_snapshot → events_since(since='4h', universe=[your book]) → impact_for(asset_id) for anything with confidence ≥ 0.4 → check tradable_now / next_open before acting. For prediction markets: polymarket_context(market) → compare yes_prob with fresh primary-source events.",
@@ -51,6 +51,12 @@ export function buildMcpServer(ctx: { carryKey?: string; operator?: boolean; car
     hl_candles: "Use for price history (OHLCV) of one Hyperliquid perp; for price now use price_for.",
     polymarket_leaderboard: "Use to see which Polymarket traders made the most PnL or volume; for markets use polymarket_top.",
     base_balance: "Use to read a Base wallet's ETH, USDC or any ERC-20 balance now.",
+    ai_models: "Use to list or filter LLMs by price, context and capabilities.",
+    ai_cheapest: "Use to pick the cheapest LLM that supports what you need (tools, vision, json, context).",
+    ai_cost: "Use to estimate what a workload costs on several LLMs before choosing one.",
+    ai_adoption: "Use to see which AI SDKs/frameworks are growing (downloads, stars).",
+    ai_research: "Use to see which AI research topics are accelerating on arXiv.",
+    ai_regulation: "Use for AI law dates and status (EU AI Act, Colorado, Brazil); not legal advice.",
     gas_base: "Use before sending a Base transaction to pick fees and estimate cost in USD.",
     hl_basis: "Use for one Hyperliquid perp's premium vs oracle and predicted funding vs Binance/Bybit; for the full coin picture use coin_snapshot.",
     br_premium: "Use for Brazil's crypto-dollar/BTC premium vs the official PTAX; not for other FX.",
@@ -165,6 +171,19 @@ export function buildMcpServer(ctx: { carryKey?: string; operator?: boolean; car
       async (a: any) => { try { return json(await (await import("./scoutrep.js")).polymarketLeaderboard(a.period, a.by, a.limit)); } catch (e) { return fail(e); } });
     s.registerTool("base_balance", { title: "Base wallet balance", description: `Base (8453) balance of one address: eth, usdc and optional token {address, symbol, decimals, balance}, block. $${PRICES.base_balance}/call.`, inputSchema: { address: z.string().describe("0x wallet"), token: z.string().optional().describe("optional ERC-20 contract 0x…") }, annotations: ro },
       async (a: any) => { try { return json(await (await import("./scoutrep.js")).baseBalance(a.address, a.token)); } catch (e) { return fail(e); } });
+    { const AIm = () => import("./aiintel.js");
+      s.registerTool("ai_models", { title: "AI models (LLM prices)", description: `~450 LLMs: items[] {id, provider, context, max_output, input_per_1m, output_per_1m (USD per 1M tokens), modalities_in, tools, structured_outputs, reasoning}. Filters provider, needs (tools,json,vision,reasoning,audio,pdf), min_context; sort newest|price|context. $${PRICES.ai_models}/call.`, inputSchema: { provider: z.string().optional(), needs: z.string().optional(), min_context: z.number().int().optional(), sort: z.enum(["newest", "price", "context"]).optional(), limit: z.number().int().min(1).max(100).optional() }, annotations: ro },
+        async (a: any) => { try { return json(await (await AIm()).aiModels(a)); } catch (e) { return fail(e); } });
+      s.registerTool("ai_cheapest", { title: "Cheapest LLM for a need", description: `Cheapest models meeting needs (tools, json, vision, reasoning, audio, pdf) and min_context, ranked by blended USD per 1M tokens (3:1 in:out). $${PRICES.ai_cheapest}/call.`, inputSchema: { needs: z.string().optional(), min_context: z.number().int().optional(), provider: z.string().optional(), limit: z.number().int().min(1).max(25).optional() }, annotations: ro },
+        async (a: any) => { try { return json(await (await AIm()).aiCheapest(a)); } catch (e) { return fail(e); } });
+      s.registerTool("ai_cost", { title: "LLM cost calculator", description: `Cost per call and for N calls of a workload on each listed model: items[] {id, usd_per_call, usd_total, fits_context}, cheapest. $${PRICES.ai_cost}/call.`, inputSchema: { models: z.string().optional().describe("comma-separated ids, e.g. openai/gpt-5,anthropic/claude-sonnet"), input_tokens: z.number().int().optional(), output_tokens: z.number().int().optional(), calls: z.number().int().optional() }, annotations: ro },
+        async (a: any) => { try { const v = await (await AIm()).aiCost(a); return v ? json(v) : fail(new Error("no matching models")); } catch (e) { return fail(e); } });
+      s.registerTool("ai_adoption", { title: "AI tool adoption", description: `Weekly npm + PyPI downloads (last_7d, prior_7d, wow_pct) and GitHub stars for AI SDKs and frameworks; filter by kind (model_sdk, framework, agents, rag, serving, vector_db, models, agent_payments). $${PRICES.ai_adoption}/call.`, inputSchema: { kind: z.string().optional() }, annotations: ro },
+        async (a: any) => { try { return json(await (await AIm()).aiAdoption(a)); } catch (e) { return fail(e); } });
+      s.registerTool("ai_research", { title: "AI research momentum", description: `New arXiv papers per AI topic in 7 and 30 days, weekly_pace_vs_30d. Topics: rag, agents, fine_tuning, mcp, evaluation, quantization, multimodal, reasoning, safety, inference. $${PRICES.ai_research}/call.`, inputSchema: { topic: z.string().optional() }, annotations: ro },
+        async (a: any) => { try { return json(await (await AIm()).aiResearch(a)); } catch (e) { return fail(e); } });
+      s.registerTool("ai_regulation", { title: "AI regulation milestones", description: `AI law dates, status and sources: eu (AI Act after Omnibus 2026/1744), us_colorado (SB 26-189), brazil (PL 2338/2023); next_milestone. Not legal advice. $${PRICES.ai_regulation}/call.`, inputSchema: { jurisdiction: z.enum(["eu", "us_colorado", "brazil"]).optional() }, annotations: ro },
+        async (a: any) => { try { return json((await AIm()).aiRegulation(a.jurisdiction)); } catch (e) { return fail(e); } }); }
     s.registerTool("gas_base", { title: "Base gas now", description: `Base (8453) gas: base_fee_gwei, next_base_fee_gwei, priority_fee_gwei {p10,p50,p90}, suggested {low,medium,high} EIP-1559 fees, l2_execution_cost {eth_transfer, erc20_transfer, dex_swap} in ETH and USD. $${PRICES.gas_base}/call.`, inputSchema: {}, annotations: ro },
       async () => { try { return json(await (await import("./scoutrep.js")).gasBase()); } catch (e) { return fail(e); } });
     s.registerTool("hl_basis", { title: "Hyperliquid perp basis", description: `One Hyperliquid main-dex perp: mark_oracle_premium_bps, impact_premium_bps, impact_spread_bps, funding {hourly, per_8h, apr_pct, apr_24h_mean_pct, apr_7d_mean_pct, positive_share_7d_pct}, predicted_funding[] {venue hyperliquid|binance|bybit, apr_pct, next_funding}, open_interest_usd. $${PRICES.hl_basis}/call.`, inputSchema: { coin: z.string().describe("e.g. BTC, ETH, HYPE") }, annotations: ro },

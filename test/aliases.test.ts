@@ -25,3 +25,9 @@ describe("keyword aliases", () => {
     await app.close();
   });
 });
+describe("well-known aliases", () => { it("lists aliases as priced resources", async () => {
+  const app = await buildHttp(); const w = (await app.inject({ method: "GET", url: "/.well-known/x402" })).json();
+  const tr = w.resources.find((r: any) => r.http?.includes("/token-risk?"));
+  expect(tr.tool).toBe("token_verdict"); expect(tr.price_usd).toBeGreaterThan(0);
+  expect(w.resources.filter((r: any) => r.alias_of && !r.price_usd)).toEqual([]);
+  await app.close(); }); });

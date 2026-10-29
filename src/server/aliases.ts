@@ -33,6 +33,12 @@ export const ALIASES: Record<string, Alias> = {
   "/crypto-news": { to: "/v1/news/{ticker}", params: ["ticker"], name: "Crypto news — headlines for an asset", desc: "Crypto and stock news: headlines touching one asset with source tier, corroboration and sentiment." },
   "/whale-transfers": { to: "/v1/whales", name: "Whale transfers — large stablecoin transfers", desc: "Whale transfers: large USDC and USDT transfers on Base and Ethereum." },
   "/usd-brl": { to: "/v1/br/ptax", name: "USD BRL — dollar real exchange rate", desc: "USD/BRL exchange rate: official BCB PTAX, USDT/BRL and the crypto-dollar premium in Brazil." },
+  "/llm-prices": { to: "/v1/ai/models", name: "LLM prices — AI model pricing per token", desc: "LLM prices: price per 1M input and output tokens, context window and capabilities for ~450 AI models (OpenAI, Anthropic, Google, Meta, Mistral, DeepSeek…)." },
+  "/cheapest-llm": { to: "/v1/ai/cheapest", name: "Cheapest LLM — cheapest AI model for a task", desc: "Cheapest LLM that supports tools, vision, JSON or reasoning with a minimum context window." },
+  "/llm-cost": { to: "/v1/ai/cost", name: "LLM cost — AI cost calculator", desc: "LLM cost calculator: cost of a workload (tokens × calls) on each AI model." },
+  "/ai-adoption": { to: "/v1/ai/adoption", name: "AI adoption — AI framework downloads and stars", desc: "AI adoption: weekly downloads and GitHub stars of AI SDKs and frameworks (LangChain, LlamaIndex, CrewAI, MCP…)." },
+  "/ai-research": { to: "/v1/ai/research", name: "AI research — arXiv paper trends", desc: "AI research trends: new arXiv papers per topic (RAG, agents, MCP, fine-tuning) in 7 and 30 days." },
+  "/ai-regulation": { to: "/v1/ai/regulation/{jurisdiction}", params: ["jurisdiction"], name: "AI regulation — EU AI Act and AI law dates", desc: "AI regulation: EU AI Act deadlines after the Digital Omnibus, Colorado AI law, Brazil AI bill — dates, status, sources." },
   "/coin-snapshot": { to: "/v1/coin/{symbol}", params: ["symbol"], name: "Coin snapshot — everything about one coin", desc: "Coin snapshot in one call: price, funding rate, liquidations, smart money, options and news events for one coin." },
 };
 

@@ -76,6 +76,12 @@ export function toolForRequest(req: FastifyRequest): string | null {
   if (url.startsWith("/v1/coin/")) return "coin_snapshot";
   if (url.startsWith("/v1/hl/liquidations/")) return "hl_liquidations";
   if (url === "/v1/gas/base") return "gas_base";
+  if (url === "/v1/ai/models") return "ai_models";
+  if (url === "/v1/ai/cheapest") return "ai_cheapest";
+  if (url === "/v1/ai/cost") return "ai_cost";
+  if (url === "/v1/ai/adoption") return "ai_adoption";
+  if (url === "/v1/ai/research") return "ai_research";
+  if (url === "/v1/ai/regulation" || url.startsWith("/v1/ai/regulation/")) return "ai_regulation";
   if (url.startsWith("/v1/base/balance/")) return "base_balance";
   if (url.startsWith("/v1/hl/candles/")) return "hl_candles";
   if (url === "/v1/polymarket/leaderboard") return "polymarket_leaderboard";
