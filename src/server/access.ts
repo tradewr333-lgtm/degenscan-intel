@@ -76,6 +76,7 @@ export function toolForRequest(req: FastifyRequest): string | null {
   if (url.startsWith("/v1/coin/")) return "coin_snapshot";
   if (url.startsWith("/v1/hl/liquidations/")) return "hl_liquidations";
   if (url === "/v1/gas/base") return "gas_base";
+  if (url.startsWith("/v1/token/risk/")) return "token_risk";
   if (url === "/v1/ai/models") return "ai_models";
   if (url === "/v1/ai/cheapest") return "ai_cheapest";
   if (url === "/v1/ai/cost") return "ai_cost";

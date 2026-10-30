@@ -16,7 +16,7 @@ const fail = (e: unknown) => ({ content: [{ type: "text" as const, text: `error:
 
 /** Build the MCP server. One instance per stateless HTTP request is fine (cheap). */
 export function buildMcpServer(ctx: { carryKey?: string; operator?: boolean; carryPaid?: boolean; ip?: string } = {}) {
-  const s = new McpServer({ name: "degenscan-intel", version: "0.10.51" }, {
+  const s = new McpServer({ name: "degenscan-intel", version: "0.10.52" }, {
     instructions: [
       "Degenscan Intel: cross-asset event feed for trading agents. Events are normalized from ~40 primary sources (SEC, Fed, Federal Register, USGS, NHC, Nasdaq halts, DefiLlama, Polymarket…) and scored against an exposure graph into per-asset impacts.",
       "Cheapest probe: pulse ($0.001). One-call briefing per asset: brief ($0.10). Typical loop: regime_snapshot → events_since(since='4h', universe=[your book]) → impact_for(asset_id) for anything with confidence ≥ 0.4 → check tradable_now / next_open before acting. For prediction markets: polymarket_context(market) → compare yes_prob with fresh primary-source events.",
@@ -51,6 +51,7 @@ export function buildMcpServer(ctx: { carryKey?: string; operator?: boolean; car
     hl_candles: "Use for price history (OHLCV) of one Hyperliquid perp; for price now use price_for.",
     polymarket_leaderboard: "Use to see which Polymarket traders made the most PnL or volume; for markets use polymarket_top.",
     base_balance: "Use to read a Base wallet's ETH, USDC or any ERC-20 balance now.",
+    token_risk: "Use for a quick, cheap buy/no-buy risk check of a token; for holders, owner, LP lock and every flag use token_verdict.",
     stable_yield_best: "Use for the single best stablecoin yield per asset or chain; for the full pool list use defi_yields.",
     ai_models: "Use to list or filter LLMs by price, context and capabilities.",
     ai_cheapest: "Use to pick the cheapest LLM that supports what you need (tools, vision, json, context).",
@@ -172,6 +173,8 @@ export function buildMcpServer(ctx: { carryKey?: string; operator?: boolean; car
       async (a: any) => { try { return json(await (await import("./scoutrep.js")).polymarketLeaderboard(a.period, a.by, a.limit)); } catch (e) { return fail(e); } });
     s.registerTool("base_balance", { title: "Base wallet balance", description: `Base (8453) balance of one address: eth, usdc and optional token {address, symbol, decimals, balance}, block. $${PRICES.base_balance}/call.`, inputSchema: { address: z.string().describe("0x wallet"), token: z.string().optional().describe("optional ERC-20 contract 0x…") }, annotations: ro },
       async (a: any) => { try { return json(await (await import("./scoutrep.js")).baseBalance(a.address, a.token)); } catch (e) { return fail(e); } });
+    s.registerTool("token_risk", { title: "Token risk check (lite)", description: `Quick token contract risk: verdict, score 0-100, honeypot, buy_tax, sell_tax, mintable, critical[]/high[] flag ids, top_issues[], liquidity_usd. EVM (default base) or Solana mint. Full report: token_verdict. $${PRICES.token_risk}/call.`, inputSchema: { address: z.string(), chain: z.string().optional() }, annotations: ro },
+      async (a: any) => { try { const T = await import("./token-verdict.js"); return json(await T.tokenRiskLite(T.TokenVerdictArgs.parse(a))); } catch (e) { return fail(e); } });
     s.registerTool("stable_yield_best", { title: "Best stablecoin yield", description: `best_by_asset[] {asset, best {project, chain, apy_pct, apy_base_pct, reward_share_pct, tvl_usd}, best_base_only}, usdc_by_chain[], usdt_by_chain[]. $${PRICES.stable_yield_best}/call.`, inputSchema: { asset: z.string().optional().describe("USDC, USDT, DAI…"), min_tvl: z.number().optional() }, annotations: ro },
       async (a: any) => { try { return json(await (await import("./macro.js")).stableYieldBest(a)); } catch (e) { return fail(e); } });
     { const AIm = () => import("./aiintel.js");

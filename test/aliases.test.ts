@@ -4,11 +4,11 @@ import { buildHttp } from "../src/server/http.js";
 describe("keyword aliases", () => {
   it("rewrites with params", () => {
     expect(rewriteAlias("/funding-rate?coin=BTC")).toBe("/v1/carry/now/BTC");
-    expect(rewriteAlias("/token-risk?address=0xabc&chain=base")).toBe("/v1/token/verdict/0xabc?chain=base");
+    expect(rewriteAlias("/token-risk?address=0xabc&chain=base")).toBe("/v1/token/risk/0xabc?chain=base");
     expect(rewriteAlias("/candles?coin=xyz:NBIS&interval=1h")).toBe("/v1/hl/candles/xyz%3ANBIS?interval=1h");
     expect(rewriteAlias("/gas-price")).toBe("/v1/gas/base");
     expect(rewriteAlias("/funding-rate")).toBe("/v1/carry/now/BTC");
-    expect(rewriteAlias("/token-risk?address=0xabc")).toBe("/v1/token/verdict/0xabc?chain=base");
+    expect(rewriteAlias("/token-risk?address=0xabc")).toBe("/v1/token/risk/0xabc?chain=base");
     expect(rewriteAlias("/v1/pulse?x=1")).toBe("/v1/pulse?x=1");
   });
   it("served: 402 on alias, openapi lists aliases, missing param 400", async () => {
@@ -29,6 +29,12 @@ describe("keyword aliases", () => {
 describe("well-known aliases", () => { it("lists aliases as priced resources", async () => {
   const app = await buildHttp(); const w = (await app.inject({ method: "GET", url: "/.well-known/x402" })).json();
   const tr = w.resources.find((r: any) => r.http?.includes("/token-risk?"));
-  expect(tr.tool).toBe("token_verdict"); expect(tr.price_usd).toBeGreaterThan(0);
+  expect(tr.tool).toBe("token_risk"); expect(tr.price_usd).toBeGreaterThan(0);
   expect(w.resources.filter((r: any) => r.alias_of && !r.price_usd)).toEqual([]);
   await app.close(); }); });
+import { liteFrom } from "../src/server/token-verdict.js";
+describe("token risk lite", () => { it("keeps verdict, taxes, top issues", () => {
+  const l = liteFrom({ address: "0xa", chain: "base", symbol: "X", as_of: "t", verdict: "DANGER", score: 30, contract: { honeypot: true, buy_tax: 0, sell_tax: 0.99, mintable: true },
+    flags: [{ id: "honeypot", severity: "critical", detail: "cannot sell" }, { id: "tax", severity: "high", detail: "sell tax 99%" }, { id: "x", severity: "info", detail: "i" }], market: { liquidity_usd: 10 } });
+  expect(l).toMatchObject({ verdict: "DANGER", honeypot: true, sell_tax: 0.99, critical: ["honeypot"], high: ["tax"], top_issues: ["cannot sell", "sell tax 99%"], liquidity_usd: 10 });
+  expect(l.full_report).toBe("/v1/token/verdict/0xa?chain=base"); }); });

@@ -141,3 +141,17 @@ export async function tokenVerdict(a: z.infer<typeof TokenVerdictArgs>) {
   cache.set(key, { at: Date.now(), v: out });
   return out;
 }
+
+/** Lite (Renato 30/10, to compete at "token risk" where sellers charge US$0.001): verdict, score, the honeypot/tax facts
+ *  and the top issues only — same deterministic engine and cache as the full verdict (US$0.01), which adds holders,
+ *  owner, LP lock, market detail and every flag. */
+export function liteFrom(v: any) {
+  const c = v.contract ?? {};
+  const sev = (s: string) => (v.flags ?? []).filter((f: any) => f.severity === s).map((f: any) => f.id);
+  return { address: v.address, chain: v.chain, symbol: v.symbol, as_of: v.as_of, verdict: v.verdict, score: v.score,
+    honeypot: c.honeypot ?? null, buy_tax: c.buy_tax ?? null, sell_tax: c.sell_tax ?? null, mintable: c.mintable ?? c.mint_authority_active ?? null,
+    critical: sev("critical"), high: sev("high"), top_issues: (v.flags ?? []).filter((f: any) => f.severity !== "info").slice(0, 3).map((f: any) => f.detail),
+    liquidity_usd: v.market?.liquidity_usd ?? null, full_report: `/v1/token/verdict/${v.address}?chain=${v.chain}`,
+    disclaimer: "Automated contract checks (GoPlus + DexScreener). Absence of flags is not a guarantee. Not investment advice." };
+}
+export async function tokenRiskLite(a: z.infer<typeof TokenVerdictArgs>) { return liteFrom(await tokenVerdict(a)); }

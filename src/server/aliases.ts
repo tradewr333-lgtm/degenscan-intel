@@ -13,8 +13,8 @@ export const ALIASES: Record<string, Alias> = {
   "/funding-rates": { to: "/v1/funding/alerts", name: "Funding rates — extreme perp funding rates now", desc: "Funding rates across perps: coins with the most extreme funding rate now on Hyperliquid plus predicted funding on Binance and Bybit." },
   "/funding-arbitrage": { to: "/v1/carry/top", name: "Funding arbitrage — top funding rate spreads", desc: "Funding arbitrage: top same-ticker funding rate spreads across Hyperliquid dexes and perp-vs-spot funding now." },
   "/perp-basis": { to: "/v1/hl/basis/{coin}", params: ["coin"], name: "Perp basis — premium and predicted funding", desc: "Perp basis and premium: mark vs oracle, impact premium, funding rate now/24h/7d and predicted funding on Hyperliquid, Binance and Bybit." },
-  "/token-risk": { to: "/v1/token/verdict/{address}", params: ["address"], name: "Token risk — token contract risk check", desc: "Token risk check for a token contract (EVM or Solana): honeypot, buy/sell tax, mint, pause, blacklist, owner, holders, LP lock, liquidity." },
-  "/honeypot-check": { to: "/v1/token/verdict/{address}", params: ["address"], name: "Honeypot check — token scam and rug check", desc: "Honeypot check and rug check for a token contract: can it be sold, sell tax, mint/pause/blacklist, owner powers, LP lock." },
+  "/token-risk": { to: "/v1/token/risk/{address}", params: ["address"], name: "Token risk — token contract risk check", desc: "Token risk check for a token contract (EVM or Solana): honeypot, buy/sell tax, mint, pause, blacklist, owner, holders, LP lock, liquidity." },
+  "/honeypot-check": { to: "/v1/token/risk/{address}", params: ["address"], name: "Honeypot check — token scam and rug check", desc: "Honeypot check and rug check for a token contract: can it be sold, sell tax, mint/pause/blacklist, owner powers, LP lock." },
   "/gas-price": { to: "/v1/gas/base", name: "Gas price — Base gas fees now", desc: "Gas price on Base now: base fee, priority fee percentiles, suggested EIP-1559 fees, transfer and swap cost in USD." },
   "/wallet-balance": { to: "/v1/base/balance/{address}", params: ["address"], name: "Wallet balance — Base ETH, USDC and token balance", desc: "Wallet balance on Base: ETH, USDC and any ERC-20 token balance of an address now." },
   "/crypto-price": { to: "/v1/price/{symbol}", params: ["symbol"], name: "Crypto price — price now", desc: "Crypto price now: Hyperliquid mark/mid/oracle and Coinbase spot price, 24h change, basis, realized volatility." },
@@ -53,7 +53,7 @@ export function rewriteAlias(url: string): string {
   const sp = new URLSearchParams(q < 0 ? "" : url.slice(q + 1));
   let to = a.to;
   for (const p of a.params ?? []) { const v = sp.get(p) || DEFAULTS[p]; if (!v) return url; to = to.replace(`{${p}}`, encodeURIComponent(v)); sp.delete(p); }
-  if (a.to.startsWith("/v1/token/verdict/") && !sp.get("chain")) sp.set("chain", "base");
+  if (a.to.startsWith("/v1/token/") && !sp.get("chain")) sp.set("chain", "base");
   const rest = sp.toString(); return rest ? `${to}?${rest}` : to;
 }
 

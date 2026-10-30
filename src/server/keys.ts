@@ -26,6 +26,15 @@ export const CARRY = { usd_month: 100, days_per_usdc_payment: 30, lookup_key: "c
 /** Carry Desk (seller's order 04/10, approved by Renato): US$450/month or US$4,500/year, limited seats per wave (25 first). Everything in
  *  Data + eligible/capacity/realized/afterhours + webhook alerts. Opened/closed and seats set by the operator (carry_settings), no deploy. */
 export const CARRY_DESK = { usd_month: 450, usd_year: 4500, days_per_usdc_payment: 30, lookup_month: "carry_desk_monthly_450usd", lookup_year: "carry_desk_yearly_4500usd", product_name: "Degenscan Carry Desk", default_seats: 25 } as const;
+/** Carry data license (Renato 30/10): US$1,500 USDC for the history to date + US$300 USDC per 30 days of continued updates.
+ *  Internal use, no resale. Paid only in USDC on-chain (x402, Base or Solana). Each payment issues a Desk-tier key labelled
+ *  "carry license" that also opens /v1/carry/license/export (CSV.gz of the hourly history). */
+export const CARRY_LICENSE = { usd_initial: 1500, usd_month: 300, days: 30 } as const;
+export function isLicenseKey(raw: string | undefined | null): boolean {
+  const a = carryAccess(raw); if (!a.ok || !a.id) return false;
+  const row = getDb().prepare("SELECT label FROM api_keys WHERE id = ?").get(a.id) as any;
+  return String(row?.label ?? "").startsWith("carry license");
+}
 function ensureSettings() { getDb().exec("CREATE TABLE IF NOT EXISTS carry_settings (k TEXT PRIMARY KEY, v TEXT NOT NULL)"); }
 export function carrySetting(k: string, dflt: string): string { ensureSettings(); return ((getDb().prepare("SELECT v FROM carry_settings WHERE k = ?").get(k) as any)?.v) ?? dflt; }
 export function setCarrySetting(k: string, v: string) { ensureSettings(); getDb().prepare("INSERT INTO carry_settings (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v").run(k, v); }
@@ -63,12 +72,12 @@ export function createKey(opts: { plan: Plan; stripe_customer?: string; stripe_s
   return { id, key };
 }
 
-export function createCarryKey(opts: { via: "stripe" | "x402" | "internal"; label?: string; tier?: "data" | "desk"; stripe_customer?: string; stripe_subscription?: string; stripe_session?: string; email?: string; wallet?: string | null }): { id: string; key: string } {
+export function createCarryKey(opts: { via: "stripe" | "x402" | "internal"; label?: string; tier?: "data" | "desk"; stripe_customer?: string; stripe_subscription?: string; stripe_session?: string; email?: string; wallet?: string | null; days?: number }): { id: string; key: string } {
   ensure();
   const desk = opts.tier === "desk";
   const id = "k_" + randomBytes(6).toString("hex");
   const key = `${desk ? "dsi_carrydesk_" : "dsi_carry_"}${randomBytes(24).toString("base64url")}`;
-  const expires = opts.via === "x402" ? new Date(Date.now() + (desk ? CARRY_DESK.days_per_usdc_payment : CARRY.days_per_usdc_payment) * 86_400_000).toISOString() : null;
+  const expires = opts.via === "x402" ? new Date(Date.now() + (opts.days ?? (desk ? CARRY_DESK.days_per_usdc_payment : CARRY.days_per_usdc_payment)) * 86_400_000).toISOString() : null;
   getDb().prepare(`INSERT INTO api_keys (id, key_hash, plan, monthly_calls, status, stripe_customer, stripe_subscription, stripe_session, email, wallet, label, expires_at, created_at)
     VALUES (?,?,?,0,?,?,?,?,?,?,?,?,?)`).run(id, hash(key), desk ? "carry_desk" : "carry", opts.via === "x402" ? "pending" : "active", opts.stripe_customer ?? null, opts.stripe_subscription ?? null,
     opts.stripe_session ?? null, opts.email ?? null, opts.wallet ?? null, opts.label ?? `${desk ? "carry desk" : "carry"} ${opts.via}`, expires, new Date().toISOString());

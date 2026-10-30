@@ -7,7 +7,7 @@ import { registerExactSvmScheme } from "@x402/svm/exact/server";
 import { createFacilitatorConfig } from "@coinbase/x402";
 import { declareDiscoveryExtension, bazaarResourceServerExtension } from "@x402/extensions/bazaar";
 import { PRICES } from "./pricing.js";
-import { PACKS, CARRY, CARRY_DESK } from "./keys.js";
+import { PACKS, CARRY, CARRY_DESK, CARRY_LICENSE } from "./keys.js";
 import { FREE_MODE } from "./access.js";
 
 /**
@@ -60,6 +60,7 @@ const MICRO_OUT: Record<string, any> = {
   ai_research: { items: [{ topic: "agents", papers_7d: 420, papers_30d: 1650, weekly_pace_vs_30d: 1.09 }] },
   ai_regulation: { as_of: "2026-10-29", jurisdictions: { eu: { law: "EU AI Act — Regulation (EU) 2024/1689 as amended by (EU) 2026/1744", next_milestone: { date: "2026-12-02", what: "Article 50(2) for generative systems already on the market" } } } },
   stable_yield_best: { best_by_asset: [{ asset: "USDC", pools: 120, best: { project: "aave-v3", chain: "Base", apy_pct: 5.4, apy_base_pct: 4.9, reward_share_pct: 9.3, tvl_usd: 310000000 } }], usdc_by_chain: [{ project: "aave-v3", chain: "Base", apy_pct: 5.4 }] },
+  token_risk: { address: "0x4ed4e862860bed51a9570b96d89af5e1b0efefed", chain: "base", symbol: "DEGEN", verdict: "LOW_RISK", score: 92, honeypot: false, buy_tax: 0, sell_tax: 0, mintable: false, critical: [], high: [], top_issues: ["Top-10 holders own 38% of supply"], liquidity_usd: 4200000, full_report: "/v1/token/verdict/0x4ed4…?chain=base" },
   hl_markets: { active: 330, delisted: 41, dexes: { main: ["BTC", "ETH", "HYPE"], xyz: ["xyz:NBIS", "xyz:TSLA"] } },
   hl_liq_near: { as_of: "2026-10-17T18:00:00.000Z", within_pct: 5, items: [{ coin: "HYPE", mark: 41.2, longs_near_liq_usd: 18400000, shorts_near_liq_usd: 2100000 }], liquidations_24h: { count: 7, notional_usd: 3200000, top_coins: [{ coin: "ETH", count: 3, notional_usd: 1900000 }] } },
   hl_liquidations: { coin: "BTC", mark: 81276, open_interest_usd: 3340000000, coverage_pct_of_oi: 16.8, longs: { positions: 41, notional_usd: 561000000, avg_entry: 80120 }, shorts: { positions: 29, notional_usd: 402000000, avg_entry: 83010 },
@@ -161,6 +162,7 @@ export function buildRoutes(): RoutesConfig {
       ["GET /v1/hl/candles/:coin", "hl_candles", "Hyperliquid OHLCV candles for any perp (main dex and HIP-3: xyz:NBIS…): interval 1m/5m/15m/1h/4h/1d, up to 500 candles, plus change %, high/low range and VWAP over the window.", { pathParams: { coin: "BTC" }, input: { interval: "1h", limit: 100 }, pathParamsSchema: { properties: { coin: { type: "string", description: "e.g. BTC or xyz:NBIS" } }, required: ["coin"] } }],
       ["GET /v1/polymarket/leaderboard", "polymarket_leaderboard", "Polymarket top traders for a day, week, month or all time, ranked by PnL or volume: wallet, display name, PnL, volume and PnL/volume.", { input: { period: "week", by: "pnl", limit: 20 } }],
       ["GET /v1/base/balance/:address", "base_balance", "Base wallet balance now: ETH, USDC and, with ?token=0x…, any ERC-20 (symbol, decimals, balance), at the latest block.", { pathParams: { address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" }, pathParamsSchema: { properties: { address: { type: "string", description: "0x wallet address" } }, required: ["address"] } }],
+      ["GET /v1/token/risk/:address", "token_risk", "Token risk check (lite) for agents that buy, snipe or route swaps: verdict DANGER/HIGH_RISK/CAUTION/LOW_RISK, 0–100 score, honeypot, buy/sell tax, mintable, critical/high flag ids and the top 3 issues. Base default; ethereum, bsc, arbitrum, polygon, optimism, avalanche via ?chain=, or a Solana mint. Full report: /v1/token/verdict.", { pathParams: { address: "0x4ed4e862860bed51a9570b96d89af5e1b0efefed" }, input: { chain: "base" }, pathParamsSchema: { properties: { address: { type: "string", description: "Token contract (0x…) or Solana mint" } }, required: ["address"] } }],
       ["GET /v1/defi/yields/best", "stable_yield_best", "Best stablecoin yield now: top supply APY per stablecoin (USDC, USDT, DAI, USDS, USDe, PYUSD…) with base APY apart from incentive tokens, and USDC/USDT best pool per chain. TVL floor, extreme pools excluded. Not a risk rating.", { input: { asset: "USDC" } }],
       ["GET /v1/ai/models", "ai_models", "AI models (LLM vendor intelligence): ~450 models with price per 1M input/output tokens, context window, max output, input/output modalities, tool use, JSON/structured output and reasoning support; filter by provider, needs, min context; sort by newest, price or context.", { input: { sort: "price", needs: "tools", limit: 25 } }],
       ["GET /v1/ai/cheapest", "ai_cheapest", "Cheapest LLM that meets your needs: filter by tools, json, vision, reasoning, audio, pdf and minimum context; ranked by blended price per 1M tokens.", { input: { needs: "tools,vision", min_context: 128000 } }],
@@ -263,6 +265,24 @@ export function buildRoutes(): RoutesConfig {
       description: `Carry Desk — 30 days for ${CARRY_DESK.usd_month} USDC: everything in Carry Data plus eligibility filters, per-pair capacity, net realized carry, after-hours premium and webhook alerts. Limited seats; when closed or full the request is refused before any payment settles. Data and analytics only — not investment advice.`,
       mimeType: "application/json", ...common,
       extensions: declareDiscoveryExtension({ bodyType: "json", input: {}, inputSchema: { properties: {} }, output: { example: { api_key: "dsi_carrydesk_…", key_id: "k_…", product: "carry_desk_month" } } }),
+    } as RouteConfig,
+    "POST /v1/keys/x402/carry_desk_year": {
+      accepts: rails(usd(CARRY_DESK.usd_year)),
+      description: `Carry Desk — 365 days for ${CARRY_DESK.usd_year} USDC (yearly): everything in the monthly Desk. Limited seats; when closed or full the request is refused before any payment settles. Market data only — not investment advice.`,
+      mimeType: "application/json", ...common,
+      extensions: declareDiscoveryExtension({ bodyType: "json", input: {}, inputSchema: { properties: {} }, output: { example: { api_key: "dsi_carrydesk_…", key_id: "k_…", product: "carry_desk_year", paid_usd: CARRY_DESK.usd_year } } }),
+    } as RouteConfig,
+    "POST /v1/keys/x402/carry_license": {
+      accepts: rails(usd(CARRY_LICENSE.usd_initial)),
+      description: `Carry data license — ${CARRY_LICENSE.usd_initial} USDC: the hourly Hyperliquid funding history of every perp on every dex (incl. HIP-3) since 13 Sep 2026, with mark, oracle, premium, OI and volume, as CSV via /v1/carry/license/export, plus 30 days of updates and Desk-tier API access. Internal use, no resale. Market data only — not investment advice.`,
+      mimeType: "application/json", ...common,
+      extensions: declareDiscoveryExtension({ bodyType: "json", input: {}, inputSchema: { properties: {} }, output: { example: { api_key: "dsi_carrydesk_…", key_id: "k_…", product: "carry_license", paid_usd: CARRY_LICENSE.usd_initial } } }),
+    } as RouteConfig,
+    "POST /v1/keys/x402/carry_license_month": {
+      accepts: rails(usd(CARRY_LICENSE.usd_month)),
+      description: `Carry data license renewal — ${CARRY_LICENSE.usd_month} USDC for 30 more days of updates to the licensed Hyperliquid funding history (export + Desk-tier API). Internal use, no resale.`,
+      mimeType: "application/json", ...common,
+      extensions: declareDiscoveryExtension({ bodyType: "json", input: {}, inputSchema: { properties: {} }, output: { example: { api_key: "dsi_carrydesk_…", key_id: "k_…", product: "carry_license_month", paid_usd: CARRY_LICENSE.usd_month } } }),
     } as RouteConfig,
     "POST /v1/keys/x402/carry_month": {
       accepts: rails(usd(CARRY.usd_month)),
