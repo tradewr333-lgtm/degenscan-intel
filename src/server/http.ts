@@ -36,7 +36,7 @@ const EXCLUDED_WALLETS = (process.env.EXCLUDED_WALLETS ?? "0x5344722b8D037827A9a
 const REST_FOR: Record<string, string> = { events_since: "/v1/events?since=4h&universe=NVDA,BTC", impact_for: "/v1/impact/{asset_id}?since=24h", exposure_graph: "/v1/graph/{asset_id}?depth=2", regime_snapshot: "/v1/regime", explain: "/v1/explain/{event_id}", polymarket_context: "/v1/polymarket/{market}?since=48h", pulse: "/v1/pulse", news_for: "/v1/news/{ticker}?since=24h", derivs_for: "/v1/derivs/{symbol}", price_for: "/v1/price/{symbol}", funding_alerts: "/v1/funding/alerts", whale_moves: "/v1/whales?min_usd=1000000", polymarket_top: "/v1/polymarket/top?sort=volume_24h", filings_for: "/v1/filings/{ticker}?since=7d", calendar: "/v1/calendar?days=7", brief: "/v1/brief/{asset_id}", token_verdict: "/v1/token/verdict/{address}?chain=base", oracle_board: "/v1/oracle/board", polymarket_edge: "/v1/oracle/edge?min_abs=0.02", oracle_forecast: "/v1/oracle/forecast", br_premium: "/v1/br/premium", stablecoin_supply: "/v1/stablecoins", treasury_auctions: "/v1/treasury/auctions?days=14", defi_yields: "/v1/defi/yields?min_tvl=10000000", carry_now: "/v1/carry/now/{coin}", carry_top: "/v1/carry/top?n=5", carry_spread: "/v1/carry/spread/{base}", hl_markets: "/v1/hl/markets", hl_liquidations: "/v1/hl/liquidations/{coin}", hl_liq_near: "/v1/hl/liquidations?within_pct=5", hl_smart_coin: "/v1/hl/smart-money/{coin}?hours=24", hl_smart_flow: "/v1/hl/smart-money?hours=4", coin_snapshot: "/v1/coin/{symbol}", options_summary: "/v1/options/{currency}", options_maxpain: "/v1/options/maxpain/{currency}", br_ptax: "/v1/br/ptax", stablecoins_total: "/v1/stablecoins/total", treasury_next: "/v1/treasury/next", gas_base: "/v1/gas/base", hl_basis: "/v1/hl/basis/{coin}", hl_candles: "/v1/hl/candles/{coin}?interval=1h&limit=100", polymarket_leaderboard: "/v1/polymarket/leaderboard?period=week&by=pnl&limit=20", base_balance: "/v1/base/balance/{address}?token=0x…", ai_models: "/v1/ai/models?sort=newest&limit=25", ai_cheapest: "/v1/ai/cheapest?needs=tools,vision&min_context=128000", ai_cost: "/v1/ai/cost?models=openai/gpt-5,anthropic/claude-sonnet&input_tokens=2000&output_tokens=500&calls=1000", ai_adoption: "/v1/ai/adoption", ai_research: "/v1/ai/research", ai_regulation: "/v1/ai/regulation/{jurisdiction}", stable_yield_best: "/v1/defi/yields/best?asset=USDC", token_risk: "/v1/token/risk/{address}?chain=base" };
 const OPENAPI = (base: string) => ({
   openapi: "3.1.0",
-  info: { title: "Degenscan Intel", version: "0.10.53", description: "Cross-asset market event intelligence for AI trading agents. Priced routes return HTTP 402 with x402 v2 payment requirements (USDC on Base) unless X-API-KEY is sent or the free trial header X-Free-Trial: 1 is present (100 calls/day/IP). Information and analytics only — not investment advice.", contact: { name: "Marbella Collins LLC", email: "contact@degenscan.io" }, license: { name: "MIT" } },
+  info: { title: "Degenscan Intel", version: "0.10.54", description: "Cross-asset market event intelligence for AI trading agents. Priced routes return HTTP 402 with x402 v2 payment requirements (USDC on Base) unless X-API-KEY is sent or the free trial header X-Free-Trial: 1 is present (100 calls/day/IP). Information and analytics only — not investment advice.", contact: { name: "Marbella Collins LLC", email: "contact@degenscan.io" }, license: { name: "MIT" } },
   servers: [{ url: base }],
   components: { securitySchemes: { apiKey: { type: "apiKey", in: "header", name: "X-API-KEY" }, freeTrial: { type: "apiKey", in: "header", name: "X-Free-Trial", description: "Send the value 1 for 100 free calls/day per IP." }, x402: { type: "apiKey", in: "header", name: "PAYMENT-SIGNATURE", description: "x402 v2 payment payload (base64). Obtain requirements from the 402 response header PAYMENT-REQUIRED." } } },
   paths: {
@@ -152,6 +152,8 @@ export async function buildHttp() {
   //    POST /mcp is decided later, once the JSON-RPC body is parsed (see the /mcp handler).
   app.addHook("onRequest", async (req) => {
     if (req.url.startsWith("/mcp")) { (req.headers as any)["x-intel-access"] = "mcp"; return; }
+    // Batch: payment needs the parsed body (price = sum), so it is handled in the route, like /mcp
+    if (req.method === "POST" && req.url.split("?")[0] === "/v1/batch" && req.headers["x-intel-internal"] !== INTERNAL) { (req.headers as any)["x-intel-access"] = "batch"; return; }
     // Desk closed or full: let the request reach the handler (409, no payment asked) instead of quoting 450 USDC for something not on sale
     if (req.method === "POST" && (req.url.startsWith("/v1/keys/x402/carry_desk_month") || req.url.startsWith("/v1/keys/x402/carry_desk_year"))) { const st = deskSeats(); (req.headers as any)["x-intel-access"] = FREE_MODE || !st.open || st.available <= 0 ? "free" : "pay"; return; }
     if (req.method === "POST" && req.url.startsWith("/v1/keys/x402")) { (req.headers as any)["x-intel-access"] = FREE_MODE ? "free" : "pay"; return; }  // always paid, never quota/key
@@ -184,7 +186,7 @@ export async function buildHttp() {
   const billing = (req: any, tool: string) => req.x402Context ? { tool, price_usd: PRICES[tool] ?? 0.005, method: "x402" } : { tool, price_usd: req.intelAccess?.price ?? 0, method: req.intelAccess?.method ?? "free" };
 
   app.get("/", async () => ({
-    name: "degenscan-intel", version: "0.10.53",
+    name: "degenscan-intel", version: "0.10.54",
     description: "No key required: market-event intelligence for trading agents — SEC filings, Fed/FOMC, regulators, disasters, Nasdaq halts, DeFi hacks, Polymarket odds, Hyperliquid funding/OI — scored per asset. 100 free calls/day, then USDC per call (x402, Base/Solana) or API key.",
     mcp: `${PUBLIC_URL}/mcp`, rest: `${PUBLIC_URL}/v1`, pricing: TOOL_DOCS, skill: `${PUBLIC_URL}/skill.md`, openapi: `${PUBLIC_URL}/openapi.json`, x402: `${PUBLIC_URL}/.well-known/x402`, plans: `${PUBLIC_URL}/v1/plans`, prepaid_keys: `${PUBLIC_URL}/v1/keys/packs`, metrics: `${PUBLIC_URL}/v1/metrics`, docs: `${PUBLIC_URL}/docs`, sdks: { js: "npm i @degenscan/intel", python: "pip install degenscan-intel" }, github: "https://github.com/tradewr333-lgtm/degenscan-intel", contact: "contact@degenscan.io",
     operator: OPERATOR, disclaimer: DISCLAIMER, license: "MIT",
@@ -258,7 +260,7 @@ export async function buildHttp() {
   // A2A Agent Card (a2a-protocol.org): lets A2A registries (a2aregistry.org, a2a-registry.org) and agents discover what we offer.
   // We expose HTTP+JSON (REST) and MCP; payment is x402 on each call. No A2A JSON-RPC task endpoint is claimed.
   const AGENT_CARD = () => ({
-    protocolVersion: "0.3.0", name: "Degenscan Intel", version: "0.10.53",
+    protocolVersion: "0.3.0", name: "Degenscan Intel", version: "0.10.54",
     description: "Market-event intelligence and calibrated probability forecasts for AI trading agents: ~40 primary sources (SEC, Fed, Polymarket, Hyperliquid, on-chain) scored into per-asset impacts; token contract risk verdicts; public Brier track record. Pay per call with x402 (USDC on Base or Solana) or an API key. Information and analytics only — not investment advice.",
     url: `${PUBLIC_URL}/a2a`, preferredTransport: "JSONRPC",
     additionalInterfaces: [{ url: `${PUBLIC_URL}/a2a`, transport: "JSONRPC" }, { url: `${PUBLIC_URL}/v1`, transport: "HTTP+JSON" }],
@@ -717,7 +719,7 @@ export async function buildHttp() {
       if (result.type === "payment-verified") verified = result;
     }
     const full = buildMcpServer({ carryKey: req.headers["x-api-key"] as string | undefined, operator: Boolean(process.env.ORACLE_OPERATOR_KEY && req.headers["x-operator-key"] === process.env.ORACLE_OPERATOR_KEY), carryPaid: !FREE_MODE && (Boolean(verified) || access?.method === "api_key"), ip: req.ip });
-    const server = req.query?.mode === "compact" ? (await import("./compact.js")).buildCompactServer(full, "0.10.53") : full;
+    const server = req.query?.mode === "compact" ? (await import("./compact.js")).buildCompactServer(full, "0.10.54") : full;
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     await server.connect(transport);
     reply.hijack();
@@ -742,7 +744,16 @@ export async function buildHttp() {
     const paths = batchPaths(req.body);
     if (!paths.length) return reply.code(400).send({ error: "body {calls:[{path:'/v1/…', fields?:[…]}]} with 1–10 GET paths", example: { calls: [{ path: "/v1/hl/basis/BTC" }, { path: "/v1/options/BTC", fields: ["dvol", "put_call"] }] } });
     const bad = paths.find(p => /^\/v1\/(batch|keys|admin)|^\/mcp/.test(p)); if (bad) return reply.code(400).send({ error: `not allowed in a batch: ${bad}` });
-    const paid = Boolean(req.x402Context); req.batchPrice = batchPrice(req.body);
+    req.batchPrice = batchPrice(req.body);
+    const access = decideAccess(req); req.intelAccess = access ?? undefined;
+    let verified: any;
+    if (!access) {   // no key / free-trial header → one x402 payment for the sum
+      (req.headers as any)["x-intel-access"] = "pay";
+      const result = await x402.processHTTPRequest({ adapter: new FastifyAdapter(req), path: "/v1/batch", method: "POST", paymentHeader: req.headers["payment-signature"] || req.headers["x-payment"] } as any);
+      if (result.type === "payment-error") { for (const [k, v] of Object.entries(result.response.headers)) reply.header(k, v); return reply.code(result.response.status).send(result.response.body ?? {}); }
+      if (result.type === "payment-verified") verified = result;
+    }
+    const paid = Boolean(verified);
     const fwd: Record<string, string> = paid ? { "x-intel-internal": INTERNAL } : Object.fromEntries(["x-api-key", "x-free-trial"].filter(k => req.headers[k]).map(k => [k, String(req.headers[k])]));
     const results = await Promise.all(paths.map(async (p, i) => {
       const r = await app.inject({ method: "GET", url: p, headers: { ...fwd, "x-forwarded-for": req.ip } });
@@ -751,12 +762,19 @@ export async function buildHttp() {
       const t = toolForRequest({ url: rewriteAlias(p), method: "GET", headers: {} } as any);
       return { path: p, status: r.statusCode, tool: t, price_usd: t ? (PRICES[t] ?? 0) : 0, body: r.statusCode < 400 ? pick(body, calls[i]?.fields) : body };
     }));
+    if (verified) {
+      const s: any = await x402.processSettlement(verified.paymentPayload, verified.paymentRequirements, verified.declaredExtensions, undefined, undefined, verified.beforeHandlerSettlement);
+      if (!s?.success) return reply.code(402).send({ error: "payment settlement failed", reason: s?.errorReason ?? null });
+      for (const [k, v] of Object.entries(s.headers ?? {})) reply.header(k, v as any);
+      if (!s.headers) reply.header("payment-response", Buffer.from(JSON.stringify({ success: true, transaction: s.transaction ?? null, network: s.network ?? null })).toString("base64"));
+      recordCall("batch", `x402:${(verified.paymentPayload as any)?.payload?.authorization?.from ?? "unknown"}`, req.batchPrice, true, s.transaction ?? null);
+    }
     return { n: results.length, total_price_usd: req.batchPrice, paid_via: paid ? "x402 (one payment for the whole batch)" : req.headers["x-api-key"] ? "api key (per call)" : "free trial (per call)", results, disclaimer: DISCLAIMER };
   });
   // Typed tool surface for code-writing agents (Cloudflare "Code Mode" style)
   app.get("/sdk/degenscan-intel.d.ts", async (_r, reply) => {
     const C = await import("./compact.js");
-    return reply.type("text/plain; charset=utf-8").send(C.typesFile(C.toolCatalog(buildMcpServer({})), PUBLIC_URL, "0.10.53"));
+    return reply.type("text/plain; charset=utf-8").send(C.typesFile(C.toolCatalog(buildMcpServer({})), PUBLIC_URL, "0.10.54"));
   });
   app.delete("/mcp", async (_r, reply) => reply.code(405).send({ error: "stateless server" }));
 
