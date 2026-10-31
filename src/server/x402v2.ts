@@ -1,3 +1,5 @@
+import { mcpToolName, batchPaths, toolForRequest as _tfr } from "./access.js";
+import { rewriteAlias } from "./aliases.js";
 import type { FastifyInstance } from "fastify";
 import { paymentMiddlewareFromHTTPServer, x402HTTPResourceServer, x402ResourceServer } from "@x402/fastify";
 import type { RoutesConfig, RouteConfig } from "@x402/core/server";
@@ -80,6 +82,12 @@ const MICRO_OUT: Record<string, any> = {
 };
 const PUBLIC_URL = process.env.PUBLIC_URL ?? "https://intel.degenscan.io";
 const usd = (n: number) => `$${n}`;
+/** Sum of the inner GET routes' prices of a batch body (min $0.001). Exported for the route and tests. */
+export function batchPrice(body: any) {
+  let sum = 0;
+  for (const p of batchPaths(body)) { const t = _tfr({ url: rewriteAlias(p), method: "GET", headers: {} } as any); if (t && t !== "batch") sum += PRICES[t] ?? 0; }
+  return Math.max(0.001, Math.round(sum * 1e6) / 1e6);
+}
 /** Second rail: Solana mainnet (USDC, gasless via PayAI). Enabled only when a Solana receiving address is configured. */
 export const SOLANA_NETWORK = "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp" as const;
 export const PAY_TO_SOLANA = process.env.X402_PAY_TO_SOLANA || null;
@@ -290,9 +298,18 @@ export function buildRoutes(): RoutesConfig {
       mimeType: "application/json", ...common,
       extensions: declareDiscoveryExtension({ bodyType: "json", input: {}, inputSchema: { properties: {} }, output: { example: { api_key: "dsi_carry_…", key_id: "k_…", product: "carry_month", expires_at: "2026-11-03T00:00:00Z" } } }),
     } as RouteConfig,
+    "POST /v1/batch": {
+      // price = sum of the GET routes in the body (free routes count 0; at least $0.001)
+      accepts: rails((ctx: any) => usd(batchPrice(ctx.adapter.getBody?.()))),
+      description: "Batch: run up to 10 GET routes in ONE request and pay once (the sum of their prices). Body {calls:[{path:'/v1/coin/BTC', fields:['price','funding']}, {path:'/funding-rate?coin=ETH'}]}; optional fields keep only the dotted paths you need. Market data only — not investment advice.",
+      mimeType: "application/json", ...common,
+      extensions: declareDiscoveryExtension({ bodyType: "json", input: { calls: [{ path: "/v1/hl/basis/BTC" }, { path: "/v1/options/BTC", fields: ["dvol", "put_call"] }] },
+        inputSchema: { properties: { calls: { type: "array", description: "up to 10 {path, fields?}", items: { type: "object", properties: { path: { type: "string" }, fields: { type: "array", items: { type: "string" } } }, required: ["path"] } } }, required: ["calls"] },
+        output: { example: { n: 2, total_price_usd: 0.003, results: [{ path: "/v1/hl/basis/BTC", status: 200, tool: "hl_basis", price_usd: 0.001, body: { coin: "BTC" } }] } } }),
+    } as RouteConfig,
     "POST /mcp": {
       // MCP: price depends on the tool being called; handshake/tools/list are granted for free by the access hook.
-      accepts: rails((ctx: any) => { const b: any = ctx.adapter.getBody?.(); const t = String(b?.params?.name ?? ""); return usd(PRICES[t] ?? 0.005); }),
+      accepts: rails((ctx: any) => { const b: any = ctx.adapter.getBody?.(); const t = mcpToolName(b) ?? ""; return usd(PRICES[t] ?? 0.005); }),
       description: "MCP server (streamable HTTP). Tools: events_since, impact_for, exposure_graph, regime_snapshot, explain, universe, sources_status.", mimeType: "application/json", ...common,
       extensions: declareDiscoveryExtension({ bodyType: "json",
         input: { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "events_since", arguments: { since: "4h", universe: ["NVDA", "BTC"] } } },

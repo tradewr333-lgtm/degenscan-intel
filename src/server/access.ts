@@ -20,14 +20,27 @@ function underFreeQuota(ip: string): boolean {
 }
 
 /** Tool name for a request: REST path → tool, MCP → params.name (only tools/call is billable). */
+/** MCP tools/call → the tool billed. Compact mode: "search" is free, "execute" bills the inner tool. */
+export function mcpToolName(b: any): string | null {
+  const n = String(b?.params?.name ?? "");
+  if (n === "search") return null;
+  if (n === "execute") return String(b?.params?.arguments?.tool ?? "") || null;
+  return n;
+}
+/** REST batch (POST /v1/batch): the GET paths it will run, after alias rewriting. */
+export function batchPaths(body: any): string[] {
+  const calls = Array.isArray(body?.calls) ? body.calls.slice(0, 10) : [];
+  return calls.map((c: any) => String(typeof c === "string" ? c : c?.path ?? "")).filter((p: string) => p.startsWith("/"));
+}
 export function toolForRequest(req: FastifyRequest): string | null {
   const url = req.url.split("?")[0];
   if (url === "/mcp" && req.method === "POST") {
     const b: any = req.body;
     if (!b || Array.isArray(b) || b.method !== "tools/call") return null;   // handshake, tools/list… free
-    return String(b.params?.name ?? "");
+    return mcpToolName(b);
   }
   if (url === "/v1/oracle/forecast" && req.method === "POST") return "oracle_forecast";
+  if (url === "/v1/batch" && req.method === "POST") return "batch";
   // Carry Oracle: Data routes are priced (pay per call or subscription); desk routes are subscription-only (checked in the route)
   if (url === "/v1/carry/funding-matrix") return "carry_funding_matrix";
   if (url === "/v1/carry/xdex") return "carry_xdex";
@@ -101,6 +114,8 @@ export function toolForRequest(req: FastifyRequest): string | null {
 export function decideAccess(req: FastifyRequest): Access | null {
   const tool = toolForRequest(req);
   if (!tool) return { method: "free", payer: null, price: 0 };
+  // Batch: with a key or the free-trial header each inner call is decided (and counted) on its own; otherwise x402 for the sum.
+  if (tool === "batch") return FREE_MODE || req.headers["x-api-key"] || String(req.headers["x-free-trial"] ?? "").trim() === "1" ? { method: "free", payer: null, price: 0 } : null;
   const price = priceOf(tool);
   if (price === 0 || FREE_MODE) return { method: "free", payer: null, price: 0 };
   const key = (req.headers["x-api-key"] as string | undefined)?.trim();
