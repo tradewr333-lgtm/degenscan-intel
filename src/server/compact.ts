@@ -16,6 +16,8 @@ const json = (x: unknown) => ({ content: [{ type: "text" as const, text: JSON.st
 const fail = (msg: string) => ({ content: [{ type: "text" as const, text: `error: ${msg}` }], isError: true });
 const words = (s: string) => String(s ?? "").toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 1);
 
+const TICKERS = new Set(["btc","eth","sol","hype","xrp","doge","bnb","sui","avax","link","ltc","ada","trx","ton","pepe","wif","nvda","tsla","aapl","spx"]);
+const ASSET_ARGS = new Set(["coin", "symbol", "currency", "ticker"]);
 export interface ToolInfo { tool: string; title: string | null; description: string; price_usd: number; input: any }
 /** Tool catalog from a built MCP server (names, descriptions, JSON-Schema inputs, prices). */
 export function toolCatalog(full: McpServer): ToolInfo[] {
@@ -29,8 +31,12 @@ export function toolCatalog(full: McpServer): ToolInfo[] {
 /** Pure: rank tools by word overlap with the query (name words weigh 3×, title 2×, description 1×). Exported for tests. */
 export function rankTools(cat: ToolInfo[], query: string, limit = 5) {
   const q = new Set(words(query)); if (!q.size) return [];
+  // One named asset in the query ("funding btc now") → prefer tools that take one coin/symbol over market-wide scans.
+  const oneAsset = [...q].some(w => TICKERS.has(w)) || /\b[A-Z]{2,6}\b/.test(String(query));
+  const takesAsset = (t: ToolInfo) => (t.input?.required ?? []).some((r: string) => ASSET_ARGS.has(r));
   const score = (t: ToolInfo) => { let s = 0; for (const w of words(t.tool)) if (q.has(w)) s += 3; for (const w of words(t.title ?? "")) if (q.has(w)) s += 2;
-    for (const w of new Set(words(t.description))) if (q.has(w)) s += 1; return s; };
+    const dw = words(t.description); for (const w of q) { const n = dw.filter(x => x === w).length; s += Math.min(n, 3); }
+    if (s > 0 && oneAsset) s += takesAsset(t) ? 4 : -4; return s; };
   return cat.map(t => ({ t, s: score(t) })).filter(x => x.s > 0).sort((a, b) => b.s - a.s || a.t.price_usd - b.t.price_usd).slice(0, Math.min(Math.max(limit, 1), 15))
     .map(({ t, s }) => ({ tool: t.tool, price_usd: t.price_usd, score: s, description: t.description.length > 400 ? t.description.slice(0, 397) + "…" : t.description, input: t.input }));
 }

@@ -12,6 +12,8 @@ describe("code-mode friendliness", () => {
     expect(rankTools(cat, "hyperliquid funding rate", 5).map(r => r.tool)).toContain("funding_alerts");
     expect(rankTools(cat, "token honeypot risk", 3).map(r => r.tool)).toEqual(expect.arrayContaining(["token_risk"]));
     expect(rankTools(cat, "", 3)).toEqual([]);
+    const top = rankTools(cat, "hyperliquid funding rate btc now", 3)[0];
+    expect(top.input.required ?? []).toEqual(expect.arrayContaining([expect.stringMatching(/coin|symbol/)]));
   });
   it("billing of compact calls", () => {
     expect(mcpToolName({ params: { name: "search", arguments: { query: "x" } } })).toBeNull();
