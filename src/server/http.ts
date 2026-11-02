@@ -8,7 +8,7 @@ import { CONNECTORS } from "../ingest/registry.js";
 import { DB_PATH, getDb, recordCall, weeklyMetrics, ownerSet, isOwnerPayer, addOwnerMark, listOwnerMarks } from "../store/db.js";
 import { decideAccess, toolForRequest, FREE_MODE, type Access } from "./access.js";
 import { CARRY_LICENSE, isLicenseKey } from "./keys.js";
-import { PACKS, CARRY, CARRY_DESK, TRIAL, createTrialKey, createKey, trialMetrics, validateKey, deskSeats, setCarrySetting, deskAccess, createPackKey, createCarryKey, carryAccess, activatePackKey, dropPendingKey, keyStatus, type Pack } from "./keys.js";
+import { PACKS, BALANCES, CARRY_WEEK, createBalanceKey, type Balance, CARRY, CARRY_DESK, TRIAL, createTrialKey, createKey, trialMetrics, validateKey, deskSeats, setCarrySetting, deskAccess, createPackKey, createCarryKey, carryAccess, activatePackKey, dropPendingKey, keyStatus, type Pack } from "./keys.js";
 import { installX402, PAY_TO_SOLANA, SOLANA_NETWORK } from "./x402v2.js";
 import { installDocs } from "./docs.js";
 import { installOracleRoutes } from "./oracle-routes.js";
@@ -36,7 +36,7 @@ const EXCLUDED_WALLETS = (process.env.EXCLUDED_WALLETS ?? "0x5344722b8D037827A9a
 const REST_FOR: Record<string, string> = { events_since: "/v1/events?since=4h&universe=NVDA,BTC", impact_for: "/v1/impact/{asset_id}?since=24h", exposure_graph: "/v1/graph/{asset_id}?depth=2", regime_snapshot: "/v1/regime", explain: "/v1/explain/{event_id}", polymarket_context: "/v1/polymarket/{market}?since=48h", pulse: "/v1/pulse", news_for: "/v1/news/{ticker}?since=24h", derivs_for: "/v1/derivs/{symbol}", price_for: "/v1/price/{symbol}", funding_alerts: "/v1/funding/alerts", whale_moves: "/v1/whales?min_usd=1000000", polymarket_top: "/v1/polymarket/top?sort=volume_24h", filings_for: "/v1/filings/{ticker}?since=7d", calendar: "/v1/calendar?days=7", brief: "/v1/brief/{asset_id}", token_verdict: "/v1/token/verdict/{address}?chain=base", oracle_board: "/v1/oracle/board", polymarket_edge: "/v1/oracle/edge?min_abs=0.02", oracle_forecast: "/v1/oracle/forecast", br_premium: "/v1/br/premium", stablecoin_supply: "/v1/stablecoins", treasury_auctions: "/v1/treasury/auctions?days=14", defi_yields: "/v1/defi/yields?min_tvl=10000000", carry_now: "/v1/carry/now/{coin}", carry_top: "/v1/carry/top?n=5", carry_spread: "/v1/carry/spread/{base}", hl_markets: "/v1/hl/markets", hl_liquidations: "/v1/hl/liquidations/{coin}", hl_liq_near: "/v1/hl/liquidations?within_pct=5", hl_smart_coin: "/v1/hl/smart-money/{coin}?hours=24", hl_smart_flow: "/v1/hl/smart-money?hours=4", coin_snapshot: "/v1/coin/{symbol}", options_summary: "/v1/options/{currency}", options_maxpain: "/v1/options/maxpain/{currency}", br_ptax: "/v1/br/ptax", stablecoins_total: "/v1/stablecoins/total", treasury_next: "/v1/treasury/next", gas_base: "/v1/gas/base", hl_basis: "/v1/hl/basis/{coin}", hl_candles: "/v1/hl/candles/{coin}?interval=1h&limit=100", polymarket_leaderboard: "/v1/polymarket/leaderboard?period=week&by=pnl&limit=20", base_balance: "/v1/base/balance/{address}?token=0x…", ai_models: "/v1/ai/models?sort=newest&limit=25", ai_cheapest: "/v1/ai/cheapest?needs=tools,vision&min_context=128000", ai_cost: "/v1/ai/cost?models=openai/gpt-5,anthropic/claude-sonnet&input_tokens=2000&output_tokens=500&calls=1000", ai_adoption: "/v1/ai/adoption", ai_research: "/v1/ai/research", ai_regulation: "/v1/ai/regulation/{jurisdiction}", stable_yield_best: "/v1/defi/yields/best?asset=USDC", token_risk: "/v1/token/risk/{address}?chain=base" };
 const OPENAPI = (base: string) => ({
   openapi: "3.1.0",
-  info: { title: "Degenscan Intel", version: "0.10.55", description: "Cross-asset market event intelligence for AI trading agents. Priced routes return HTTP 402 with x402 v2 payment requirements (USDC on Base) unless X-API-KEY is sent or the free trial header X-Free-Trial: 1 is present (100 calls/day/IP). Information and analytics only — not investment advice.", contact: { name: "Marbella Collins LLC", email: "contact@degenscan.io" }, license: { name: "MIT" } },
+  info: { title: "Degenscan Intel", version: "0.10.57", description: "Cross-asset market event intelligence for AI trading agents. Priced routes return HTTP 402 with x402 v2 payment requirements (USDC on Base) unless X-API-KEY is sent or the free trial header X-Free-Trial: 1 is present (100 calls/day/IP). Information and analytics only — not investment advice.", contact: { name: "Marbella Collins LLC", email: "contact@degenscan.io" }, license: { name: "MIT" } },
   servers: [{ url: base }],
   components: { securitySchemes: { apiKey: { type: "apiKey", in: "header", name: "X-API-KEY" }, freeTrial: { type: "apiKey", in: "header", name: "X-Free-Trial", description: "Send the value 1 for 100 free calls/day per IP." }, x402: { type: "apiKey", in: "header", name: "PAYMENT-SIGNATURE", description: "x402 v2 payment payload (base64). Obtain requirements from the 402 response header PAYMENT-REQUIRED." } } },
   paths: {
@@ -78,6 +78,7 @@ const OPENAPI = (base: string) => ({
     "/v1/ai/regulation/{jurisdiction}": { get: { summary: "AI regulation milestones: EU AI Act (after Omnibus 2026/1744), Colorado, Brazil PL 2338 — dates and status with sources", "x-price-usd": PRICES.ai_regulation, parameters: [{ name: "jurisdiction", in: "path", required: true, schema: { type: "string", enum: ["eu", "us_colorado", "brazil"] } }], responses: { "200": { description: "one object" }, "402": { description: "payment required" } } } },
     "/v1/defi/yields/best": { get: { summary: "Micro: best stablecoin yield now — top supply APY per stablecoin (USDC, USDT, DAI…) and USDC/USDT by chain, base APY apart from incentives", "x-price-usd": PRICES.stable_yield_best, parameters: [{ name: "asset", in: "query", schema: { type: "string" } }, { name: "min_tvl", in: "query", schema: { type: "number" } }], responses: { "200": { description: "one object" }, "402": { description: "payment required" } } } },
     "/v1/token/risk/{address}": { get: { summary: "Micro: token risk check — verdict, 0–100 score, honeypot, buy/sell tax and top issues for a token contract (EVM or Solana)", "x-price-usd": PRICES.token_risk, parameters: [{ name: "address", in: "path", required: true, schema: { type: "string" } }, { name: "chain", in: "query", schema: { type: "string", default: "base" } }], responses: { "200": { description: "one object" }, "402": { description: "payment required" } } } },
+    "/v1/topics/demand": { get: { summary: "Topic demand: Wikipedia pageviews per topic (official Wikimedia API) — 7d/30d means, change, rising/falling, 60-day peak; up to 5 topics", "x-price-usd": PRICES.topic_demand, parameters: [{ name: "topics", in: "query", schema: { type: "string" }, example: "Bitcoin,Ethereum" }, { name: "lang", in: "query", schema: { type: "string", default: "en" } }], responses: { "200": { description: "items[]" }, "402": { description: "payment required" } } } },
     "/v1/batch": { post: { summary: "Batch: up to 10 GET routes in one request, one payment (sum of prices), optional field picking", requestBody: { content: { "application/json": { schema: { type: "object", properties: { calls: { type: "array", items: { type: "object", properties: { path: { type: "string" }, fields: { type: "array", items: { type: "string" } } }, required: ["path"] } } }, required: ["calls"] } } } }, responses: { "200": { description: "results[]" }, "402": { description: "payment required (sum of prices)" } } } },
     "/v1/stablecoins/total": { get: { summary: "Micro: total stablecoin supply and 24h/7d net change", "x-price-usd": PRICES.stablecoins_total, responses: { "200": { description: "one object" }, "402": { description: "payment required" } } } },
     "/v1/treasury/next": { get: { summary: "Micro: next U.S. Treasury auctions and the last result", "x-price-usd": PRICES.treasury_next, responses: { "200": { description: "next[], last_result" }, "402": { description: "payment required" } } } },
@@ -117,6 +118,8 @@ const OPENAPI = (base: string) => ({
     "/v1/carry/breakeven": { get: { summary: "Carry analytics: round-trip cost and break-even for a funding spread by execution mode (slippage assumed, overridable)", "x-price-usd": PRICES.carry_breakeven, parameters: [{ name: "spread_apr", in: "query", required: true, schema: { type: "number" }, example: 0.35 }, { name: "lev", in: "query", schema: { type: "number" } }, { name: "mode", in: "query", schema: { type: "string", enum: ["taker", "maker1", "maker2"] } }], responses: { "200": { description: "one object" }, "402": { description: "payment required" } } } },
     "/v1/carry/depth/{coin}": { get: { summary: "Carry analytics: hourly order-book depth at 5/10/20/50 bps for the 40 most traded perps (Hyperliquid keeps no book history)", "x-price-usd": PRICES.carry_depth, parameters: [{ name: "coin", in: "path", required: true, schema: { type: "string" }, example: "BTC" }], responses: { "200": { description: "latest, median, history[]" }, "402": { description: "payment required" } } } },
     "/v1/carry/watchdog": { get: { summary: "Carry Oracle: health of every market and dex (subscription)", security: [{ apiKey: [] }], responses: { "200": { description: "dexes[], markets[] {status, oi_usd, oi_change_7d_pct, vol24h_usd, growth_mode, risk_flags}" }, "402": { description: "subscription required" } } } },
+    "/v1/keys/x402/carry_week": { post: { summary: "Carry Oracle: 7 days of unlimited access for 25 USDC (x402, Base or Solana)", responses: { "200": { description: "api_key dsi_carry_…" }, "402": { description: "x402 payment requirements" } } } },
+    "/v1/keys/x402/{balance}": { post: { summary: "Prepaid USD balance with USDC (x402): balance_5 → US$6, balance_20 → US$24, balance_100 → US$120 of usage at each tool's normal price", parameters: [{ name: "balance", in: "path", required: true, schema: { type: "string", enum: ["balance_5", "balance_20", "balance_100"] } }], responses: { "200": { description: "{ api_key, credit_usd }" }, "402": { description: "x402 payment required: 5 / 20 / 100 USDC" } } } },
     "/v1/keys/x402/carry_month": { post: { summary: "Carry Oracle: 30 days of unlimited access for 100 USDC (x402, Base or Solana)", responses: { "200": { description: "api_key dsi_carry_…" }, "402": { description: "x402 payment requirements" } } } },
     "/v1/metrics": { get: { summary: "Public weekly usage metrics (free)", responses: { "200": { description: "weeks[]" } } } },
     "/v1/keys/x402/{pack}": { post: { summary: "Buy a prepaid API key with USDC (x402) — no human, no card", parameters: [{ name: "pack", in: "path", required: true, schema: { type: "string", enum: ["pack_1k", "pack_10k", "pack_100k"] } }], responses: { "200": { description: "{ api_key, calls }" }, "402": { description: "x402 payment required: $5 / $40 / $300" } } } },
@@ -134,7 +137,7 @@ export async function buildHttp() {
   // 0) CORS (x402 conformance, 27/10): browser-based agents on other origins must be able to read the 402 challenge
   //    (PAYMENT-REQUIRED) and the settlement receipt (PAYMENT-RESPONSE), and send the payment / API-key headers.
   //    Set on the raw response so it also covers /mcp (streamed through reply.raw). No cookies are used, so "*" is safe.
-  const CORS_EXPOSE = "PAYMENT-REQUIRED, PAYMENT-RESPONSE, X-PAYMENT-RESPONSE, WWW-Authenticate, Mcp-Session-Id, ETag, Retry-After";
+  const CORS_EXPOSE = "PAYMENT-REQUIRED, PAYMENT-RESPONSE, X-PAYMENT-RESPONSE, X-Degenscan-Offers, WWW-Authenticate, Mcp-Session-Id, ETag, Retry-After";
   const CORS_ALLOW_HEADERS = "Content-Type, Accept, Authorization, X-API-KEY, PAYMENT-SIGNATURE, X-PAYMENT, X-Free-Trial, Mcp-Session-Id, Mcp-Protocol-Version, Last-Event-ID, If-None-Match";
   app.addHook("onRequest", async (req, reply) => {
     const r = reply.raw;
@@ -164,6 +167,18 @@ export async function buildHttp() {
   });
   // 2) x402 v2 (+v1) payment middleware — 402s any REST route not marked as authorized.
   const x402 = await installX402(app);
+  // 2b) Offers (02/11): every 402 on a priced route says how to buy access without a card (header + body field).
+  const { offersFor, offersHeader, walletTip } = await import("./offers.js");
+  app.addHook("onSend", async (req, reply, payload) => {
+    if (reply.statusCode !== 402) return payload;
+    const tool = toolForRequest(req); if (!tool) return payload;
+    reply.header("X-Degenscan-Offers", offersHeader(tool, PUBLIC_URL));
+    reply.header("Link", `<${PUBLIC_URL}/v1/plans>; rel="payment"`);
+    if (typeof payload === "string" && payload.trimStart().startsWith("{")) {
+      try { const b = JSON.parse(payload); if (b && typeof b === "object" && !Array.isArray(b) && !("offers" in b)) return JSON.stringify({ ...b, offers: offersFor(tool, PUBLIC_URL) }); } catch { /* not JSON: leave the body as is */ }
+    }
+    return payload;
+  });
   // 3) Billing log after the response.
   app.addHook("onResponse", async (req, reply) => {
     { const t = toolForRequest(req); if (t && reply.statusCode < 400) { const { noteLatency } = await import("./micro.js"); noteLatency(t, reply.elapsedTime); } }
@@ -171,7 +186,7 @@ export async function buildHttp() {
       // Prepaid key: activate only if the facilitator settled (PAYMENT-RESPONSE present and 2xx); otherwise drop it.
       let tx: string | null = null; let ok = reply.statusCode < 400;
       try { const h = reply.getHeader("payment-response"); if (h) { const r = JSON.parse(Buffer.from(String(h), "base64").toString("utf8")); tx = r?.transaction ?? null; ok = ok && r?.success !== false; } else if (!FREE_MODE) ok = false; } catch { ok = false; }
-      if (ok) { activatePackKey(req.pendingKeyId, tx); const pack = req.purchasedPack ?? "pack_1k"; const pk = pack as string; recordCall(pk === "carry_month" ? "carry_subscription" : pk === "carry_desk_month" ? "carry_desk_subscription" : pk === "carry_desk_year" ? "carry_desk_subscription" : pk === "carry_license" ? "carry_license" : pk === "carry_license_month" ? "carry_license_month" : "key_purchase", `x402:${(req.x402Context?.paymentPayload as any)?.payload?.authorization?.from ?? "unknown"}`, pk === "carry_month" ? CARRY.usd_month : pk === "carry_desk_month" ? CARRY_DESK.usd_month : pk === "carry_desk_year" ? CARRY_DESK.usd_year : pk === "carry_license" ? CARRY_LICENSE.usd_initial : pk === "carry_license_month" ? CARRY_LICENSE.usd_month : (PACKS[pack as Pack]?.usd ?? 0), true, tx); }
+      if (ok) { activatePackKey(req.pendingKeyId, tx); const pack = req.purchasedPack ?? "pack_1k"; const pk = pack as string; recordCall(pk === "carry_month" || pk === "carry_week" ? "carry_subscription" : pk.startsWith("balance_") ? "balance_purchase" : pk === "carry_desk_month" ? "carry_desk_subscription" : pk === "carry_desk_year" ? "carry_desk_subscription" : pk === "carry_license" ? "carry_license" : pk === "carry_license_month" ? "carry_license_month" : "key_purchase", `x402:${(req.x402Context?.paymentPayload as any)?.payload?.authorization?.from ?? "unknown"}`, pk === "carry_week" ? CARRY_WEEK.usd : pk.startsWith("balance_") ? (BALANCES[pk as Balance]?.usd ?? 0) : pk === "carry_month" ? CARRY.usd_month : pk === "carry_desk_month" ? CARRY_DESK.usd_month : pk === "carry_desk_year" ? CARRY_DESK.usd_year : pk === "carry_license" ? CARRY_LICENSE.usd_initial : pk === "carry_license_month" ? CARRY_LICENSE.usd_month : (PACKS[pack as Pack]?.usd ?? 0), true, tx); }
       else dropPendingKey(req.pendingKeyId);
       return;
     }
@@ -183,10 +198,10 @@ export async function buildHttp() {
     }
     else if (req.intelAccess && req.intelAccess.method !== "free") recordCall(tool, req.intelAccess.payer, req.intelAccess.price, true);
   });
-  const billing = (req: any, tool: string) => req.x402Context ? { tool, price_usd: PRICES[tool] ?? 0.005, method: "x402" } : { tool, price_usd: req.intelAccess?.price ?? 0, method: req.intelAccess?.method ?? "free" };
+  const billing = (req: any, tool: string) => req.x402Context ? { tool, price_usd: PRICES[tool] ?? 0.005, method: "x402", offers: offersFor(tool, PUBLIC_URL), ...(walletTip((req.x402Context?.paymentPayload as any)?.payload?.authorization?.from) ?? {}) } : { tool, price_usd: req.intelAccess?.price ?? 0, method: req.intelAccess?.method ?? "free" };
 
   app.get("/", async () => ({
-    name: "degenscan-intel", version: "0.10.55",
+    name: "degenscan-intel", version: "0.10.57",
     description: "No key required: market-event intelligence for trading agents — SEC filings, Fed/FOMC, regulators, disasters, Nasdaq halts, DeFi hacks, Polymarket odds, Hyperliquid funding/OI — scored per asset. 100 free calls/day, then USDC per call (x402, Base/Solana) or API key.",
     mcp: `${PUBLIC_URL}/mcp`, rest: `${PUBLIC_URL}/v1`, pricing: TOOL_DOCS, skill: `${PUBLIC_URL}/skill.md`, openapi: `${PUBLIC_URL}/openapi.json`, x402: `${PUBLIC_URL}/.well-known/x402`, plans: `${PUBLIC_URL}/v1/plans`, prepaid_keys: `${PUBLIC_URL}/v1/keys/packs`, metrics: `${PUBLIC_URL}/v1/metrics`, docs: `${PUBLIC_URL}/docs`, sdks: { js: "npm i @degenscan/intel", python: "pip install degenscan-intel" }, github: "https://github.com/tradewr333-lgtm/degenscan-intel", contact: "contact@degenscan.io",
     operator: OPERATOR, disclaimer: DISCLAIMER, license: "MIT",
@@ -247,10 +262,12 @@ export async function buildHttp() {
       ...TOOL_DOCS.filter(t => t.price_usd > 0 && t.tool !== "health").map(t => ({ tool: t.tool, price_usd: t.price_usd, http: REST_FOR[t.tool] ? `${t.tool === "oracle_forecast" ? "POST" : "GET"} ${PUBLIC_URL}${REST_FOR[t.tool]}` : undefined, mcp: `POST ${PUBLIC_URL}/mcp tools/call ${t.tool}` })),
       ...Object.entries(ALIASES).map(([path, a]) => { const tool = toolForRequest({ url: a.to.replace(/\{[^}]+\}/g, "X"), method: "GET" } as any); return { tool: tool ?? path.slice(1), alias_of: a.to, name: a.name, description: a.desc, price_usd: tool ? PRICES[tool] : undefined, http: `GET ${PUBLIC_URL}${path}${a.params?.length ? "?" + a.params.map(x => `${x}={${x}}`).join("&") : ""}` }; }),
       ...Object.entries(PACKS).map(([k, v]) => ({ tool: `prepaid_key:${k}`, price_usd: v.usd, http: `POST ${PUBLIC_URL}/v1/keys/x402/${k}`, calls: v.calls })),
+      ...Object.entries(BALANCES).map(([k, v]) => ({ tool: `prepaid_balance:${k}`, price_usd: v.usd, http: `POST ${PUBLIC_URL}/v1/keys/x402/${k}`, credit_usd: v.credit_usd, note: "usage billed at each tool's normal price; 20% more than paid" })),
+      { tool: "carry_week", price_usd: CARRY_WEEK.usd, http: `POST ${PUBLIC_URL}/v1/keys/x402/carry_week`, note: `${CARRY_WEEK.days} days of unlimited /v1/carry/*` },
     ],
     aliases: Object.entries(ALIASES).map(([p, a]) => ({ http: `GET ${PUBLIC_URL}${p}${a.params?.length ? "?" + a.params.map(x => `${x}={${x}}`).join("&") : ""}`, same_as: `${PUBLIC_URL}${a.to}`, name: a.name })),
     free: [`GET ${PUBLIC_URL}/v1/universe`, `GET ${PUBLIC_URL}/v1/sources`, `GET ${PUBLIC_URL}/v1/metrics`, `GET ${PUBLIC_URL}/health`, "MCP initialize/tools/list"],
-    carry: { subscription: `US$${CARRY.usd_month}/month flat (unlimited): card ${PUBLIC_URL}/v1/carry/checkout · USDC POST ${PUBLIC_URL}/v1/keys/x402/carry_month`, desk: `US$${CARRY_DESK.usd_month}/month: POST ${PUBLIC_URL}/v1/keys/x402/carry_desk_month · US$${CARRY_DESK.usd_year}/year: POST ${PUBLIC_URL}/v1/keys/x402/carry_desk_year (USDC, Base or Solana)`, pay_per_call: ["funding-matrix", "xdex", "spot-perp", "history/{coin}", "naked", "watchdog"].map((r, i) => ({ http: `GET ${PUBLIC_URL}/v1/carry/${r}`, price_usd: [0.03, 0.05, 0.03, 0.02, 0.01, 0.01][i] })), docs: `${PUBLIC_URL}/docs/carry` },
+    carry: { subscription: `US$${CARRY.usd_month}/month flat (unlimited): card ${PUBLIC_URL}/v1/carry/checkout · USDC POST ${PUBLIC_URL}/v1/keys/x402/carry_month`, week: `${CARRY_WEEK.usd} USDC for ${CARRY_WEEK.days} days (unlimited): POST ${PUBLIC_URL}/v1/keys/x402/carry_week`, desk: `US$${CARRY_DESK.usd_month}/month: POST ${PUBLIC_URL}/v1/keys/x402/carry_desk_month · US$${CARRY_DESK.usd_year}/year: POST ${PUBLIC_URL}/v1/keys/x402/carry_desk_year (USDC, Base or Solana)`, pay_per_call: ["funding-matrix", "xdex", "spot-perp", "history/{coin}", "naked", "watchdog"].map((r, i) => ({ http: `GET ${PUBLIC_URL}/v1/carry/${r}`, price_usd: [0.03, 0.05, 0.03, 0.02, 0.01, 0.01][i] })), docs: `${PUBLIC_URL}/docs/carry` },
     carry_license: { price: `${CARRY_LICENSE.usd_initial} USDC (history to date + 30 days) then ${CARRY_LICENSE.usd_month} USDC per 30 days`, buy: [`POST ${PUBLIC_URL}/v1/keys/x402/carry_license`, `POST ${PUBLIC_URL}/v1/keys/x402/carry_license_month`], export: `GET ${PUBLIC_URL}/v1/carry/license/export`, payment: "USDC on Base or Solana (x402)", terms: "internal use, no resale" },
     trial_key: { http: `POST ${PUBLIC_URL}/v1/keys/trial`, body: { email: "you@example.com" }, calls: TRIAL.calls, days: TRIAL.days, covers: "Carry Data + event feed (not the oracle)" },
     free_trial: { header: "X-Free-Trial: 1", calls_per_day_per_ip: 100, note: "Priced REST routes return 402 unless this header is sent or payment/X-API-KEY is provided. MCP tools/call gets the trial automatically." },
@@ -260,7 +277,7 @@ export async function buildHttp() {
   // A2A Agent Card (a2a-protocol.org): lets A2A registries (a2aregistry.org, a2a-registry.org) and agents discover what we offer.
   // We expose HTTP+JSON (REST) and MCP; payment is x402 on each call. No A2A JSON-RPC task endpoint is claimed.
   const AGENT_CARD = () => ({
-    protocolVersion: "0.3.0", name: "Degenscan Intel", version: "0.10.55",
+    protocolVersion: "0.3.0", name: "Degenscan Intel", version: "0.10.57",
     description: "Market-event intelligence and calibrated probability forecasts for AI trading agents: ~40 primary sources (SEC, Fed, Polymarket, Hyperliquid, on-chain) scored into per-asset impacts; token contract risk verdicts; public Brier track record. Pay per call with x402 (USDC on Base or Solana) or an API key. Information and analytics only — not investment advice.",
     url: `${PUBLIC_URL}/a2a`, preferredTransport: "JSONRPC",
     additionalInterfaces: [{ url: `${PUBLIC_URL}/a2a`, transport: "JSONRPC" }, { url: `${PUBLIC_URL}/v1`, transport: "HTTP+JSON" }],
@@ -602,6 +619,7 @@ export async function buildHttp() {
       mErr("/v1/hl/candles/:coin", "hl_candles", req => R.hlCandles(req.params.coin, req.query?.interval, req.query?.limit), "coin like BTC or xyz:NBIS");
       mErr("/v1/base/balance/:address", "base_balance", req => R.baseBalance(req.params.address, req.query?.token), "address 0x + 40 hex");
       { const AI = await import("./aiintel.js");
+        mErr("/v1/topics/demand", "topic_demand", async req => (await import("./topics.js")).topicDemand(req.query ?? {}), "topics=Bitcoin,Ethereum&lang=en");
         mErr("/v1/defi/yields/best", "stable_yield_best", async req => (await import("./macro.js")).stableYieldBest(req.query ?? {}), "asset=USDC");
         mErr("/v1/ai/models", "ai_models", req => AI.aiModels(req.query ?? {}), "");
         mErr("/v1/ai/cheapest", "ai_cheapest", req => AI.aiCheapest(req.query ?? {}), "");
@@ -639,6 +657,23 @@ export async function buildHttp() {
       usage: "send header  X-API-KEY: <api_key>  on /v1/* or POST /mcp", check: `${PUBLIC_URL}/v1/keys/me`, note: "Shown once. Store it now. Budget is lifetime (no expiry)." };
   };
   for (const pack of Object.keys(PACKS) as Pack[]) app.post(`/v1/keys/x402/${pack}`, buyPack(pack));
+  // Prepaid USD balance (02/11): 20% more usage than paid, billed at each tool's normal price.
+  for (const b of Object.keys(BALANCES) as Balance[]) app.post(`/v1/keys/x402/${b}`, async (req: any, reply: any) => {
+    if (FREE_MODE) return reply.code(503).send({ error: "x402 not configured on this deployment", balances: BALANCES });
+    const wallet = (req.x402Context?.paymentPayload as any)?.payload?.authorization?.from ?? null;
+    const { id, key } = createBalanceKey(b, wallet);
+    req.pendingKeyId = id; req.purchasedPack = b as any;
+    return { api_key: key, key_id: id, product: b, paid_usd: BALANCES[b].usd, credit_usd: BALANCES[b].credit_usd, payer: wallet, billing: "each call at its normal price, deducted from the balance",
+      usage: "send header  X-API-KEY: <api_key>  on /v1/* or POST /mcp", check: `${PUBLIC_URL}/v1/keys/me`, note: "Shown once. Store it now. The balance does not expire." };
+  });
+  app.post("/v1/keys/x402/carry_week", async (req: any, reply: any) => {
+    if (FREE_MODE) return reply.code(503).send({ error: "x402 not configured on this deployment" });
+    const wallet = (req.x402Context?.paymentPayload as any)?.payload?.authorization?.from ?? null;
+    const { id, key } = createCarryKey({ via: "x402", wallet, days: CARRY_WEEK.days, label: "carry week x402" });
+    req.pendingKeyId = id; req.purchasedPack = "carry_week" as any;
+    return { api_key: key, key_id: id, product: "carry_week", paid_usd: CARRY_WEEK.usd, days: CARRY_WEEK.days, payer: wallet,
+      usage: "send header  X-API-KEY: <api_key>  on /v1/carry/*", check: `${PUBLIC_URL}/v1/keys/me`, next: `30 days for ${CARRY.usd_month} USDC: POST ${PUBLIC_URL}/v1/keys/x402/carry_month`, note: "Shown once. Store it now." };
+  });
   app.post("/v1/keys/x402/carry_month", async (req: any, reply: any) => {
     if (FREE_MODE) return reply.code(503).send({ error: "x402 not configured on this deployment" });
     const wallet = (req.x402Context?.paymentPayload as any)?.payload?.authorization?.from ?? null;
@@ -692,7 +727,10 @@ export async function buildHttp() {
     return reply.header("content-type", "application/gzip").header("content-disposition", `attachment; filename=degenscan-carry-${spot ? "spot" : "funding"}.csv.gz`).send(gzipSync(Buffer.from(csv)));
   });
   app.post("/v1/keys/x402", async (_r, reply) => reply.code(400).send({ error: "choose a pack in the URL", endpoints: Object.keys(PACKS).map(p => `POST ${PUBLIC_URL}/v1/keys/x402/${p}`), packs: PACKS }));
-  app.get("/v1/keys/packs", async () => ({ how: `POST ${PUBLIC_URL}/v1/keys/x402/<pack> (empty body); answer the 402 with an x402 payment (USDC on Base). No account, no card, no human.`, endpoints: Object.keys(PACKS).map(p => `POST ${PUBLIC_URL}/v1/keys/x402/${p}`), packs: PACKS, network: "eip155:8453 (Base)", asset: "USDC" }));
+  app.get("/v1/keys/packs", async () => ({ how: `POST ${PUBLIC_URL}/v1/keys/x402/<product> (empty body); answer the 402 with an x402 payment (USDC on Base or Solana). No account, no card, no human.`,
+    balances: Object.fromEntries(Object.entries(BALANCES).map(([k, v]) => [k, { ...v, http: `POST ${PUBLIC_URL}/v1/keys/x402/${k}`, billing: "each call at its normal price" }])),
+    endpoints: Object.keys(PACKS).map(p => `POST ${PUBLIC_URL}/v1/keys/x402/${p}`), packs: PACKS,
+    carry_week: { usd: CARRY_WEEK.usd, days: CARRY_WEEK.days, http: `POST ${PUBLIC_URL}/v1/keys/x402/carry_week` }, network: "eip155:8453 (Base) or Solana", asset: "USDC" }));
   app.get("/v1/keys/me", async (req: any, reply) => {
     const raw = (req.headers["x-api-key"] as string | undefined)?.trim();
     if (!raw) return reply.code(400).send({ error: "send X-API-KEY header" });
@@ -719,7 +757,7 @@ export async function buildHttp() {
       if (result.type === "payment-verified") verified = result;
     }
     const full = buildMcpServer({ carryKey: req.headers["x-api-key"] as string | undefined, operator: Boolean(process.env.ORACLE_OPERATOR_KEY && req.headers["x-operator-key"] === process.env.ORACLE_OPERATOR_KEY), carryPaid: !FREE_MODE && (Boolean(verified) || access?.method === "api_key"), ip: req.ip });
-    const server = req.query?.mode === "compact" ? (await import("./compact.js")).buildCompactServer(full, "0.10.55") : full;
+    const server = req.query?.mode === "compact" ? (await import("./compact.js")).buildCompactServer(full, "0.10.57") : full;
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     await server.connect(transport);
     reply.hijack();
@@ -774,7 +812,7 @@ export async function buildHttp() {
   // Typed tool surface for code-writing agents (Cloudflare "Code Mode" style)
   app.get("/sdk/degenscan-intel.d.ts", async (_r, reply) => {
     const C = await import("./compact.js");
-    return reply.type("text/plain; charset=utf-8").send(C.typesFile(C.toolCatalog(buildMcpServer({})), PUBLIC_URL, "0.10.55"));
+    return reply.type("text/plain; charset=utf-8").send(C.typesFile(C.toolCatalog(buildMcpServer({})), PUBLIC_URL, "0.10.57"));
   });
   app.delete("/mcp", async (_r, reply) => reply.code(405).send({ error: "stateless server" }));
 

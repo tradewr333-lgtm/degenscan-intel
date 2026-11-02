@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import Stripe from "stripe";
 import { trialForm } from "./trial-form.js";
-import { createKey, findBySession, revokeBySubscription, PLANS, PACKS, type Plan, CARRY, CARRY_DESK, deskSeats, createCarryKey } from "./keys.js";
+import { BALANCES, CARRY_WEEK, createKey, findBySession, revokeBySubscription, PLANS, PACKS, type Plan, CARRY, CARRY_DESK, deskSeats, createCarryKey } from "./keys.js";
 
 /**
  * Fiat subscriptions for agents/operators without a crypto wallet.
@@ -19,6 +19,8 @@ export function installStripe(app: FastifyInstance) {
 
   app.get("/v1/plans", async () => ({
     plans: Object.entries(PLANS).filter(([k]) => k !== "enterprise").map(([id, p]) => ({ id, ...p, checkout: secret && PRICE[id as Plan] ? `${PUBLIC_URL}/v1/keys/checkout?plan=${id}` : null })),
+    prepaid_balance: { how: `POST ${PUBLIC_URL}/v1/keys/x402/<balance> and pay the 402 with USDC (Base or Solana) — 20% more usage than paid, each call at its normal price, no expiry`, balances: Object.fromEntries(Object.entries(BALANCES).map(([k, v]) => [k, { ...v, http: `POST ${PUBLIC_URL}/v1/keys/x402/${k}` }])) },
+    carry_week: { usd: CARRY_WEEK.usd, days: CARRY_WEEK.days, http: `POST ${PUBLIC_URL}/v1/keys/x402/carry_week` },
     prepaid_packs: { how: `POST ${PUBLIC_URL}/v1/keys/x402/<pack> and pay the 402 with USDC (x402) — no human, no card`, endpoints: Object.keys(PACKS).map(p => `${PUBLIC_URL}/v1/keys/x402/${p}`), packs: PACKS },
     pay_per_call: "x402 (USDC on Base) — call any priced endpoint without a key to receive payment requirements",
     stripe_enabled: !!secret,

@@ -48,6 +48,10 @@ describe("x402 v2 paid mode", () => {
     expect(String(probe.headers["access-control-expose-headers"])).toContain("PAYMENT-REQUIRED");
     expect(String(probe.headers["access-control-expose-headers"])).toContain("PAYMENT-RESPONSE");
     expect(probe.headers["payment-required"]).toBeTruthy();
+    // offers (02/11): the 402 says how to buy access without a card, and the payment header is untouched
+    expect(String(probe.headers["x-degenscan-offers"])).toContain("free_trial=0USDC");
+    expect(String(probe.headers["x-degenscan-offers"])).toContain("prepaid_balance=5USDC");
+    expect(String(probe.headers["access-control-expose-headers"])).toContain("X-Degenscan-Offers");
     const pre = await app.inject({ method: "OPTIONS", url: "/v1/regime", headers: { origin: "https://agent.example", "access-control-request-method": "GET", "access-control-request-headers": "payment-signature, x-api-key" } });
     expect(pre.statusCode).toBe(204); expect(String(pre.headers["access-control-allow-headers"])).toContain("payment-signature");
     // opt-in free trial header → quota (1 call in this test), then 402
@@ -73,6 +77,7 @@ describe("x402 v2 paid mode", () => {
 
     const paid = await app.inject({ method: "GET", url: "/v1/regime", headers: { "payment-signature": fakePayment(req) } });
     expect(paid.statusCode).toBe(200);
+    expect(paid.json()._billing.offers.map((o: any) => o.id)).toEqual(expect.arrayContaining(["free_trial", "prepaid_balance"]));
     expect(paid.json()._billing.method).toBe("x402");
     expect(paid.headers["payment-response"]).toBeTruthy();
     expect(settled.length).toBe(1);

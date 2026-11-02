@@ -8,7 +8,7 @@ const parseSse = (b: string) => { const l = b.split("\n").find(x => x.startsWith
 describe("code-mode friendliness", () => {
   it("search ranks the right tools", () => {
     const cat = toolCatalog(buildMcpServer());
-    expect(cat.length).toBe(62);
+    expect(cat.length).toBe(63);
     expect(rankTools(cat, "hyperliquid funding rate", 5).map(r => r.tool)).toContain("funding_alerts");
     expect(rankTools(cat, "token honeypot risk", 3).map(r => r.tool)).toEqual(expect.arrayContaining(["token_risk"]));
     expect(rankTools(cat, "", 3)).toEqual([]);

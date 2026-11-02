@@ -108,6 +108,7 @@ export function toolForRequest(req: FastifyRequest): string | null {
   if (url === "/v1/treasury/auctions") return "treasury_auctions";
   if (url === "/v1/defi/yields") return "defi_yields";
   if (url === "/v1/defi/yields/best") return "stable_yield_best";
+  if (url === "/v1/topics/demand") return "topic_demand";
   return null;
 }
 
@@ -124,6 +125,7 @@ export function decideAccess(req: FastifyRequest): Access | null {
     const c = carryAccess(key);
     if (c.ok) return { method: "api_key", payer: `key:${c.id}`, price: 0 };            // subscription: unlimited
     if (key) { const v = validateKey(key);
+      if (v && String(v.plan) === "balance") { if (v.remaining + 1e-9 >= price) return { method: "api_key", payer: `key:${v.id}`, price }; return null; }
       if (v && String(v.plan).startsWith("pack_") && v.remaining >= creditsFor(tool)) return { method: "api_key", payer: `key:${v.id}`, price };
       if (v && String(v.plan) === "trial" && v.remaining >= 1) return { method: "api_key", payer: `key:${v.id}`, price: 0 };
       if (v && String(v.plan) === "enterprise" && v.remaining >= 1) return { method: "api_key", payer: `key:${v.id}`, price: 0 }; }
@@ -132,6 +134,7 @@ export function decideAccess(req: FastifyRequest): Access | null {
   if (key) {
     const v = validateKey(key);
     if (v && String(v.plan) === "trial") { if (tool !== "oracle_forecast" && v.remaining >= 1) return { method: "api_key", payer: `key:${v.id}`, price: 0 }; }
+    else if (v && String(v.plan) === "balance") { if (v.remaining + 1e-9 >= price) return { method: "api_key", payer: `key:${v.id}`, price }; }
     else if (v && v.remaining >= creditsFor(tool)) return { method: "api_key", payer: `key:${v.id}`, price };
     // invalid or exhausted key → fall through to x402 (agent may still pay per call)
   }

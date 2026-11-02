@@ -18,6 +18,16 @@ export const PACKS = {
   pack_100k: { name: "100,000 calls", usd: 300, calls: 100_000 },
 } as const;
 export type Pack = keyof typeof PACKS;
+/** Prepaid USD balance (Renato 02/11): pay X USDC once, get X × 1.2 of usage billed at each tool's normal price, one X-API-KEY,
+ *  no per-call signature, no expiry. The existing per-call prices and packs are unchanged. Stored in micro-USD in total_calls. */
+export const BALANCES = {
+  balance_5: { name: "US$6 of usage for 5 USDC", usd: 5, credit_usd: 6 },
+  balance_20: { name: "US$24 of usage for 20 USDC", usd: 20, credit_usd: 24 },
+  balance_100: { name: "US$120 of usage for 100 USDC", usd: 100, credit_usd: 120 },
+} as const;
+export type Balance = keyof typeof BALANCES;
+/** Carry Oracle trial week (Renato 02/11): 7 days of unlimited /v1/carry/* for 25 USDC — an entry door to the 100 USDC month. */
+export const CARRY_WEEK = { usd: 25, days: 7 } as const;
 
 /** Carry Oracle (Renato 04/10, non-negotiable): flat US$100/month toll, unlimited calls to /v1/carry/*, no per-request metering.
  *  Paid by card (Stripe subscription, revoked on cancel) or USDC (x402, one payment = 30 days). A carry key has zero budget for
@@ -112,6 +122,19 @@ export function createPackKey(pack: Pack, wallet: string | null): { id: string; 
 }
 export function activatePackKey(id: string, tx: string | null) { ensure(); return getDb().prepare("UPDATE api_keys SET status = 'active', tx = ? WHERE id = ? AND status = 'pending'").run(tx, id).changes; }
 export function dropPendingKey(id: string) { ensure(); return getDb().prepare("DELETE FROM api_keys WHERE id = ? AND status = 'pending'").run(id).changes; }
+export function createBalanceKey(b: Balance, wallet: string | null): { id: string; key: string } {
+  ensure();
+  const id = "k_" + randomBytes(6).toString("hex");
+  const key = `dsi_balance_${randomBytes(24).toString("base64url")}`;
+  getDb().prepare(`INSERT INTO api_keys (id, key_hash, plan, monthly_calls, status, total_calls, wallet, label, created_at) VALUES (?,?,'balance',0,'pending',?,?,?,?)`)
+    .run(id, hash(key), Math.round(BALANCES[b].credit_usd * 1e6), wallet, `x402 ${b}`, new Date().toISOString());
+  return { id, key };
+}
+/** USD left on a balance key: credit minus the price of every call billed to it. */
+export function balanceLeftUsd(id: string, creditMicro: number): number {
+  const spent = (getDb().prepare("SELECT COALESCE(SUM(price_usd),0) AS s FROM calls WHERE payer = ?").get(`key:${id}`) as any).s as number;
+  return Math.max(0, Math.round(creditMicro - spent * 1e6) / 1e6);
+}
 /** Budget left on a key (for /v1/keys/me). */
 export function keyStatus(raw: string) {
   ensure();
@@ -120,6 +143,7 @@ export function keyStatus(raw: string) {
   const used = row.total_calls != null ? lifetimeUsage(row.id) : monthlyUsage(row.id);
   const budget = row.total_calls ?? row.monthly_calls;
   if ((row.plan as string) === "trial") { const u = trialUsage(row.id); return { id: row.id, plan: "trial", status: row.status, budget: row.total_calls ?? TRIAL.calls, used: u, remaining: Math.max(0, (row.total_calls ?? TRIAL.calls) - u), expires_at: (row as any).expires_at, covers: "Carry Data routes (/v1/carry/funding-matrix, xdex, spot-perp, history, naked, watchdog) and the event feed; not the oracle", upgrade: "https://intel.degenscan.io/carry", created_at: row.created_at }; }
+  if ((row.plan as string) === "balance") { const left = balanceLeftUsd(row.id, row.total_calls ?? 0); return { id: row.id, plan: "balance", status: row.status, credit_usd: (row.total_calls ?? 0) / 1e6, spent_usd: Math.round(((row.total_calls ?? 0) / 1e6 - left) * 1e6) / 1e6, remaining_usd: left, billing: "each call at its normal price", period: "lifetime", top_up: "https://intel.degenscan.io/v1/keys/packs", created_at: row.created_at }; }
   if ((row.plan as string) === "carry_desk") return { id: row.id, plan: "carry_desk", status: row.status, product: "Carry Desk — US$450/month, unlimited /v1/carry/* incl. desk routes and alerts", expires_at: (row as any).expires_at ?? "renews (Stripe)", created_at: row.created_at };
   if ((row.plan as string) === "carry") return { id: row.id, plan: "carry", status: row.status, product: "Carry Oracle — flat US$100/month, unlimited /v1/carry/* calls", expires_at: (row as any).expires_at ?? "renews monthly (Stripe)", created_at: row.created_at };
   return { id: row.id, plan: row.plan, status: row.status, budget, used, remaining: Math.max(0, budget - used), period: row.total_calls != null ? "lifetime" : "calendar_month", created_at: row.created_at };
@@ -157,6 +181,8 @@ export function validateKey(raw: string): { id: string; plan: Plan | Pack | "leg
     if ((row as any).expires_at && Date.parse((row as any).expires_at) < Date.now()) return null;
     return { id: row.id, plan: "trial" as any, remaining: Math.max(0, (row.total_calls ?? TRIAL.calls) - trialUsage(row.id)) };
   }
+  // balance keys: remaining is in USD (decideAccess compares it with the tool's price, not with credits)
+  if ((row.plan as string) === "balance") return { id: row.id, plan: "balance" as any, remaining: balanceLeftUsd(row.id, row.total_calls ?? 0) };
   const budget = row.total_calls ?? row.monthly_calls;
   const used = row.total_calls != null ? lifetimeUsage(row.id) : monthlyUsage(row.id);
   return { id: row.id, plan: row.plan, remaining: Math.max(0, budget - used) };

@@ -9,7 +9,7 @@ import { registerExactSvmScheme } from "@x402/svm/exact/server";
 import { createFacilitatorConfig } from "@coinbase/x402";
 import { declareDiscoveryExtension, bazaarResourceServerExtension } from "@x402/extensions/bazaar";
 import { PRICES } from "./pricing.js";
-import { PACKS, CARRY, CARRY_DESK, CARRY_LICENSE } from "./keys.js";
+import { PACKS, BALANCES, CARRY_WEEK, CARRY, CARRY_DESK, CARRY_LICENSE } from "./keys.js";
 import { FREE_MODE } from "./access.js";
 
 /**
@@ -61,6 +61,7 @@ const MICRO_OUT: Record<string, any> = {
   ai_adoption: { n: 19, items: [{ name: "LangChain", kind: "framework", npm: { package: "langchain", last_7d: 3541200, wow_pct: 2.1 }, pypi: { package: "langchain", last_7d: 37479965, wow_pct: 1.4 }, github: { repo: "langchain-ai/langchain", stars: 120000 } }] },
   ai_research: { items: [{ topic: "agents", papers_7d: 420, papers_30d: 1650, weekly_pace_vs_30d: 1.09 }] },
   ai_regulation: { as_of: "2026-10-29", jurisdictions: { eu: { law: "EU AI Act — Regulation (EU) 2024/1689 as amended by (EU) 2026/1744", next_milestone: { date: "2026-12-02", what: "Article 50(2) for generative systems already on the market" } } } },
+  topic_demand: { lang: "en", n: 1, items: [{ topic: "Bitcoin", found: true, article: "Bitcoin", avg_7d: 18200, avg_prev_7d: 15100, change_7d_pct: 20.5, avg_30d: 16050, change_30d_pct: 8.1, trend: "rising", peak_60d: { date: "2026-10-27", views: 24600 } }] },
   stable_yield_best: { best_by_asset: [{ asset: "USDC", pools: 120, best: { project: "aave-v3", chain: "Base", apy_pct: 5.4, apy_base_pct: 4.9, reward_share_pct: 9.3, tvl_usd: 310000000 } }], usdc_by_chain: [{ project: "aave-v3", chain: "Base", apy_pct: 5.4 }] },
   token_risk: { address: "0x4ed4e862860bed51a9570b96d89af5e1b0efefed", chain: "base", symbol: "DEGEN", verdict: "LOW_RISK", score: 92, honeypot: false, buy_tax: 0, sell_tax: 0, mintable: false, critical: [], high: [], top_issues: ["Top-10 holders own 38% of supply"], liquidity_usd: 4200000, full_report: "/v1/token/verdict/0x4ed4…?chain=base" },
   hl_markets: { active: 330, delisted: 41, dexes: { main: ["BTC", "ETH", "HYPE"], xyz: ["xyz:NBIS", "xyz:TSLA"] } },
@@ -178,6 +179,7 @@ export function buildRoutes(): RoutesConfig {
       ["GET /v1/ai/adoption", "ai_adoption", "AI tool adoption: weekly downloads on npm and PyPI with week-over-week change and GitHub stars for AI SDKs and frameworks (OpenAI, Anthropic, Google, LangChain, LangGraph, LlamaIndex, CrewAI, AutoGen, MCP, vLLM, vector DBs, x402).", { input: { kind: "agents" } }],
       ["GET /v1/ai/research", "ai_research", "AI research momentum: number of new arXiv papers in the last 7 and 30 days per topic (RAG, agents, fine-tuning, MCP, evaluation, quantization, multimodal, reasoning, safety, inference).", { input: { topic: "rag" } }],
       ["GET /v1/ai/regulation/:jurisdiction", "ai_regulation", "AI regulation milestones with dates, status and official sources: EU AI Act after the Digital Omnibus (Regulation 2026/1744), Colorado SB 26-189, Brazil PL 2338/2023. Next milestone included. Information only, not legal advice.", { pathParams: { jurisdiction: "eu" }, pathParamsSchema: { properties: { jurisdiction: { type: "string", description: "eu, us_colorado or brazil" } }, required: ["jurisdiction"] } }],
+      ["GET /v1/topics/demand", "topic_demand", "Topic demand: how much attention a subject gets, from the official Wikimedia pageviews API — human views of its Wikipedia article per day, 7-day and 30-day means with change vs the previous period, rising/falling/steady, 60-day peak and the last 30 days. Up to 5 topics per call (topics=a,b,c), any Wikipedia language (lang=en, pt, es…). For content, SEO and research agents deciding what to cover.", { input: { topics: "Bitcoin,Ethereum,Solana", lang: "en" } }],
       ["GET /v1/gas/base", "gas_base", "Base gas now: base fee and next base fee, priority-fee p10/p50/p90 over the last 20 blocks, suggested EIP-1559 fees (low/medium/high), cost of an ETH transfer, ERC-20 transfer and DEX swap in ETH and USD.", {}],
       ["GET /v1/hl/basis/:coin", "hl_basis", "Hyperliquid perp premium for one coin: mark vs oracle (bps), impact premium and spread, funding now with 24h/7d mean and share of positive hours, predicted next funding on Hyperliquid, Binance and Bybit (APR), open interest.", { pathParams: { coin: "BTC" }, pathParamsSchema: { properties: { coin: { type: "string", description: "main-dex coin, e.g. BTC" } }, required: ["coin"] } }],
       ["GET /v1/treasury/next", "treasury_next", "Next U.S. Treasury auctions (date, term, size) and the last auction result (high yield, bid-to-cover).", {}],
@@ -248,6 +250,19 @@ export function buildRoutes(): RoutesConfig {
       extensions: declareDiscoveryExtension({ bodyType: "json", input: {}, inputSchema: { properties: {} },
         output: { example: { api_key: `dsi_${pack}_…`, key_id: "k_…", pack, calls: p.calls, paid_usd: p.usd, usage: "send header X-API-KEY on /v1/* or POST /mcp", check: `${PUBLIC_URL}/v1/keys/me` } } }),
     } as RouteConfig])),
+    // Prepaid USD balance (02/11): pay once, 20% more usage, billed at each tool's normal price. Per-call prices unchanged.
+    ...Object.fromEntries(Object.entries(BALANCES).map(([b, v]) => [`POST /v1/keys/x402/${b}`, {
+      accepts: rails(usd(v.usd)),
+      description: `Prepaid balance: pay ${v.usd} USDC once, get US$${v.credit_usd} of usage (20% more) on one X-API-KEY, billed at each tool's normal price — no per-call signature, no expiry, no card. Works on /v1/* and POST /mcp.`,
+      mimeType: "application/json", ...common,
+      extensions: declareDiscoveryExtension({ bodyType: "json", input: {}, inputSchema: { properties: {} }, output: { example: { api_key: "dsi_balance_…", key_id: "k_…", product: b, paid_usd: v.usd, credit_usd: v.credit_usd } } }),
+    } as RouteConfig])),
+    "POST /v1/keys/x402/carry_week": {
+      accepts: rails(usd(CARRY_WEEK.usd)),
+      description: `Carry Oracle week — ${CARRY_WEEK.days} days of unlimited /v1/carry/* (Hyperliquid funding on every dex incl. HIP-3, cross-dex spreads, hourly history beyond 500 h) for ${CARRY_WEEK.usd} USDC. Returns an X-API-KEY. Data and analytics only — not investment advice.`,
+      mimeType: "application/json", ...common,
+      extensions: declareDiscoveryExtension({ bodyType: "json", input: {}, inputSchema: { properties: {} }, output: { example: { api_key: "dsi_carry_…", key_id: "k_…", product: "carry_week", days: CARRY_WEEK.days } } }),
+    } as RouteConfig,
     // Carry Oracle Data routes: pay per call in USDC, or send X-API-KEY with a Carry subscription key (flat US$100/month, unlimited).
     ...Object.fromEntries(([
       ["GET /v1/carry/funding-matrix", "carry_funding_matrix", "Annualised funding for every perp on every Hyperliquid dex (main + HIP-3), with OI, 24h volume and spot mark."],

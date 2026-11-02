@@ -43,6 +43,8 @@ export const ALIASES: Record<string, Alias> = {
   "/ai-regulation": { to: "/v1/ai/regulation/{jurisdiction}", params: ["jurisdiction"], name: "AI regulation — EU AI Act and AI law dates", desc: "AI regulation: EU AI Act deadlines after the Digital Omnibus, Colorado AI law, Brazil AI bill — dates, status, sources." },
   "/stablecoin-yield": { to: "/v1/defi/yields/best", name: "Stablecoin yield — best USDC and USDT yield now", desc: "Stablecoin yield: best supply APY per stablecoin and best USDC/USDT pool per chain, base APY apart from incentives." },
   "/usdc-yield": { to: "/v1/defi/yields/best", name: "USDC yield — best USDC APY by chain", desc: "USDC yield: best USDC supply APY now and by chain (Base, Ethereum, Arbitrum…), base APY apart from incentives." },
+  "/topic-demand": { to: "/v1/topics/demand", name: "Topic demand — how popular a topic is now", desc: "Topic demand: daily Wikipedia pageviews of a topic (official Wikimedia API), 7-day and 30-day change, rising or falling — for content and SEO agents." },
+  "/wikipedia-pageviews": { to: "/v1/topics/demand", name: "Wikipedia pageviews — topic attention trend", desc: "Wikipedia pageviews for up to 5 topics: daily views, 7d/30d means and change, 60-day peak." },
   "/coin-snapshot": { to: "/v1/coin/{symbol}", params: ["symbol"], name: "Coin snapshot — everything about one coin", desc: "Coin snapshot in one call: price, funding rate, liquidations, smart money, options and news events for one coin." },
 };
 
