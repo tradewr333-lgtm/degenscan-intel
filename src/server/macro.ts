@@ -23,11 +23,12 @@ export const MACRO_DISCLAIMER = "Market data and analytics only — not investme
 // ───────────────────────── Brazil premium
 export async function brPremium() {
   const [mb, ptaxRows, cb] = await Promise.all([
-    memo("mb", 30_000, () => fetchJson<any[]>("https://api.mercadobitcoin.net/api/v4/tickers?symbols=BTC-BRL,USDT-BRL,USDC-BRL", { timeoutMs: 8000 })),
+    // Mercado Bitcoin down (maintenance, 02/11) must not take the official PTAX down with it: its fields go null and are listed in `unavailable`
+    memo("mb", 30_000, () => fetchJson<any[]>("https://api.mercadobitcoin.net/api/v4/tickers?symbols=BTC-BRL,USDT-BRL,USDC-BRL", { timeoutMs: 8000 })).catch(() => null as any),
     memo("ptax", 3_600_000, () => fetchJson<any[]>("https://api.bcb.gov.br/dados/serie/bcdata.sgs.1/dados/ultimos/1?formato=json", { timeoutMs: 8000 })),
     memo("cb:BTC", 30_000, () => fetchJson<any>("https://api.coinbase.com/v2/prices/BTC-USD/spot", { timeoutMs: 6000 })),
   ]);
-  const t = (p: string) => mb.find((x: any) => x.pair === p);
+  const t = (p: string) => (Array.isArray(mb) ? mb : []).find((x: any) => x.pair === p);
   const btcBrl = n(t("BTC-BRL")?.last), usdtBrl = n(t("USDT-BRL")?.last), usdcBrl = n(t("USDC-BRL")?.last);
   const ptax = n(ptaxRows?.[0]?.valor), ptaxDate = ptaxRows?.[0]?.data ?? null, btcUsd = n(cb?.data?.amount);
   return {
@@ -45,6 +46,7 @@ export async function brPremium() {
       note: "premium_vs_usdt isolates the BTC market itself (BRL book vs USD book, both converted at the on-exchange USDT rate); premium_vs_ptax adds the FX premium.",
     },
     sources: ["https://api.mercadobitcoin.net/api/v4/tickers", "https://api.bcb.gov.br/dados/serie/bcdata.sgs.1", "https://api.coinbase.com/v2/prices/BTC-USD/spot"],
+    ...(Array.isArray(mb) ? {} : { unavailable: ["mercadobitcoin"] }),
     disclaimer: MACRO_DISCLAIMER,
   };
 }
@@ -81,17 +83,23 @@ export async function treasuryAuctions(opts: { days?: number; type?: string } = 
   const want = opts.type ? String(opts.type).toLowerCase() : null;
   const rows = (j.data as any[]).filter(x => !want || String(x.security_type).toLowerCase() === want);
   const v = (x: any) => x == null || x === "null" ? null : n(x);
-  const results = rows.filter(x => x.auction_date >= since && x.auction_date <= today && (v(x.high_yield) != null || v(x.high_discnt_rate) != null || v(x.high_investment_rate) != null)).map(x => {
+  const hasResult = (x: any) => v(x.high_yield) != null || v(x.high_discnt_rate) != null || v(x.high_investment_rate) != null;
+  const toResult = (x: any) => {
     const acc = v(x.total_accepted), share = (k: string) => acc && v(x[k]) != null ? r((v(x[k]) as number) / acc * 100, 1) : null;
     return { auction_date: x.auction_date, security_type: x.security_type, security_term: x.security_term, cusip: x.cusip, maturity_date: x.maturity_date,
       high_yield_pct: v(x.high_yield), high_discount_rate_pct: v(x.high_discnt_rate), high_investment_rate_pct: v(x.high_investment_rate), coupon_pct: v(x.int_rate),
       bid_to_cover: v(x.bid_to_cover_ratio), offering_usd: v(x.offering_amt), accepted_usd: acc,
       indirect_pct: share("indirect_bidder_accepted"), direct_pct: share("direct_bidder_accepted"), primary_dealer_pct: share("primary_dealer_accepted"), reopening: x.reopening === "Yes" };
-  });
+  };
+  const results = rows.filter(x => x.auction_date >= since && x.auction_date <= today && hasResult(x)).map(toResult);
   const upcoming = rows.filter(x => x.auction_date >= today && v(x.high_yield) == null && v(x.high_discnt_rate) == null && v(x.high_investment_rate) == null)
     .map(x => ({ auction_date: x.auction_date, security_type: x.security_type, security_term: x.security_term, offering_usd: v(x.offering_amt), announced: x.announcemt_date, closing_time_comp: x.closing_time_comp }))
     .sort((a, b) => a.auction_date.localeCompare(b.auction_date));
-  return { as_of: new Date().toISOString(), window_days: days, results, upcoming,
+  // Fiscal Data publishes results with a lag (late Oct 2026: newest results ~2 weeks old). An empty window would leave the agent
+  // with nothing: fall back to the most recent auctions that have results, and say so.
+  let shown = results, extended = false;
+  if (!results.length) { const last = rows.filter(x => x.auction_date <= today && hasResult(x)).slice(0, 15).map(toResult); if (last.length) { shown = last; extended = true; } }
+  return { as_of: new Date().toISOString(), window_days: days, results: shown, ...(extended ? { window_extended: true, latest_results_date: shown[0]?.auction_date ?? null, window_note: `No auction results published in the last ${days} days yet (the dataset lags); showing the ${shown.length} most recent auctions with results.` } : {}), upcoming,
     note: "Primary dealers left with a large share and a low bid-to-cover are the classic signs of weak demand. When-issued yields (needed for the 'tail') are not in the public dataset.",
     sources: ["U.S. Treasury Fiscal Data — auctions_query (public domain)"], disclaimer: MACRO_DISCLAIMER };
 }

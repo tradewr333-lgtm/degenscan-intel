@@ -5,6 +5,7 @@ const SAMPLE: Record<string, any> = {
   hl_basis: { coin: "BTC", mark: 81250, oracle: 81230, mark_oracle_premium_bps: 2.46, funding: { hourly: 0.0000125, apr_pct: 10.95, apr_24h_mean_pct: 9.8, apr_7d_mean_pct: 11.2, positive_share_7d_pct: 92.3 }, predicted_funding: [{ venue: "binance", apr_pct: 8.4 }], open_interest_usd: 2.1e9, as_of: "2026-11-02T17:00:00.000Z" },
   funding_alerts: { threshold_abs_rate_1h: 0.0001, alerts: [{ symbol: "SAND", annualized_pct: -120.5, side_paying: "shorts", open_interest_usd: 5e6 }] },
   gas_base: { base_fee_gwei: 0.0052, next_base_fee_gwei: 0.0051, priority_fee_gwei: { p50: 0.001 }, suggested: { medium: { max_fee_gwei: 0.0112 } }, l2_execution_cost: { eth_transfer: { usd: 0.0005 }, erc20_transfer: { usd: 0.0016 } }, eth_usd: 3900 },
+  ai_models_by_task: { items: [{ id: "openai/whisper", downloads_30d: 4e6, likes: 5000, license: "mit" }] },
   ai_cheapest: { items: [{ id: "p/m", input_per_1m: 0.05, output_per_1m: 0.2, context: 128000 }] },
   ai_models: { n_total: 457, items: [{ id: "anthropic/x", provider: "anthropic", input_per_1m: 0.1, output_per_1m: 0.5, context: 1e6 }] },
   stable_yield_best: { best_by_asset: [{ asset: "USDC", best: { project: "aave-v3", chain: "Base", apy_pct: 5.4, apy_base_pct: 4.9, tvl_usd: 3.1e8 } }], usdc_by_chain: [{ project: "aave-v3", chain: "Base", apy_pct: 5.4 }] },

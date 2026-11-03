@@ -43,6 +43,15 @@ export const ALIASES: Record<string, Alias> = {
   "/ai-regulation": { to: "/v1/ai/regulation/{jurisdiction}", params: ["jurisdiction"], name: "AI regulation — EU AI Act and AI law dates", desc: "AI regulation: EU AI Act deadlines after the Digital Omnibus, Colorado AI law, Brazil AI bill — dates, status, sources." },
   "/stablecoin-yield": { to: "/v1/defi/yields/best", name: "Stablecoin yield — best USDC and USDT yield now", desc: "Stablecoin yield: best supply APY per stablecoin and best USDC/USDT pool per chain, base APY apart from incentives." },
   "/usdc-yield": { to: "/v1/defi/yields/best", name: "USDC yield — best USDC APY by chain", desc: "USDC yield: best USDC supply APY now and by chain (Base, Ethereum, Arbitrum…), base APY apart from incentives." },
+  "/best-model-for-task": { to: "/v1/ai/models/by-task", name: "Best open model for a task — Hugging Face downloads", desc: "Best open AI model for a task (speech-to-text, OCR, image classification, embeddings…): most downloaded, liked or trending on Hugging Face, with license." },
+  "/speech-to-text-models": { to: "/v1/ai/models/by-task?task=speech-to-text", name: "Speech-to-text models — most used open transcription models", desc: "Speech-to-text (transcription) models: the most downloaded open ASR models on Hugging Face, with license and library." },
+  "/agent-readiness": { to: "/v1/agent/readiness", name: "Agent readiness — is your API ready for AI agents", desc: "Agent readiness audit: does an API have OpenAPI, llms.txt, x402 discovery, prices, A2A and MCP cards — score and fixes." },
+  "/product-recalls": { to: "/v1/products/recalls", name: "Product recalls — U.S. CPSC recall check", desc: "Product recalls from the U.S. CPSC by keyword: units recalled, hazard, where it was made, whether it was sold on Amazon." },
+  "/import-data": { to: "/v1/products/imports", name: "Import data — U.S. imports by HS code", desc: "U.S. import data by HS code from the Census: monthly value, unit value, origin countries, 12-month change." },
+  "/product-research": { to: "/v1/products/brief", name: "Product research — demand, recalls and imports", desc: "Product research brief for e-commerce and Amazon FBA: interest trend, CPSC recalls and U.S. imports, official sources." },
+  "/youtube-outliers": { to: "/v1/youtube/outliers", name: "YouTube outliers — viral videos vs channel average", desc: "YouTube outliers: a channel's videos that did many times its median views (5x, 10x, 100x), long-form and Shorts apart." },
+  "/viral-videos": { to: "/v1/youtube/outliers", name: "Viral videos — YouTube videos above the channel's normal", desc: "Viral videos of a YouTube channel: uploads ranked by views as a multiple of the channel median." },
+  "/youtube-channel-growth": { to: "/v1/youtube/growth", name: "YouTube channel growth — subscribers and views over time", desc: "YouTube channel growth: subscribers and views per day, 7-day and 30-day change." },
   "/topic-demand": { to: "/v1/topics/demand", name: "Topic demand — how popular a topic is now", desc: "Topic demand: daily Wikipedia pageviews of a topic (official Wikimedia API), 7-day and 30-day change, rising or falling — for content and SEO agents." },
   "/wikipedia-pageviews": { to: "/v1/topics/demand", name: "Wikipedia pageviews — topic attention trend", desc: "Wikipedia pageviews for up to 5 topics: daily views, 7d/30d means and change, 60-day peak." },
   "/coin-snapshot": { to: "/v1/coin/{symbol}", params: ["symbol"], name: "Coin snapshot — everything about one coin", desc: "Coin snapshot in one call: price, funding rate, liquidations, smart money, options and news events for one coin." },
@@ -56,6 +65,8 @@ export function rewriteAlias(url: string): string {
   let to = a.to;
   for (const p of a.params ?? []) { const v = sp.get(p) || DEFAULTS[p]; if (!v) return url; to = to.replace(`{${p}}`, encodeURIComponent(v)); sp.delete(p); }
   if (a.to.startsWith("/v1/token/") && !sp.get("chain")) sp.set("chain", "base");
+  // a target may carry fixed query defaults ("/v1/ai/models/by-task?task=speech-to-text"); the caller's own params win
+  const qi = to.indexOf("?"); if (qi >= 0) { for (const [k, v] of new URLSearchParams(to.slice(qi + 1))) if (!sp.has(k)) sp.set(k, v); to = to.slice(0, qi); }
   const rest = sp.toString(); return rest ? `${to}?${rest}` : to;
 }
 
@@ -63,7 +74,7 @@ export function rewriteAlias(url: string): string {
 export function aliasPaths(paths: Record<string, any>) {
   const out: Record<string, any> = {};
   for (const [alias, a] of Object.entries(ALIASES)) {
-    const base = paths[a.to]?.get; if (!base) continue;
+    const base = paths[a.to.split("?")[0]]?.get; if (!base) continue;
     const params = [...(a.params ?? []).map(p => ({ name: p, in: "query", required: false, schema: { type: "string", default: DEFAULTS[p] } })), ...((base.parameters ?? []) as any[]).filter(p => p.in !== "path")];
     out[alias] = { get: { ...base, operationId: alias.slice(1).replace(/-/g, "_"), summary: a.name, description: `${a.desc} Same data and price as ${a.to}. Market data only — not investment advice.`, parameters: params, "x-canonical": a.to } };
   }

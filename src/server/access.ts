@@ -109,6 +109,13 @@ export function toolForRequest(req: FastifyRequest): string | null {
   if (url === "/v1/defi/yields") return "defi_yields";
   if (url === "/v1/defi/yields/best") return "stable_yield_best";
   if (url === "/v1/topics/demand") return "topic_demand";
+  if (url === "/v1/ai/models/by-task") return "ai_models_by_task";
+  if (url === "/v1/agent/readiness") return "agent_readiness";
+  if (url === "/v1/youtube/outliers") return "youtube_outliers";
+  if (url === "/v1/products/recalls") return "product_recalls";
+  if (url === "/v1/products/imports") return "import_trends";
+  if (url === "/v1/products/brief") return "product_brief";
+  if (url === "/v1/youtube/growth") return "youtube_channel_growth";
   return null;
 }
 
