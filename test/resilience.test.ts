@@ -27,3 +27,11 @@ describe("resilience of paid routes to upstream gaps", () => {
     expect(t.window_extended).toBe(true); expect(t.results).toHaveLength(1); expect(t.results[0].high_discount_rate_pct).toBe(4.05); expect(t.window_note).toContain("lags");
   });
 });
+
+describe("polymarket mapping (03/11)", () => {
+  it("leaderboard is not swallowed by the polymarket_context catch-all", async () => {
+    const { toolForRequest } = await import("../src/server/access.js");
+    expect(toolForRequest({ url: "/v1/polymarket/leaderboard?period=week", method: "GET" } as any)).toBe("polymarket_leaderboard");
+    expect(toolForRequest({ url: "/v1/polymarket/fed-cut", method: "GET" } as any)).toBe("polymarket_context");
+  });
+});

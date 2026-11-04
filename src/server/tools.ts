@@ -504,7 +504,11 @@ export const PolyTopArgs = z.object({
 /** $0.002 — the most active Polymarket markets right now: yes odds, 24h change, 24h volume, liquidity, end date, plus a link to our evidence pack per market. 60 s cache. */
 export async function polymarketTop(a: z.infer<typeof PolyTopArgs>) {
   const order = a.sort === "liquidity" ? "liquidity" : a.sort === "change_24h" ? "oneDayPriceChange" : "volume24hr";
-  const url = `https://gamma-api.polymarket.com/markets?active=true&closed=false&order=${order}&ascending=false&limit=${a.limit}${a.tag ? `&tag_slug=${encodeURIComponent(a.tag)}` : ""}`;
+  // Gamma ignores `tag_slug` on /markets (03/11: tag=crypto returned politics) — resolve the slug to its numeric id first.
+  let tagId: string | null = null;
+  if (a.tag) { const t = await cached(`pmtag:${a.tag}`, 86_400_000, () => _ext.get<any>(`https://gamma-api.polymarket.com/tags/slug/${encodeURIComponent(a.tag!)}`, { timeoutMs: 8000 }).catch(() => null)); tagId = t?.id != null ? String(t.id) : null;
+    if (!tagId) return { as_of: new Date().toISOString(), sort: a.sort, tag: a.tag, count: 0, markets: [], note: `unknown Polymarket tag "${a.tag}" (use a Gamma tag slug such as crypto, politics, sports)`, disclaimer: "Information only — not investment advice." }; }
+  const url = `https://gamma-api.polymarket.com/markets?active=true&closed=false&order=${order}&ascending=false&limit=${a.limit}${tagId ? `&tag_id=${tagId}&related_tags=true` : ""}`;
   const raw = await cached(`pmtop:${url}`, 60_000, () => _ext.get<any[]>(url, { timeoutMs: 8000 }));
   const markets = (Array.isArray(raw) ? raw : []).map((m: any) => {
     let yes: number | null = null; try { const p = typeof m.outcomePrices === "string" ? JSON.parse(m.outcomePrices) : m.outcomePrices; yes = p ? num(p[0]) : null; } catch { yes = null; }
