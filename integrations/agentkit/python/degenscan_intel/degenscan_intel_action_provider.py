@@ -17,7 +17,7 @@ from ...network import Network
 from ...wallet_providers import WalletProvider
 from ..action_decorator import create_action
 from ..action_provider import ActionProvider
-from .schemas import GetAssetBriefSchema, GetMarketEventsSchema, GetMarketPulseSchema, GetPerpDerivsSchema
+from .schemas import GetAssetBriefSchema, GetDeribitPerpsSchema, GetMarketEventsSchema, GetMarketPulseSchema, GetPerpDerivsSchema
 
 BASE_URL = "https://intel.degenscan.io"
 
@@ -101,6 +101,19 @@ opening a perp. $0.003 per call.""",
         """Fetch perp microstructure."""
         a = GetPerpDerivsSchema(**args)
         return self._get(f"/v1/derivs/{quote(a.symbol.upper(), safe='')}")
+
+    @create_action(
+        name="get_deribit_perps",
+        description="""Funding and positioning for every Deribit perpetual, the venue where Coinbase Advanced / Coinbase for
+Agents executes international perps (crypto, stocks, gold, oil): funding 8h and annualized %, mark premium over index (bp),
+open interest in USD, 24h volume and the funding gap vs Hyperliquid for the same coin. Pass one symbol to also get 7 days of
+hourly funding history. Use it before opening or sizing a perp on Coinbase or comparing venues. $0.002 per call.""",
+        schema=GetDeribitPerpsSchema,
+    )
+    def get_deribit_perps(self, args: dict[str, Any]) -> str:
+        """Fetch Deribit perpetuals."""
+        a = GetDeribitPerpsSchema(**args)
+        return self._get("/v1/deribit/perps", {"symbols": a.symbols, "sort": a.sort, "limit": a.limit})
 
     def supports_network(self, network: Network) -> bool:
         """Read-only HTTP provider; works on every network."""

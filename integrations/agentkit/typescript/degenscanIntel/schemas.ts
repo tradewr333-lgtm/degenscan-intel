@@ -20,4 +20,13 @@ export const GetPerpDerivsSchema = z
   .strip()
   .describe("Instructions for fetching perp funding, open interest and premium for one coin");
 
+export const GetDeribitPerpsSchema = z
+  .object({
+    symbols: z.array(z.string()).optional().describe("Coins to return, e.g. ['BTC','ETH','SOL','NVDA']. One symbol adds 7 days of hourly funding history. Omit for all perps."),
+    sort: z.enum(["volume", "oi", "funding", "neg_funding", "abs_funding", "gap"]).default("volume").describe("Sort order; 'gap' = largest funding gap vs Hyperliquid"),
+    limit: z.number().int().min(1).max(150).default(25),
+  })
+  .strip()
+  .describe("Instructions for fetching Deribit perpetuals (venue for Coinbase Advanced international perps)");
+
 export const GetPulseSchema = z.object({}).strip().describe("No inputs — cheapest probe of what happened in the last hour");

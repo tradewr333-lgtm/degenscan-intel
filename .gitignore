@@ -9,3 +9,5 @@ packages/js/node_modules
 packages/js/dist
 packages/py/dist
 packages/py/*.egg-info
+
+.out/

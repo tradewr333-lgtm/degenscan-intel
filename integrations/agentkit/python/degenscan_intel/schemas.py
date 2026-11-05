@@ -1,5 +1,7 @@
 """Schemas for Degenscan Intel action provider."""
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -21,6 +23,14 @@ class GetAssetBriefSchema(BaseModel):
 
     asset_id: str = Field(..., description="Asset id, e.g. BTC, ETH, NVDA, MSTR, CL, GC")
     since: str = Field("24h", description="Lookback for events")
+
+
+class GetDeribitPerpsSchema(BaseModel):
+    """Input schema for Deribit perpetuals (venue for Coinbase Advanced international perps)."""
+
+    symbols: list[str] | None = Field(None, description="Coins, e.g. ['BTC','SOL','NVDA']; one symbol adds 7 days of hourly funding history")
+    sort: Literal["volume", "oi", "funding", "neg_funding", "abs_funding", "gap"] = Field("volume", description="Sort order; 'gap' = largest funding gap vs Hyperliquid")
+    limit: int = Field(25, ge=1, le=150)
 
 
 class GetPerpDerivsSchema(BaseModel):

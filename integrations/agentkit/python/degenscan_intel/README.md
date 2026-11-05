@@ -8,6 +8,7 @@ Cross-asset market-event intelligence for agents: SEC filings, Fed/central-bank 
 - `get_market_events` — events since a window with per-asset impacts (direction, confidence, exposure path) ($0.005)
 - `get_asset_brief` — one-call pre-trade brief for one asset ($0.10)
 - `get_perp_derivs` — Hyperliquid funding, predicted funding by venue, OI, premium, flags ($0.003)
+- `get_deribit_perps` — Deribit perps (venue for Coinbase Advanced international perps): funding, premium, OI, volume, gap vs Hyperliquid ($0.002)
 
 ## Setup
 

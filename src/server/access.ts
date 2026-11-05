@@ -69,7 +69,10 @@ export function toolForRequest(req: FastifyRequest): string | null {
   if (url === "/v1/regime") return "regime_snapshot";
   if (url.startsWith("/v1/explain/")) return "explain";
   if (url === "/v1/polymarket/top") return "polymarket_top";
-  if (url === "/v1/polymarket/leaderboard") return "polymarket_leaderboard";   // before the /v1/polymarket/* catch-all (bug found 03/11)
+  if (url === "/v1/polymarket/leaderboard") return "polymarket_leaderboard";
+  if (url === "/v1/polymarket/markets") return "polymarket_markets";
+  if (url === "/v1/deribit/perps") return "deribit_perps";
+  if (url === "/v1/polymarket/events") return "polymarket_events";   // before the /v1/polymarket/* catch-all (bug found 03/11)
   if (url.startsWith("/v1/polymarket/")) return "polymarket_context";
   if (url === "/v1/pulse") return "pulse";
   if (url.startsWith("/v1/news/")) return "news_for";

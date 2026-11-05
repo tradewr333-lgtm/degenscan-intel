@@ -25,6 +25,16 @@ const funding = (coin: string): AnswerDef => ({
 
 export const ANSWERS: AnswerDef[] = [
   funding("BTC"), funding("ETH"), funding("SOL"), funding("HYPE"),
+  { slug: "coinbase-perps-funding-rates-deribit", q: "What are the funding rates on Coinbase's international perps (Deribit) right now?", path: "/v1/deribit/perps?sort=volume&limit=12", tool: "deribit_perps", topic: "funding",
+    source: "Deribit public API (venue for Coinbase Advanced international perpetuals) + Hyperliquid info API",
+    render: j => { const it = (j.items ?? []) as any[]; const b = it.find(x => x.symbol === "BTC"); return {
+      answer: it.length ? `Coinbase Advanced executes its international perpetuals on Deribit. The most traded one right now is ${it[0].symbol} with funding at ${pct(it[0].funding_apr_pct)} a year and ${big(it[0].volume_24h_usd)} traded in 24 h.${b ? ` BTC funding is ${pct(b.funding_apr_pct)} a year (Hyperliquid: ${pct(b.hyperliquid_funding_apr_pct)}).` : ""} Not affiliated with Coinbase or Deribit.` : "Deribit perp data is temporarily unavailable.",
+      rows: it.slice(0, 12).map(x => [`${x.symbol} (${x.margin.split(" ")[0]})`, `funding ${pct(x.funding_apr_pct)} / yr · OI ${big(x.open_interest_usd)} · vol ${big(x.volume_24h_usd)} · vs HL ${x.funding_gap_vs_hyperliquid_apr_pct == null ? "—" : pct(x.funding_gap_vs_hyperliquid_apr_pct)}`] as [string, string]) }; } },
+  { slug: "deribit-vs-hyperliquid-funding-gap", q: "Where is the funding gap between Deribit (Coinbase perps) and Hyperliquid largest right now?", path: "/v1/deribit/perps?sort=gap&min_volume_usd=1000000&limit=10", tool: "deribit_perps", topic: "funding",
+    source: "Deribit public API + Hyperliquid info API",
+    render: j => { const it = ((j.items ?? []) as any[]).filter(x => x.funding_gap_vs_hyperliquid_apr_pct != null); return {
+      answer: it.length ? `Among Deribit perps with at least $1M daily volume, the largest funding gap vs Hyperliquid is ${it[0].symbol}: ${pct(it[0].funding_apr_pct)} a year on Deribit against ${pct(it[0].hyperliquid_funding_apr_pct)} on Hyperliquid (gap ${pct(it[0].funding_gap_vs_hyperliquid_apr_pct)}). Gaps exclude fees, borrowing and execution costs.` : "No comparable pairs right now.",
+      rows: it.slice(0, 10).map(x => [x.symbol, `Deribit ${pct(x.funding_apr_pct)} · Hyperliquid ${pct(x.hyperliquid_funding_apr_pct)} · gap ${pct(x.funding_gap_vs_hyperliquid_apr_pct)}`] as [string, string]) }; } },
   { slug: "extreme-funding-rates-now", q: "Which crypto perps have the most extreme funding rates right now?", path: "/v1/funding/alerts?limit=10&min_abs_rate_1h=0.0001", tool: "funding_alerts", topic: "funding",
     source: "Hyperliquid info API + predicted funding on Binance and Bybit",
     render: j => { const a = (j.alerts ?? []) as any[]; return {
@@ -68,7 +78,7 @@ export const ANSWERS: AnswerDef[] = [
 ];
 
 const esc = (s: string) => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
-const CSS = `:root{--bg:#fcfcfb;--fg:#0b0b0b;--mut:#52514e;--line:#e6e5e1;--acc:#2a78d6;--card:#fff}@media(prefers-color-scheme:dark){:root{--bg:#1a1a19;--fg:#f0efec;--mut:#c3c2b7;--line:#33322f;--acc:#3987e5;--card:#222220}}
+export const CSS = `:root{--bg:#fcfcfb;--fg:#0b0b0b;--mut:#52514e;--line:#e6e5e1;--acc:#2a78d6;--card:#fff}@media(prefers-color-scheme:dark){:root{--bg:#1a1a19;--fg:#f0efec;--mut:#c3c2b7;--line:#33322f;--acc:#3987e5;--card:#222220}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.55 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}main{max-width:760px;margin:0 auto;padding:28px 16px 48px}
 a{color:var(--acc)}h1{font-size:1.6rem;line-height:1.25;margin:.2em 0 .6em}.ans{font-size:1.1rem;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px}
 table{width:100%;border-collapse:collapse;margin:18px 0}td{padding:8px 6px;border-bottom:1px solid var(--line);vertical-align:top}td:last-child{text-align:right;font-variant-numeric:tabular-nums}

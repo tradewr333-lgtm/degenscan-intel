@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { ActionProvider } from "../actionProvider";
 import { CreateAction } from "../actionDecorator";
-import { GetAssetBriefSchema, GetMarketEventsSchema, GetPerpDerivsSchema, GetPulseSchema } from "./schemas";
+import { GetAssetBriefSchema, GetDeribitPerpsSchema, GetMarketEventsSchema, GetPerpDerivsSchema, GetPulseSchema } from "./schemas";
 
 const BASE_URL = "https://intel.degenscan.io";
 
@@ -47,7 +47,7 @@ export class DegenscanIntelActionProvider extends ActionProvider {
     else headers["x-free-trial"] = "1";
     const res = await this.fetchFn(url.toString(), { headers });
     const text = await res.text();
-    if (res.status === 402) return `Payment required by ${url.pathname}: pass an apiKey (buy one with USDC: POST ${this.baseUrl}/v1/keys/x402/pack_1k) or use an x402-enabled fetch.`;
+    if (res.status === 402) return `Payment required by ${url.pathname}: pass an apiKey (buy one with USDC: POST ${this.baseUrl}/v1/keys/x402/balance_5 for $6 of calls) or use an x402-enabled fetch.`;
     if (!res.ok) return `Error ${res.status} from Degenscan Intel: ${text.slice(0, 300)}`;
     return text;
   }
@@ -98,6 +98,18 @@ export class DegenscanIntelActionProvider extends ActionProvider {
   })
   async getPerpDerivs(args: z.infer<typeof GetPerpDerivsSchema>): Promise<string> {
     return this.get(`/v1/derivs/${encodeURIComponent(args.symbol.toUpperCase())}`);
+  }
+
+  /**
+   * Funding, premium, open interest and volume for Deribit perpetuals.
+   */
+  @CreateAction({
+    name: "get_deribit_perps",
+    description: `Funding and positioning for every Deribit perpetual — the venue where Coinbase Advanced / Coinbase for Agents executes international perps (crypto, stocks, gold, oil): funding 8h and annualized %, mark premium over index (bp), open interest in USD, 24h volume, and the funding gap vs Hyperliquid for the same coin. Pass one symbol to also get 7 days of hourly funding history. Use it before opening or sizing a perp on Coinbase or comparing venues. $0.002 per call.`,
+    schema: GetDeribitPerpsSchema,
+  })
+  async getDeribitPerps(args: z.infer<typeof GetDeribitPerpsSchema>): Promise<string> {
+    return this.get("/v1/deribit/perps", { symbols: args.symbols, sort: args.sort, limit: args.limit });
   }
 
   /**

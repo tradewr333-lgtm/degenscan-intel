@@ -8,9 +8,10 @@ Actions:
 - `get_market_events` — events since a window with per-asset impacts, `tradable_now` / `next_open`
 - `get_asset_brief` — one-call pre-trade brief for one asset
 - `get_perp_derivs` — Hyperliquid funding, predicted funding by venue, OI, premium, flags
+- `get_deribit_perps` — Deribit perpetuals (the venue Coinbase Advanced / Coinbase for Agents uses for international perps since INTX perps ended on 1 Oct 2026): funding 8h and annualized, premium, OI in USD, 24h volume, funding gap vs Hyperliquid; one symbol adds 7 days of hourly funding
 
 ## Why
-Agents built with AgentKit can act on-chain but have no native source of *what happened in the world* that moves prices. This provider fills that gap with primary sources and is itself paid the agent-native way: per call in USDC via **x402** on Base (Coinbase CDP facilitator) or Solana, or with a prepaid key an agent buys with USDC (`POST /v1/keys/x402/pack_1k`). No card, no account. A free trial (100 calls/day/IP) works with zero configuration, so the provider is usable out of the box.
+Agents built with AgentKit can act on-chain but have no native source of *what happened in the world* that moves prices, nor of funding and positioning on the perps that Coinbase for Agents now trades. This provider fills that gap with primary sources and is itself paid the agent-native way: per call in USDC via **x402** on Base (Coinbase CDP facilitator) or Solana, or with a prepaid key an agent buys with USDC (`POST /v1/keys/x402/pack_1k` or `/v1/keys/x402/balance_5`). No card, no account. A free trial (100 calls/day/IP) works with zero configuration, so the provider is usable out of the box.
 
 ## Pattern
 Follows the `pyth` provider: no wallet needed, `supportsNetwork = () => true`, zod/pydantic schemas, README, unit tests with a mocked fetch/session. Optional config: `apiKey` (or `DEGENSCAN_INTEL_API_KEY`), `baseUrl`, and (TS) `fetchFn` so users can pass an x402-wrapped fetch from `@x402/fetch`.

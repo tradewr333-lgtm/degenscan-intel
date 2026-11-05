@@ -327,6 +327,12 @@ async function hlMetaAndCtxs() {
   const [meta, ctxs] = await _hl.post<[HlMeta, HlCtx[]]>({ type: "metaAndAssetCtxs" });
   hlCache = { at: Date.now(), meta, ctxs }; return hlCache;
 }
+/** Hyperliquid current funding per hour by coin (main dex), for cross-venue comparisons. */
+export async function hlFundingMap(): Promise<Map<string, number>> {
+  const { meta, ctxs } = await hlMetaAndCtxs(); const m = new Map<string, number>();
+  meta.universe.forEach((u, i) => { const f = Number(ctxs[i]?.funding); if (!u.isDelisted && Number.isFinite(f)) m.set(u.name.toUpperCase(), f); });
+  return m;
+}
 async function hlPredicted() {
   if (hlPredCache && Date.now() - hlPredCache.at < 60_000) return hlPredCache.rows;
   try { const rows = await _hl.post<typeof hlPredCache extends infer T ? T extends { rows: infer R } ? R : never : never>({ type: "predictedFundings" }); hlPredCache = { at: Date.now(), rows: rows as any }; return hlPredCache.rows; }

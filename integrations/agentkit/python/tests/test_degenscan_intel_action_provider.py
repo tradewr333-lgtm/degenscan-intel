@@ -42,6 +42,14 @@ def test_uppercase_paths():
     assert s.get.call_args[0][0] == "https://intel.degenscan.io/v1/derivs/ETH"
 
 
+def test_deribit_perps_params():
+    s = _session()
+    p = DegenscanIntelActionProvider(session=s)
+    p.get_deribit_perps({"symbols": ["BTC", "SOL"], "sort": "gap", "limit": 10})
+    assert s.get.call_args[0][0] == "https://intel.degenscan.io/v1/deribit/perps"
+    assert s.get.call_args[1]["params"] == {"symbols": "BTC,SOL", "sort": "gap", "limit": 10}
+
+
 def test_402_message():
     p = DegenscanIntelActionProvider(session=_session(402, "{}"))
     assert "Payment required" in p.get_market_pulse({})

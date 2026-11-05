@@ -30,6 +30,13 @@ describe("DegenscanIntelActionProvider", () => {
     expect(calls[0].headers["x-api-key"]).toBe("k_test");
   });
 
+  it("calls the Deribit perps route with symbols joined", async () => {
+    const calls: string[] = [];
+    const p = new DegenscanIntelActionProvider({ fetchFn: (async (u: string) => { calls.push(u); return new Response("{}", { status: 200 }); }) as unknown as typeof fetch });
+    await p.getDeribitPerps({ symbols: ["BTC", "SOL"], sort: "gap", limit: 10 });
+    expect(calls[0]).toBe("https://intel.degenscan.io/v1/deribit/perps?symbols=BTC%2CSOL&sort=gap&limit=10");
+  });
+
   it("returns a helpful message on 402", async () => {
     const p = new DegenscanIntelActionProvider({ fetchFn: (async () => new Response("{}", { status: 402 })) as unknown as typeof fetch });
     expect(await p.getMarketPulse({})).toContain("Payment required");
