@@ -77,6 +77,16 @@ Free trial: header `X-Free-Trial: 1` → 100 calls/day/IP without payment (MCP `
 
 **Agent skill:** [`skills/degenscan-intel/SKILL.md`](skills/degenscan-intel/SKILL.md) (also served at [`/skill.md`](https://intel.degenscan.io/skill.md)) — when to call which tool, the recommended loop, how to read confidence, how to pay. Drop it into a Claude/Cursor skills folder or point the agent at the URL.
 
+Focused skills (each installs on its own; listed on [skills.sh](https://skills.sh)):
+
+| Skill | For | Install |
+|---|---|---|
+| [`crypto-funding-data`](skills/crypto-funding-data/SKILL.md) | Funding rates (Hyperliquid, Deribit/Coinbase, Binance/Bybit predicted), OI, liquidations, options | `npx skills add tradewr333-lgtm/degenscan-intel --skill crypto-funding-data` |
+| [`polymarket-odds`](skills/polymarket-odds/SKILL.md) | Polymarket market and event search, odds, spreads, top traders | `npx skills add tradewr333-lgtm/degenscan-intel --skill polymarket-odds` |
+| [`product-research`](skills/product-research/SKILL.md) | CPSC recalls, U.S. Census imports by HS code, topic demand | `npx skills add tradewr333-lgtm/degenscan-intel --skill product-research` |
+| [`youtube-outliers`](skills/youtube-outliers/SKILL.md) | YouTube outlier videos and channel growth | `npx skills add tradewr333-lgtm/degenscan-intel --skill youtube-outliers` |
+| [`api-agent-readiness`](skills/api-agent-readiness/SKILL.md) | Agent-readiness audit of any public API | `npx skills add tradewr333-lgtm/degenscan-intel --skill api-agent-readiness` |
+
 **Public usage metrics:** [`/v1/metrics`](https://intel.degenscan.io/v1/metrics) (JSON) · [`/v1/metrics.csv`](https://intel.degenscan.io/v1/metrics.csv) — one row per week since 2026-09-27: free/API-key/paid calls, unique paying wallets, USDC revenue with on-chain tx hashes, active Stripe subscriptions. Owner and test wallets are listed explicitly and excluded from customers and revenue.
 
 ## Configuration

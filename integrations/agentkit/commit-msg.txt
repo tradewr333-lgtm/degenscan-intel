@@ -1,0 +1,9 @@
+feat(action-providers): add Degenscan Intel provider (TS + Python)
+
+Read-only market-data provider: market pulse, market events with
+per-asset impacts, asset brief, Hyperliquid perp derivs and Deribit
+perps (venue for Coinbase Advanced international perps). Paid per
+call via x402 (USDC) or API key; free trial without configuration.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01NXwbW1TfFYJmEdHbPkKWsg

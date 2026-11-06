@@ -3,7 +3,7 @@
 Sources: SEC EDGAR filings, Federal Reserve and other central banks, Federal Register, FTC/DOJ/FDA/CFTC,
 USGS earthquakes, NOAA storms, Nasdaq halts, DeFi hacks, Polymarket odds, Hyperliquid perps — normalized into one
 event schema and scored into per-asset impacts. Service: https://intel.degenscan.io (Marbella Collins LLC, MIT).
-Priced per call ($0.001–$0.10) via x402 (USDC on Base/Solana) or API key; free trial 100 calls/day/IP.
+Priced per call ($0.001-$0.10) via x402 (USDC on Base/Solana) or API key; free trial 100 calls/day/IP.
 Information and analytics only — not investment advice.
 """
 
@@ -17,7 +17,13 @@ from ...network import Network
 from ...wallet_providers import WalletProvider
 from ..action_decorator import create_action
 from ..action_provider import ActionProvider
-from .schemas import GetAssetBriefSchema, GetDeribitPerpsSchema, GetMarketEventsSchema, GetMarketPulseSchema, GetPerpDerivsSchema
+from .schemas import (
+    GetAssetBriefSchema,
+    GetDeribitPerpsSchema,
+    GetMarketEventsSchema,
+    GetMarketPulseSchema,
+    GetPerpDerivsSchema,
+)
 
 BASE_URL = "https://intel.degenscan.io"
 
@@ -25,7 +31,12 @@ BASE_URL = "https://intel.degenscan.io"
 class DegenscanIntelActionProvider(ActionProvider[WalletProvider]):
     """Provides actions to read market-event intelligence from Degenscan Intel."""
 
-    def __init__(self, api_key: str | None = None, base_url: str | None = None, session: requests.Session | None = None):
+    def __init__(
+        self,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        session: requests.Session | None = None,
+    ):
         super().__init__("degenscan_intel", [])
         self.api_key = api_key or os.getenv("DEGENSCAN_INTEL_API_KEY")
         self.base_url = (base_url or BASE_URL).rstrip("/")
@@ -36,7 +47,7 @@ class DegenscanIntelActionProvider(ActionProvider[WalletProvider]):
         for k, v in (query or {}).items():
             if v is None:
                 continue
-            params[k] = ",".join(map(str, v)) if isinstance(v, (list, tuple)) else v
+            params[k] = ",".join(map(str, v)) if isinstance(v, list | tuple) else v
         headers = {"accept": "application/json"}
         if self.api_key:
             headers["x-api-key"] = self.api_key
@@ -44,8 +55,10 @@ class DegenscanIntelActionProvider(ActionProvider[WalletProvider]):
             headers["x-free-trial"] = "1"
         res = self.session.get(self.base_url + path, params=params, headers=headers, timeout=20)
         if res.status_code == 402:
-            return (f"Payment required by {path}: pass api_key (buy one with USDC: POST {self.base_url}/v1/keys/x402/pack_1k) "
-                    "or use an x402-enabled HTTP client.")
+            return (
+                f"Payment required by {path}: pass api_key (buy one with USDC: POST {self.base_url}/v1/keys/x402/pack_1k) "
+                "or use an x402-enabled HTTP client."
+            )
         if res.status_code >= 400:
             return f"Error {res.status_code} from Degenscan Intel: {res.text[:300]}"
         return res.text
@@ -73,7 +86,15 @@ plus tradable_now / next_open. Use it to find catalysts for assets in your book.
     def get_market_events(self, args: dict[str, Any]) -> str:
         """Fetch events with per-asset impacts."""
         a = GetMarketEventsSchema(**args)
-        return self._get("/v1/events", {"since": a.since, "universe": a.universe, "min_confidence": a.min_confidence, "limit": a.limit})
+        return self._get(
+            "/v1/events",
+            {
+                "since": a.since,
+                "universe": a.universe,
+                "min_confidence": a.min_confidence,
+                "limit": a.limit,
+            },
+        )
 
     @create_action(
         name="get_asset_brief",
@@ -113,13 +134,17 @@ hourly funding history. Use it before opening or sizing a perp on Coinbase or co
     def get_deribit_perps(self, args: dict[str, Any]) -> str:
         """Fetch Deribit perpetuals."""
         a = GetDeribitPerpsSchema(**args)
-        return self._get("/v1/deribit/perps", {"symbols": a.symbols, "sort": a.sort, "limit": a.limit})
+        return self._get(
+            "/v1/deribit/perps", {"symbols": a.symbols, "sort": a.sort, "limit": a.limit}
+        )
 
     def supports_network(self, network: Network) -> bool:
         """Read-only HTTP provider; works on every network."""
         return True
 
 
-def degenscan_intel_action_provider(api_key: str | None = None, base_url: str | None = None) -> DegenscanIntelActionProvider:
+def degenscan_intel_action_provider(
+    api_key: str | None = None, base_url: str | None = None
+) -> DegenscanIntelActionProvider:
     """Create a new Degenscan Intel action provider."""
     return DegenscanIntelActionProvider(api_key=api_key, base_url=base_url)

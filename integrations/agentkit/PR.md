@@ -1,29 +1,41 @@
-# PR: feat(action-providers): add Degenscan Intel (market-event intelligence) provider — TypeScript + Python
+# feat(action-providers): add Degenscan Intel provider (TypeScript + Python)
 
-## What
-Adds `degenscan_intel`, a read-only HTTP action provider for **Degenscan Intel** (https://intel.degenscan.io): cross-asset market-event intelligence for agents — SEC EDGAR filings, Federal Reserve/ECB/BoE/BoJ releases, Federal Register rules, FTC/DOJ/FDA/CFTC actions, USGS earthquakes, NOAA storms, Nasdaq halts, DeFi hacks, Polymarket odds and Hyperliquid perp microstructure, normalized into one event schema and scored into per-asset impacts (direction, confidence, exposure path).
+## Description
 
-Actions:
-- `get_market_pulse` — last-hour event counts by class, high-severity count, venues open
-- `get_market_events` — events since a window with per-asset impacts, `tradable_now` / `next_open`
-- `get_asset_brief` — one-call pre-trade brief for one asset
-- `get_perp_derivs` — Hyperliquid funding, predicted funding by venue, OI, premium, flags
-- `get_deribit_perps` — Deribit perpetuals (the venue Coinbase Advanced / Coinbase for Agents uses for international perps since INTX perps ended on 1 Oct 2026): funding 8h and annualized, premium, OI in USD, 24h volume, funding gap vs Hyperliquid; one symbol adds 7 days of hourly funding
+Adds `degenscan_intel`, a read-only HTTP action provider for **Degenscan Intel** (https://intel.degenscan.io): market data and market-event intelligence for trading agents.
 
-## Why
-Agents built with AgentKit can act on-chain but have no native source of *what happened in the world* that moves prices, nor of funding and positioning on the perps that Coinbase for Agents now trades. This provider fills that gap with primary sources and is itself paid the agent-native way: per call in USDC via **x402** on Base (Coinbase CDP facilitator) or Solana, or with a prepaid key an agent buys with USDC (`POST /v1/keys/x402/pack_1k` or `/v1/keys/x402/balance_5`). No card, no account. A free trial (100 calls/day/IP) works with zero configuration, so the provider is usable out of the box.
+Actions (same names in TypeScript and Python):
+- `get_market_pulse`: last-hour event counts by class, high-severity count, venues open ($0.001)
+- `get_market_events`: price-moving events from primary sources (SEC EDGAR, Fed and other central banks, Federal Register, FTC/DOJ/FDA/CFTC, USGS, NOAA, Nasdaq halts, DeFi hacks, Polymarket) with per-asset impacts ($0.005)
+- `get_asset_brief`: one-call pre-trade brief for one asset ($0.10)
+- `get_perp_derivs`: Hyperliquid funding, predicted funding by venue, open interest, premium, flags ($0.003)
+- `get_deribit_perps`: funding (8h and annualized), premium, open interest and 24h volume for Deribit perpetuals, the venue Coinbase Advanced / Coinbase for Agents uses for international perps, plus the funding gap vs Hyperliquid; one symbol adds 7 days of hourly funding ($0.002)
 
-## Pattern
-Follows the `pyth` provider: no wallet needed, `supportsNetwork = () => true`, zod/pydantic schemas, README, unit tests with a mocked fetch/session. Optional config: `apiKey` (or `DEGENSCAN_INTEL_API_KEY`), `baseUrl`, and (TS) `fetchFn` so users can pass an x402-wrapped fetch from `@x402/fetch`.
+Why: AgentKit agents can act on-chain and, through Coinbase for Agents, trade perps, but have no native source of funding/positioning data or of the real-world events that move prices. The provider is paid the agent-native way: per call in USDC via **x402** on Base (CDP facilitator) or Solana, or with a prepaid key bought with USDC (`POST /v1/keys/x402/balance_5`). No card, no account. A free trial (100 calls/day/IP) works with zero configuration.
 
-## Checklist
-- [ ] TS: `pnpm test`, `pnpm run format`, `pnpm run lint:fix`, `pnpm run changeset` (patch: "Added Degenscan Intel action provider")
-- [ ] Python: `make test`, `changelog.d/<issue>.feature.md`
-- [ ] Export added to `src/action-providers/index.ts` and `action_providers/__init__.py`
-- [ ] READMEs updated
+Pattern: follows `pyth`: no wallet needed, `supportsNetwork = () => true`, zod / pydantic schemas, README, unit tests with a mocked fetch / requests session. Optional config: `apiKey` (or `DEGENSCAN_INTEL_API_KEY`), `baseUrl`, and (TS) `fetchFn` to pass an x402-wrapped fetch from `@x402/fetch`. Exports added to `action-providers/index.ts` and `action_providers/__init__.py`; changeset (patch) and `changelog.d` entry included.
 
-## Disclosure
-Provider maintained by the service operator (Marbella Collins LLC). The service is MIT-licensed and open source: https://github.com/tradewr333-lgtm/degenscan-intel. Public usage metrics with operator wallets excluded: https://intel.degenscan.io/v1/metrics. Information and analytics only — not investment advice.
+Disclosure: the provider is maintained by the service operator (Marbella Collins LLC). Not affiliated with Coinbase, Deribit or Hyperliquid. Information and analytics only, not investment advice. Written with AI assistance (Claude) and reviewed by the maintainer.
 
-## Contribution provenance
-Written with AI assistance (Claude) and reviewed by the maintainer; tests run locally.
+## Tests
+
+Unit tests:
+```
+typescript/agentkit$ npx jest src/action-providers/degenscanIntel
+Tests: 6 passed, 6 total
+typescript/agentkit$ npx eslint -c .eslintrc.json "src/action-providers/degenscanIntel/*.ts"   # clean
+typescript/agentkit$ npx tsc --noEmit -p .                                                    # clean
+
+python/coinbase-agentkit$ uv run pytest tests/action_providers/degenscan_intel -q
+6 passed
+python/coinbase-agentkit$ uv run ruff check . && uv run ruff format --check .                  # all checks passed
+```
+
+Live call used by `get_deribit_perps` (free trial header):
+```
+GET https://intel.degenscan.io/v1/deribit/perps?symbols=BTC,SOL  (X-Free-Trial: 1)
+→ 200, items[]: { symbol: "BTC", instrument: "BTC-PERPETUAL", funding_apr_pct: 13.62, funding_gap_vs_hyperliquid_apr_pct: 2.67,
+                  open_interest_usd: 690691240, ... }, { symbol: "SOL", instrument: "SOL_USDC-PERPETUAL", ... }
+```
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)

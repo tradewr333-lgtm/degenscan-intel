@@ -1,0 +1,772 @@
+diff --git a/python/coinbase-agentkit/changelog.d/degenscan-intel-action-provider.feature.md b/python/coinbase-agentkit/changelog.d/degenscan-intel-action-provider.feature.md
+new file mode 100644
+index 0000000..f64d78d
+--- /dev/null
++++ b/python/coinbase-agentkit/changelog.d/degenscan-intel-action-provider.feature.md
+@@ -0,0 +1 @@
++Added Degenscan Intel action provider (market events, perp funding on Hyperliquid and Deribit)
+diff --git a/python/coinbase-agentkit/coinbase_agentkit/action_providers/__init__.py b/python/coinbase-agentkit/coinbase_agentkit/action_providers/__init__.py
+index 68573da..6413237 100644
+--- a/python/coinbase-agentkit/coinbase_agentkit/action_providers/__init__.py
++++ b/python/coinbase-agentkit/coinbase_agentkit/action_providers/__init__.py
+@@ -17,6 +17,10 @@ from .cdp.cdp_smart_wallet_action_provider import (
+     cdp_smart_wallet_action_provider,
+ )
+ from .compound.compound_action_provider import CompoundActionProvider, compound_action_provider
++from .degenscan_intel.degenscan_intel_action_provider import (
++    DegenscanIntelActionProvider,
++    degenscan_intel_action_provider,
++)
+ from .erc20.erc20_action_provider import ERC20ActionProvider, erc20_action_provider
+ from .erc721.erc721_action_provider import Erc721ActionProvider, erc721_action_provider
+ from .hyperboliclabs.hyperbolic_action_provider import (
+@@ -76,6 +80,8 @@ __all__ = [
+     "nillion_action_provider",
+     "onramp_action_provider",
+     "pyth_action_provider",
++    "DegenscanIntelActionProvider",
++    "degenscan_intel_action_provider",
+     "ssh_action_provider",
+     "superfluid_action_provider",
+     "twitter_action_provider",
+diff --git a/python/coinbase-agentkit/coinbase_agentkit/action_providers/degenscan_intel/README.md b/python/coinbase-agentkit/coinbase_agentkit/action_providers/degenscan_intel/README.md
+new file mode 100755
+index 0000000..a620072
+--- /dev/null
++++ b/python/coinbase-agentkit/coinbase_agentkit/action_providers/degenscan_intel/README.md
+@@ -0,0 +1,30 @@
++# Degenscan Intel Action Provider
++
++Cross-asset market-event intelligence for agents: SEC filings, Fed/central-bank releases, regulator actions, earthquakes and storms, Nasdaq halts, DeFi hacks, Polymarket odds and Hyperliquid perp microstructure, normalized into one event schema and scored into per-asset impacts. Service: https://intel.degenscan.io (operator: Marbella Collins LLC, MIT). Information and analytics only — not investment advice.
++
++## Actions
++
++- `get_market_pulse` — last-hour event counts by class, high-severity count, venues open ($0.001)
++- `get_market_events` — events since a window with per-asset impacts (direction, confidence, exposure path) ($0.005)
++- `get_asset_brief` — one-call pre-trade brief for one asset ($0.10)
++- `get_perp_derivs` — Hyperliquid funding, predicted funding by venue, OI, premium, flags ($0.003)
++- `get_deribit_perps` — Deribit perps (venue for Coinbase Advanced international perps): funding, premium, OI, volume, gap vs Hyperliquid ($0.002)
++
++## Setup
++
++No key needed for the free trial (100 calls/day/IP). Set `DEGENSCAN_INTEL_API_KEY` for a prepaid key (bought with USDC: `POST https://intel.degenscan.io/v1/keys/x402/pack_1k`, $5 = 1,000 calls) or a Stripe plan. For per-call USDC payments via x402, pass an x402-enabled requests.Session (see the x402 PyPI package):
++
++```ts
++from coinbase_agentkit import degenscan_intel_action_provider
++provider = degenscan_intel_action_provider(api_key="...")  # or DEGENSCAN_INTEL_API_KEY env
++
++```
++
++## Network support
++
++Read-only HTTP; works on all networks.
++
++## Notes
++
++- Docs for LLMs: https://intel.degenscan.io/llms.txt · OpenAPI: https://intel.degenscan.io/openapi.json
++- Public metrics (paying wallets and tx hashes; operator wallets excluded): https://intel.degenscan.io/v1/metrics
+diff --git a/python/coinbase-agentkit/coinbase_agentkit/action_providers/degenscan_intel/__init__.py b/python/coinbase-agentkit/coinbase_agentkit/action_providers/degenscan_intel/__init__.py
+new file mode 100755
+index 0000000..a49ec8c
+--- /dev/null
++++ b/python/coinbase-agentkit/coinbase_agentkit/action_providers/degenscan_intel/__init__.py
+@@ -0,0 +1,8 @@
++"""Degenscan Intel action provider."""
++
++from .degenscan_intel_action_provider import (
++    DegenscanIntelActionProvider,
++    degenscan_intel_action_provider,
++)
++
++__all__ = ["DegenscanIntelActionProvider", "degenscan_intel_action_provider"]
+diff --git a/python/coinbase-agentkit/coinbase_agentkit/action_providers/degenscan_intel/degenscan_intel_action_provider.py b/python/coinbase-agentkit/coinbase_agentkit/action_providers/degenscan_intel/degenscan_intel_action_provider.py
+new file mode 100755
+index 0000000..c571963
+--- /dev/null
++++ b/python/coinbase-agentkit/coinbase_agentkit/action_providers/degenscan_intel/degenscan_intel_action_provider.py
+@@ -0,0 +1,150 @@
++"""Degenscan Intel action provider — cross-asset market-event intelligence for agents.
++
++Sources: SEC EDGAR filings, Federal Reserve and other central banks, Federal Register, FTC/DOJ/FDA/CFTC,
++USGS earthquakes, NOAA storms, Nasdaq halts, DeFi hacks, Polymarket odds, Hyperliquid perps — normalized into one
++event schema and scored into per-asset impacts. Service: https://intel.degenscan.io (Marbella Collins LLC, MIT).
++Priced per call ($0.001-$0.10) via x402 (USDC on Base/Solana) or API key; free trial 100 calls/day/IP.
++Information and analytics only — not investment advice.
++"""
++
++import os
++from typing import Any
++from urllib.parse import quote
++
++import requests
++
++from ...network import Network
++from ...wallet_providers import WalletProvider
++from ..action_decorator import create_action
++from ..action_provider import ActionProvider
++from .schemas import (
++    GetAssetBriefSchema,
++    GetDeribitPerpsSchema,
++    GetMarketEventsSchema,
++    GetMarketPulseSchema,
++    GetPerpDerivsSchema,
++)
++
++BASE_URL = "https://intel.degenscan.io"
++
++
++class DegenscanIntelActionProvider(ActionProvider[WalletProvider]):
++    """Provides actions to read market-event intelligence from Degenscan Intel."""
++
++    def __init__(
++        self,
++        api_key: str | None = None,
++        base_url: str | None = None,
++        session: requests.Session | None = None,
++    ):
++        super().__init__("degenscan_intel", [])
++        self.api_key = api_key or os.getenv("DEGENSCAN_INTEL_API_KEY")
++        self.base_url = (base_url or BASE_URL).rstrip("/")
++        self.session = session or requests.Session()
++
++    def _get(self, path: str, query: dict[str, Any] | None = None) -> str:
++        params = {}
++        for k, v in (query or {}).items():
++            if v is None:
++                continue
++            params[k] = ",".join(map(str, v)) if isinstance(v, list | tuple) else v
++        headers = {"accept": "application/json"}
++        if self.api_key:
++            headers["x-api-key"] = self.api_key
++        else:
++            headers["x-free-trial"] = "1"
++        res = self.session.get(self.base_url + path, params=params, headers=headers, timeout=20)
++        if res.status_code == 402:
++            return (
++                f"Payment required by {path}: pass api_key (buy one with USDC: POST {self.base_url}/v1/keys/x402/pack_1k) "
++                "or use an x402-enabled HTTP client."
++            )
++        if res.status_code >= 400:
++            return f"Error {res.status_code} from Degenscan Intel: {res.text[:300]}"
++        return res.text
++
++    @create_action(
++        name="get_market_pulse",
++        description="""Cheapest probe ($0.001) of what happened in markets in the last hour: event counts by class
++(regulatory, corporate, crypto, macro, natural), number of high-severity events and which venues are open
++(crypto, US equities). Call it on a timer before deciding whether to fetch full events.""",
++        schema=GetMarketPulseSchema,
++    )
++    def get_market_pulse(self, args: dict[str, Any]) -> str:
++        """Fetch the last-hour market pulse."""
++        return self._get("/v1/pulse")
++
++    @create_action(
++        name="get_market_events",
++        description="""Fetch price-moving market events since a time window from ~40 primary sources (SEC EDGAR filings,
++Federal Reserve and other central banks, Federal Register rules, FTC/DOJ/FDA/CFTC actions, USGS earthquakes, NOAA storms,
++Nasdaq trading halts, DeFi hacks, Polymarket repricing). Each event carries severity, novelty, corroboration count and
++impacts[] per asset with direction (-1/0/1), confidence (0..1) and the exposure path (e.g. quake -> TSMC fab -> TSM -> NVDA),
++plus tradable_now / next_open. Use it to find catalysts for assets in your book. $0.005 per call.""",
++        schema=GetMarketEventsSchema,
++    )
++    def get_market_events(self, args: dict[str, Any]) -> str:
++        """Fetch events with per-asset impacts."""
++        a = GetMarketEventsSchema(**args)
++        return self._get(
++            "/v1/events",
++            {
++                "since": a.since,
++                "universe": a.universe,
++                "min_confidence": a.min_confidence,
++                "limit": a.limit,
++            },
++        )
++
++    @create_action(
++        name="get_asset_brief",
++        description="""One-call pre-trade briefing for one asset (e.g. BTC, ETH, NVDA, MSTR, CL): net event pressure and its
++drivers, headlines with sentiment, recent SEC filings (equities), exposure map, related Polymarket markets, upcoming scheduled
++catalysts (FOMC, CPI, earnings), perp funding/open-interest flags (crypto) and whether the venue is open now. Use it right
++before sizing or explaining a position. $0.10 per call.""",
++        schema=GetAssetBriefSchema,
++    )
++    def get_asset_brief(self, args: dict[str, Any]) -> str:
++        """Fetch a pre-trade brief."""
++        a = GetAssetBriefSchema(**args)
++        return self._get(f"/v1/brief/{quote(a.asset_id.upper(), safe='')}", {"since": a.since})
++
++    @create_action(
++        name="get_perp_derivs",
++        description="""Perpetual-futures microstructure for one coin from Hyperliquid's public API (no key): hourly funding
++with 8h-equivalent and annualized %, predicted next funding by venue (Hyperliquid, Binance, Bybit), open interest in coins
++and USD with OI-to-volume, mark/oracle premium, 24h volume and change, and flags such as funding_hot_long, premium_rich,
++oi_heavy_vs_volume, joined with primary-source event pressure on the same asset. Use it to avoid crowded funding before
++opening a perp. $0.003 per call.""",
++        schema=GetPerpDerivsSchema,
++    )
++    def get_perp_derivs(self, args: dict[str, Any]) -> str:
++        """Fetch perp microstructure."""
++        a = GetPerpDerivsSchema(**args)
++        return self._get(f"/v1/derivs/{quote(a.symbol.upper(), safe='')}")
++
++    @create_action(
++        name="get_deribit_perps",
++        description="""Funding and positioning for every Deribit perpetual, the venue where Coinbase Advanced / Coinbase for
++Agents executes international perps (crypto, stocks, gold, oil): funding 8h and annualized %, mark premium over index (bp),
++open interest in USD, 24h volume and the funding gap vs Hyperliquid for the same coin. Pass one symbol to also get 7 days of
++hourly funding history. Use it before opening or sizing a perp on Coinbase or comparing venues. $0.002 per call.""",
++        schema=GetDeribitPerpsSchema,
++    )
++    def get_deribit_perps(self, args: dict[str, Any]) -> str:
++        """Fetch Deribit perpetuals."""
++        a = GetDeribitPerpsSchema(**args)
++        return self._get(
++            "/v1/deribit/perps", {"symbols": a.symbols, "sort": a.sort, "limit": a.limit}
++        )
++
++    def supports_network(self, network: Network) -> bool:
++        """Read-only HTTP provider; works on every network."""
++        return True
++
++
++def degenscan_intel_action_provider(
++    api_key: str | None = None, base_url: str | None = None
++) -> DegenscanIntelActionProvider:
++    """Create a new Degenscan Intel action provider."""
++    return DegenscanIntelActionProvider(api_key=api_key, base_url=base_url)
+diff --git a/python/coinbase-agentkit/coinbase_agentkit/action_providers/degenscan_intel/schemas.py b/python/coinbase-agentkit/coinbase_agentkit/action_providers/degenscan_intel/schemas.py
+new file mode 100755
+index 0000000..0a51bf3
+--- /dev/null
++++ b/python/coinbase-agentkit/coinbase_agentkit/action_providers/degenscan_intel/schemas.py
+@@ -0,0 +1,51 @@
++"""Schemas for Degenscan Intel action provider."""
++
++from typing import Literal
++
++from pydantic import BaseModel, Field
++
++
++class GetMarketPulseSchema(BaseModel):
++    """No inputs — cheapest probe of what happened in the last hour."""
++
++
++class GetMarketEventsSchema(BaseModel):
++    """Input schema for fetching price-moving market events with per-asset impacts."""
++
++    since: str = Field(
++        "4h", description='Lookback window, e.g. "1h", "4h", "24h" or an ISO timestamp'
++    )
++    universe: list[str] | None = Field(
++        None,
++        description="Asset ids to filter on, e.g. ['BTC','ETH','NVDA','CL']. Omit for all covered assets.",
++    )
++    min_confidence: float = Field(0.4, ge=0, le=1, description="Minimum impact confidence (0..1)")
++    limit: int = Field(30, ge=1, le=200)
++
++
++class GetAssetBriefSchema(BaseModel):
++    """Input schema for a one-call pre-trade brief for one asset."""
++
++    asset_id: str = Field(..., description="Asset id, e.g. BTC, ETH, NVDA, MSTR, CL, GC")
++    since: str = Field("24h", description="Lookback for events")
++
++
++class GetDeribitPerpsSchema(BaseModel):
++    """Input schema for Deribit perpetuals (venue for Coinbase Advanced international perps)."""
++
++    symbols: list[str] | None = Field(
++        None,
++        description="Coins, e.g. ['BTC','SOL','NVDA']; one symbol adds 7 days of hourly funding history",
++    )
++    sort: Literal["volume", "oi", "funding", "neg_funding", "abs_funding", "gap"] = Field(
++        "volume", description="Sort order; 'gap' = largest funding gap vs Hyperliquid"
++    )
++    limit: int = Field(25, ge=1, le=150)
++
++
++class GetPerpDerivsSchema(BaseModel):
++    """Input schema for perp funding / open interest / premium for one coin."""
++
++    symbol: str = Field(
++        ..., description="Perp coin as listed on Hyperliquid, e.g. BTC, ETH, SOL, HYPE"
++    )
+diff --git a/python/coinbase-agentkit/tests/action_providers/degenscan_intel/__init__.py b/python/coinbase-agentkit/tests/action_providers/degenscan_intel/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/python/coinbase-agentkit/tests/action_providers/degenscan_intel/test_degenscan_intel_action_provider.py b/python/coinbase-agentkit/tests/action_providers/degenscan_intel/test_degenscan_intel_action_provider.py
+new file mode 100755
+index 0000000..9d2feb0
+--- /dev/null
++++ b/python/coinbase-agentkit/tests/action_providers/degenscan_intel/test_degenscan_intel_action_provider.py
+@@ -0,0 +1,74 @@
++"""Tests for Degenscan Intel action provider."""
++
++from unittest.mock import MagicMock
++
++from coinbase_agentkit.action_providers.degenscan_intel.degenscan_intel_action_provider import (
++    DegenscanIntelActionProvider,
++    degenscan_intel_action_provider,
++)
++
++
++def _session(status=200, text='{"ok":true}'):
++    s = MagicMock()
++    r = MagicMock()
++    r.status_code = status
++    r.text = text
++    s.get.return_value = r
++    return s
++
++
++def test_free_trial_header_and_url():
++    """Free trial header is sent when no key is set."""
++    s = _session()
++    p = DegenscanIntelActionProvider(session=s, api_key=None)
++    assert p.get_market_pulse({}) == '{"ok":true}'
++    url, kw = s.get.call_args[0][0], s.get.call_args[1]
++    assert url == "https://intel.degenscan.io/v1/pulse"
++    assert kw["headers"]["x-free-trial"] == "1"
++
++
++def test_events_query_and_api_key():
++    """Events query params and API key header."""
++    s = _session()
++    p = DegenscanIntelActionProvider(session=s, api_key="k_test")
++    p.get_market_events(
++        {"since": "4h", "universe": ["BTC", "NVDA"], "min_confidence": 0.5, "limit": 10}
++    )
++    kw = s.get.call_args[1]
++    assert kw["params"] == {
++        "since": "4h",
++        "universe": "BTC,NVDA",
++        "min_confidence": 0.5,
++        "limit": 10,
++    }
++    assert kw["headers"]["x-api-key"] == "k_test"
++
++
++def test_uppercase_paths():
++    """Asset ids are uppercased in the path."""
++    s = _session()
++    p = DegenscanIntelActionProvider(session=s)
++    p.get_asset_brief({"asset_id": "btc"})
++    assert s.get.call_args[0][0] == "https://intel.degenscan.io/v1/brief/BTC"
++    p.get_perp_derivs({"symbol": "eth"})
++    assert s.get.call_args[0][0] == "https://intel.degenscan.io/v1/derivs/ETH"
++
++
++def test_deribit_perps_params():
++    """Deribit perps route joins symbols."""
++    s = _session()
++    p = DegenscanIntelActionProvider(session=s)
++    p.get_deribit_perps({"symbols": ["BTC", "SOL"], "sort": "gap", "limit": 10})
++    assert s.get.call_args[0][0] == "https://intel.degenscan.io/v1/deribit/perps"
++    assert s.get.call_args[1]["params"] == {"symbols": "BTC,SOL", "sort": "gap", "limit": 10}
++
++
++def test_402_message():
++    """A 402 returns a readable payment message."""
++    p = DegenscanIntelActionProvider(session=_session(402, "{}"))
++    assert "Payment required" in p.get_market_pulse({})
++
++
++def test_supports_all_networks():
++    """Provider supports every network."""
++    assert degenscan_intel_action_provider().supports_network(MagicMock()) is True
+diff --git a/typescript/.changeset/degenscan-intel-action-provider.md b/typescript/.changeset/degenscan-intel-action-provider.md
+new file mode 100644
+index 0000000..9dca746
+--- /dev/null
++++ b/typescript/.changeset/degenscan-intel-action-provider.md
+@@ -0,0 +1,5 @@
++---
++"@coinbase/agentkit": patch
++---
++
++Added Degenscan Intel action provider (market events, perp funding on Hyperliquid and Deribit)
+diff --git a/typescript/agentkit/src/action-providers/degenscanIntel/README.md b/typescript/agentkit/src/action-providers/degenscanIntel/README.md
+new file mode 100755
+index 0000000..e9b8014
+--- /dev/null
++++ b/typescript/agentkit/src/action-providers/degenscanIntel/README.md
+@@ -0,0 +1,34 @@
++# Degenscan Intel Action Provider
++
++Cross-asset market-event intelligence for agents: SEC filings, Fed/central-bank releases, regulator actions, earthquakes and storms, Nasdaq halts, DeFi hacks, Polymarket odds and Hyperliquid perp microstructure, normalized into one event schema and scored into per-asset impacts. Service: https://intel.degenscan.io (operator: Marbella Collins LLC, MIT). Information and analytics only — not investment advice.
++
++## Actions
++
++- `get_market_pulse` — last-hour event counts by class, high-severity count, venues open ($0.001)
++- `get_market_events` — events since a window with per-asset impacts (direction, confidence, exposure path) ($0.005)
++- `get_asset_brief` — one-call pre-trade brief for one asset ($0.10)
++- `get_perp_derivs` — Hyperliquid funding, predicted funding by venue, OI, premium, flags ($0.003)
++- `get_deribit_perps` — Deribit perps (venue for Coinbase Advanced international perps): funding, premium, OI, volume, gap vs Hyperliquid ($0.002)
++
++## Setup
++
++No key needed for the free trial (100 calls/day/IP). Set `DEGENSCAN_INTEL_API_KEY` for a prepaid key (bought with USDC: `POST https://intel.degenscan.io/v1/keys/x402/pack_1k`, $5 = 1,000 calls) or a Stripe plan. For per-call USDC payments via x402, pass an x402-wrapped fetch:
++
++```ts
++import { degenscanIntelActionProvider } from "@coinbase/agentkit";
++import { wrapFetchWithPaymentFromConfig } from "@x402/fetch";
++import { ExactEvmScheme } from "@x402/evm";
++
++const provider = degenscanIntelActionProvider({
++  fetchFn: wrapFetchWithPaymentFromConfig(fetch, { schemes: [{ network: "eip155:8453", client: new ExactEvmScheme(account) }] }),
++});
++```
++
++## Network support
++
++Read-only HTTP; works on all networks.
++
++## Notes
++
++- Docs for LLMs: https://intel.degenscan.io/llms.txt · OpenAPI: https://intel.degenscan.io/openapi.json
++- Public metrics (paying wallets and tx hashes; operator wallets excluded): https://intel.degenscan.io/v1/metrics
+diff --git a/typescript/agentkit/src/action-providers/degenscanIntel/degenscanIntelActionProvider.test.ts b/typescript/agentkit/src/action-providers/degenscanIntel/degenscanIntelActionProvider.test.ts
+new file mode 100755
+index 0000000..e9f59b0
+--- /dev/null
++++ b/typescript/agentkit/src/action-providers/degenscanIntel/degenscanIntelActionProvider.test.ts
+@@ -0,0 +1,69 @@
++import { DegenscanIntelActionProvider } from "./degenscanIntelActionProvider";
++
++describe("DegenscanIntelActionProvider", () => {
++  const calls: { url: string; headers: Record<string, string> }[] = [];
++  const fakeFetch = (async (url: string, init?: RequestInit) => {
++    calls.push({ url, headers: init?.headers as Record<string, string> });
++    return new Response(JSON.stringify({ ok: true, url }), {
++      status: 200,
++      headers: { "content-type": "application/json" },
++    });
++  }) as unknown as typeof fetch;
++  const provider = new DegenscanIntelActionProvider({ fetchFn: fakeFetch });
++
++  beforeEach(() => {
++    calls.length = 0;
++  });
++
++  it("sends free-trial header when no api key is set", async () => {
++    await provider.getMarketPulse({});
++    expect(calls[0].url).toBe("https://intel.degenscan.io/v1/pulse");
++    expect(calls[0].headers["x-free-trial"]).toBe("1");
++  });
++
++  it("builds the events query", async () => {
++    await provider.getMarketEvents({
++      since: "4h",
++      universe: ["BTC", "NVDA"],
++      minConfidence: 0.5,
++      limit: 10,
++    });
++    expect(calls[0].url).toBe(
++      "https://intel.degenscan.io/v1/events?since=4h&universe=BTC%2CNVDA&min_confidence=0.5&limit=10",
++    );
++  });
++
++  it("uppercases asset ids and sends api key", async () => {
++    const p = new DegenscanIntelActionProvider({ fetchFn: fakeFetch, apiKey: "k_test" });
++    await p.getAssetBrief({ assetId: "btc", since: "24h" });
++    await p.getPerpDerivs({ symbol: "eth" });
++    expect(calls[0].url).toBe("https://intel.degenscan.io/v1/brief/BTC?since=24h");
++    expect(calls[1].url).toBe("https://intel.degenscan.io/v1/derivs/ETH");
++    expect(calls[0].headers["x-api-key"]).toBe("k_test");
++  });
++
++  it("calls the Deribit perps route with symbols joined", async () => {
++    const calls: string[] = [];
++    const p = new DegenscanIntelActionProvider({
++      fetchFn: (async (u: string) => {
++        calls.push(u);
++        return new Response("{}", { status: 200 });
++      }) as unknown as typeof fetch,
++    });
++    await p.getDeribitPerps({ symbols: ["BTC", "SOL"], sort: "gap", limit: 10 });
++    expect(calls[0]).toBe(
++      "https://intel.degenscan.io/v1/deribit/perps?symbols=BTC%2CSOL&sort=gap&limit=10",
++    );
++  });
++
++  it("returns a helpful message on 402", async () => {
++    const p = new DegenscanIntelActionProvider({
++      fetchFn: (async () => new Response("{}", { status: 402 })) as unknown as typeof fetch,
++    });
++    expect(await p.getMarketPulse({})).toContain("Payment required");
++  });
++
++  it("supports all networks", () => {
++    expect(provider.supportsNetwork()).toBe(true);
++  });
++});
+diff --git a/typescript/agentkit/src/action-providers/degenscanIntel/degenscanIntelActionProvider.ts b/typescript/agentkit/src/action-providers/degenscanIntel/degenscanIntelActionProvider.ts
+new file mode 100755
+index 0000000..8259894
+--- /dev/null
++++ b/typescript/agentkit/src/action-providers/degenscanIntel/degenscanIntelActionProvider.ts
+@@ -0,0 +1,174 @@
++import { z } from "zod";
++import { ActionProvider } from "../actionProvider";
++import { CreateAction } from "../actionDecorator";
++import {
++  GetAssetBriefSchema,
++  GetDeribitPerpsSchema,
++  GetMarketEventsSchema,
++  GetPerpDerivsSchema,
++  GetPulseSchema,
++} from "./schemas";
++
++const BASE_URL = "https://intel.degenscan.io";
++
++/**
++ * Configuration for DegenscanIntelActionProvider.
++ * Without an API key the provider uses the free trial (100 calls/day/IP, header X-Free-Trial: 1).
++ * With `apiKey` (prepaid USDC pack or Stripe plan) it sends X-API-KEY.
++ * For per-call USDC payments via x402, wrap `fetch` with @x402/fetch and pass it as `fetchFn`.
++ */
++export interface DegenscanIntelActionProviderConfig {
++  apiKey?: string;
++  baseUrl?: string;
++  fetchFn?: typeof fetch;
++}
++
++/**
++ * DegenscanIntelActionProvider provides actions to read cross-asset market-event intelligence
++ * (SEC filings, Fed/central-bank releases, regulator actions, disasters, exchange halts, DeFi hacks,
++ * Polymarket odds, Hyperliquid perps) from Degenscan Intel — https://intel.degenscan.io.
++ * Priced per call ($0.001–$0.10) via x402 (USDC on Base/Solana) or API key; free trial included.
++ * Information and analytics only — not investment advice.
++ */
++export class DegenscanIntelActionProvider extends ActionProvider {
++  private readonly apiKey?: string;
++  private readonly baseUrl: string;
++  private readonly fetchFn: typeof fetch;
++
++  /**
++   * Creates a new DegenscanIntelActionProvider.
++   *
++   * @param config - Optional API key, base URL and fetch function
++   */
++  constructor(config: DegenscanIntelActionProviderConfig = {}) {
++    super("degenscan_intel", []);
++    this.apiKey = config.apiKey ?? process.env.DEGENSCAN_INTEL_API_KEY;
++    this.baseUrl = (config.baseUrl ?? BASE_URL).replace(/\/$/, "");
++    this.fetchFn = config.fetchFn ?? fetch;
++  }
++
++  /**
++   * Cheapest probe: counts of price-moving events in the last hour by class, high-severity count, venues open.
++   *
++   * @param _args - No inputs
++   * @returns The JSON response as a string
++   */
++  @CreateAction({
++    name: "get_market_pulse",
++    description: `Cheapest probe ($0.001) of what happened in markets in the last hour: event counts by class (regulatory, corporate, crypto, macro, natural), number of high-severity events and which venues are open (crypto, US equities). Call it on a timer before deciding whether to fetch full events.`,
++    schema: GetPulseSchema,
++  })
++  async getMarketPulse(_args: z.infer<typeof GetPulseSchema>): Promise<string> {
++    return this.request("/v1/pulse");
++  }
++
++  /**
++   * Price-moving events since a window with per-asset impacts.
++   *
++   * @param args - Window, asset universe, minimum confidence and limit
++   * @returns The JSON response as a string
++   */
++  @CreateAction({
++    name: "get_market_events",
++    description: `Fetch price-moving market events since a time window from ~40 primary sources (SEC EDGAR filings, Federal Reserve and other central banks, Federal Register rules, FTC/DOJ/FDA/CFTC actions, USGS earthquakes, NOAA storms, Nasdaq trading halts, DeFi hacks, Polymarket repricing). Each event carries severity, novelty, corroboration count and impacts[] per asset with direction (-1/0/1), confidence (0..1) and the exposure path (e.g. quake -> TSMC fab -> TSM -> NVDA), plus tradable_now / next_open. Use it to find catalysts for assets in your book. $0.005 per call.`,
++    schema: GetMarketEventsSchema,
++  })
++  async getMarketEvents(args: z.infer<typeof GetMarketEventsSchema>): Promise<string> {
++    return this.request("/v1/events", {
++      since: args.since,
++      universe: args.universe,
++      min_confidence: args.minConfidence,
++      limit: args.limit,
++    });
++  }
++
++  /**
++   * One-call pre-trade brief for one asset.
++   *
++   * @param args - The asset id and lookback
++   * @returns The JSON response as a string
++   */
++  @CreateAction({
++    name: "get_asset_brief",
++    description: `One-call pre-trade briefing for one asset (e.g. BTC, ETH, NVDA, MSTR, CL): net event pressure and its drivers, headlines with sentiment, recent SEC filings (equities), exposure map, related Polymarket markets, upcoming scheduled catalysts (FOMC, CPI, earnings), perp funding/open-interest flags (crypto) and whether the venue is open now. Use it right before sizing or explaining a position. $0.10 per call.`,
++    schema: GetAssetBriefSchema,
++  })
++  async getAssetBrief(args: z.infer<typeof GetAssetBriefSchema>): Promise<string> {
++    return this.request(`/v1/brief/${encodeURIComponent(args.assetId.toUpperCase())}`, {
++      since: args.since,
++    });
++  }
++
++  /**
++   * Perp microstructure for one coin from Hyperliquid's public API.
++   *
++   * @param args - The perp coin
++   * @returns The JSON response as a string
++   */
++  @CreateAction({
++    name: "get_perp_derivs",
++    description: `Perpetual-futures microstructure for one coin from Hyperliquid's public API (no key): hourly funding with 8h-equivalent and annualized %, predicted next funding by venue (Hyperliquid, Binance, Bybit), open interest in coins and USD with OI-to-volume, mark/oracle premium, 24h volume and change, and flags such as funding_hot_long, premium_rich, oi_heavy_vs_volume, joined with primary-source event pressure on the same asset. Use it to avoid crowded funding before opening a perp. $0.003 per call.`,
++    schema: GetPerpDerivsSchema,
++  })
++  async getPerpDerivs(args: z.infer<typeof GetPerpDerivsSchema>): Promise<string> {
++    return this.request(`/v1/derivs/${encodeURIComponent(args.symbol.toUpperCase())}`);
++  }
++
++  /**
++   * Funding, premium, open interest and volume for Deribit perpetuals.
++   *
++   * @param args - Symbols, sort order and limit
++   * @returns The JSON response as a string
++   */
++  @CreateAction({
++    name: "get_deribit_perps",
++    description: `Funding and positioning for every Deribit perpetual — the venue where Coinbase Advanced / Coinbase for Agents executes international perps (crypto, stocks, gold, oil): funding 8h and annualized %, mark premium over index (bp), open interest in USD, 24h volume, and the funding gap vs Hyperliquid for the same coin. Pass one symbol to also get 7 days of hourly funding history. Use it before opening or sizing a perp on Coinbase or comparing venues. $0.002 per call.`,
++    schema: GetDeribitPerpsSchema,
++  })
++  async getDeribitPerps(args: z.infer<typeof GetDeribitPerpsSchema>): Promise<string> {
++    return this.request("/v1/deribit/perps", {
++      symbols: args.symbols,
++      sort: args.sort,
++      limit: args.limit,
++    });
++  }
++
++  /**
++   * Read-only HTTP provider; works on every network.
++   *
++   * @returns Always true
++   */
++  supportsNetwork = () => true;
++  /**
++   * Calls a Degenscan Intel route and returns the response body as text.
++   *
++   * @param path - The route path, e.g. /v1/pulse
++   * @param query - Query parameters; arrays are joined with commas
++   * @returns The JSON body as a string, or a readable error message
++   */
++  private async request(path: string, query: Record<string, unknown> = {}): Promise<string> {
++    const url = new URL(this.baseUrl + path);
++    for (const [k, v] of Object.entries(query)) {
++      if (v == null) continue;
++      url.searchParams.set(k, Array.isArray(v) ? v.join(",") : String(v));
++    }
++    const headers: Record<string, string> = { accept: "application/json" };
++    if (this.apiKey) headers["x-api-key"] = this.apiKey;
++    else headers["x-free-trial"] = "1";
++    const res = await this.fetchFn(url.toString(), { headers });
++    const text = await res.text();
++    if (res.status === 402)
++      return `Payment required by ${url.pathname}: pass an apiKey (buy one with USDC: POST ${this.baseUrl}/v1/keys/x402/balance_5 for $6 of calls) or use an x402-enabled fetch.`;
++    if (!res.ok) return `Error ${res.status} from Degenscan Intel: ${text.slice(0, 300)}`;
++    return text;
++  }
++}
++
++/**
++ * Creates a Degenscan Intel action provider.
++ *
++ * @param config - Optional API key, base URL and fetch function
++ * @returns A new DegenscanIntelActionProvider
++ */
++export const degenscanIntelActionProvider = (config?: DegenscanIntelActionProviderConfig) =>
++  new DegenscanIntelActionProvider(config);
+diff --git a/typescript/agentkit/src/action-providers/degenscanIntel/index.ts b/typescript/agentkit/src/action-providers/degenscanIntel/index.ts
+new file mode 100755
+index 0000000..6651821
+--- /dev/null
++++ b/typescript/agentkit/src/action-providers/degenscanIntel/index.ts
+@@ -0,0 +1,2 @@
++export * from "./degenscanIntelActionProvider";
++export * from "./schemas";
+diff --git a/typescript/agentkit/src/action-providers/degenscanIntel/schemas.ts b/typescript/agentkit/src/action-providers/degenscanIntel/schemas.ts
+new file mode 100755
+index 0000000..9e0e49d
+--- /dev/null
++++ b/typescript/agentkit/src/action-providers/degenscanIntel/schemas.ts
+@@ -0,0 +1,63 @@
++import { z } from "zod";
++
++export const GetMarketEventsSchema = z
++  .object({
++    since: z
++      .string()
++      .default("4h")
++      .describe('Lookback window, e.g. "1h", "4h", "24h" or an ISO timestamp'),
++    universe: z
++      .array(z.string())
++      .optional()
++      .describe(
++        "Asset ids to filter on, e.g. ['BTC','ETH','NVDA','CL']. Omit for all covered assets.",
++      ),
++    minConfidence: z
++      .number()
++      .min(0)
++      .max(1)
++      .default(0.4)
++      .describe("Minimum impact confidence (0..1)"),
++    limit: z.number().int().min(1).max(200).default(30),
++  })
++  .strip()
++  .describe("Instructions for fetching price-moving market events with per-asset impacts");
++
++export const GetAssetBriefSchema = z
++  .object({
++    assetId: z.string().describe("Asset id, e.g. BTC, ETH, NVDA, MSTR, CL, GC"),
++    since: z.string().default("24h"),
++  })
++  .strip()
++  .describe("Instructions for fetching a one-call pre-trade brief for one asset");
++
++export const GetPerpDerivsSchema = z
++  .object({
++    symbol: z.string().describe("Perp coin as listed on Hyperliquid, e.g. BTC, ETH, SOL, HYPE"),
++  })
++  .strip()
++  .describe("Instructions for fetching perp funding, open interest and premium for one coin");
++
++export const GetDeribitPerpsSchema = z
++  .object({
++    symbols: z
++      .array(z.string())
++      .optional()
++      .describe(
++        "Coins to return, e.g. ['BTC','ETH','SOL','NVDA']. One symbol adds 7 days of hourly funding history. Omit for all perps.",
++      ),
++    sort: z
++      .enum(["volume", "oi", "funding", "neg_funding", "abs_funding", "gap"])
++      .default("volume")
++      .describe("Sort order; 'gap' = largest funding gap vs Hyperliquid"),
++    limit: z.number().int().min(1).max(150).default(25),
++  })
++  .strip()
++  .describe(
++    "Instructions for fetching Deribit perpetuals (venue for Coinbase Advanced international perps)",
++  );
++
++export const GetPulseSchema = z
++  .object({})
++  .strip()
++  .describe("No inputs — cheapest probe of what happened in the last hour");
+diff --git a/typescript/agentkit/src/action-providers/index.ts b/typescript/agentkit/src/action-providers/index.ts
+index 9f71640..03908be 100644
+--- a/typescript/agentkit/src/action-providers/index.ts
++++ b/typescript/agentkit/src/action-providers/index.ts
+@@ -11,6 +11,7 @@ export * from "./cdp";
+ export * from "./clanker";
+ export * from "./compound";
+ export * from "./defillama";
++export * from "./degenscanIntel";
+ export * from "./dtelecom";
+ export * from "./enso";
+ export * from "./erc20";
