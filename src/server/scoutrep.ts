@@ -43,12 +43,13 @@ export function gasFromHistory(fh: { baseFeePerGas: string[]; reward?: string[][
   const col = (i: number) => { const v = (fh.reward ?? []).map(x => hex(x[i] ?? "0x0")).sort((a, b) => a - b); return v.length ? v[Math.floor(v.length / 2)] : 0; };
   const pr = { low: col(0), medium: col(1), high: col(2) };
   const g = (wei: number) => r(wei / 1e9, 6)!;
-  const sug = (p: number) => ({ max_priority_fee_gwei: g(p), max_fee_gwei: g(next * 2 + p) });
+  const w = (wei: number) => String(Math.round(wei));
+  const sug = (p: number) => ({ max_priority_fee_gwei: g(p), max_fee_gwei: g(next * 2 + p), max_priority_fee_wei: w(p), max_fee_wei: w(next * 2 + p) });
   const cost = (units: number) => { const wei = units * (next + pr.medium); const ethc = wei / 1e18; return { gas_units: units, eth: r(ethc, 9), usd: eth ? r(ethc * eth, 6) : null }; };
   const ratios = fh.gasUsedRatio ?? [];
   return {
     chain: "base", chain_id: 8453, block: hex(fh.oldestBlock) + bases.length - 2,
-    base_fee_gwei: g(last), next_base_fee_gwei: g(next),
+    base_fee_gwei: g(last), next_base_fee_gwei: g(next), next_base_fee_wei: w(next), gas_price_wei: w(next + pr.medium),
     base_fee_trend_pct: bases[0] ? r((next - bases[0]) / bases[0] * 100, 2) : null,
     priority_fee_gwei: { p10: g(pr.low), p50: g(pr.medium), p90: g(pr.high) },
     suggested: { low: sug(pr.low), medium: sug(pr.medium), high: sug(pr.high) },
@@ -75,6 +76,7 @@ export function basisFrom(coin: string, ctx: any, pred: any[] | null, hist: { a2
   return {
     coin, mark, oracle, mid,
     mark_oracle_premium_bps: oracle ? r((mark - oracle) / oracle * 1e4, 2) : null,
+    mark_oracle_premium_pct: oracle ? r((mark - oracle) / oracle * 100, 4) : null,
     impact_premium_bps: ctx.premium != null ? r(Number(ctx.premium) * 1e4, 2) : null,
     impact_spread_bps: ib && ia && mid ? r((ia - ib) / mid * 1e4, 2) : null,
     funding: { hourly: f, per_8h: r(f * 8, 8), apr_pct: r(APR(f) * 100, 2),
@@ -99,10 +101,24 @@ function history(coin: string) {
   } catch { return { a24: null, a7d: null, pos7d: null }; }
 }
 
-export async function hlBasis(raw: string) {
+/** Pure: hourly funding rows (oldest first) → history[] + stats. Exported for tests. */
+export function fundingHistoryFrom(rows: { ts: number; funding: number }[]) {
+  const ok = (rows ?? []).filter(x => Number.isFinite(Number(x.funding)));
+  if (!ok.length) return null;
+  const f = ok.map(x => Number(x.funding)), avg = f.reduce((a, b) => a + b, 0) / f.length;
+  return { hours: ok.length, from: new Date(ok[0].ts).toISOString(), to: new Date(ok[ok.length - 1].ts).toISOString(),
+    stats: { mean_hourly: r(avg, 10), mean_apr_pct: r(APR(avg) * 100, 2), min_hourly: Math.min(...f), max_hourly: Math.max(...f), min_apr_pct: r(APR(Math.min(...f)) * 100, 2), max_apr_pct: r(APR(Math.max(...f)) * 100, 2), positive_share_pct: r(f.filter(x => x > 0).length / f.length * 100, 1) },
+    hourly: ok.map(x => ({ t: new Date(x.ts).toISOString(), funding_hourly: Number(x.funding), apr_pct: r(APR(Number(x.funding)) * 100, 2) })) };
+}
+function historyRows(coin: string, hours: number) {
+  try { ensureCarryTables(); return getDb().prepare("SELECT ts, funding FROM hl_funding WHERE coin = ? AND ts > ? ORDER BY ts").all(coin, Date.now() - hours * HOUR) as any[]; } catch { return []; }
+}
+
+export async function hlBasis(raw: string, hoursRaw?: unknown) {
   const coin = String(decodeURIComponent(raw ?? "")).trim().toUpperCase().replace(/-PERP$|USDT?$|USDC$|-USD$/, "");
   if (!/^[A-Z0-9]{1,15}$/.test(coin)) throw Object.assign(new Error("main-dex coin, e.g. BTC, ETH, HYPE"), { status: 400 });
-  return cached(`basis:${coin}`, 30_000, async () => {
+  const hours = hoursRaw == null || hoursRaw === "" ? 0 : Math.min(Math.max(Math.round(Number(hoursRaw)) || 0, 0), 168);
+  const v = await cached(`basis:${coin}`, 30_000, async () => {
     const [mc, pf] = await Promise.all([
       cached("hl:mac", 30_000, () => info<any>({ type: "metaAndAssetCtxs" })),
       cached("hl:pred", 60_000, () => info<any>({ type: "predictedFundings" })).catch(() => null),
@@ -113,6 +129,8 @@ export async function hlBasis(raw: string) {
     return { ...basisFrom(coin, mc[1][i], pred, history(coin)), as_of: new Date().toISOString(),
       sources: ["Hyperliquid info API (metaAndAssetCtxs, predictedFundings)", "Degenscan hourly funding history"], disclaimer: REP_DISCLAIMER };
   });
+  if (!v || !hours) return v;
+  return { ...v, funding_history: fundingHistoryFrom(historyRows(coin, hours)) ?? { hours: 0, note: "no stored hourly funding for this coin yet" } };
 }
 
 // ── Réplicas da fila (relatório 48 h, 29/10) ─────────────────────────────────────────────────────────────
@@ -183,15 +201,15 @@ export async function baseBalance(addrRaw: string, tokenRaw?: unknown) {
   return cached(`bal:${addr}:${token}`, 10_000, async () => {
     const call = (to: string, data: string) => rpc<string>("eth_call", [{ to, data }, "latest"]);
     const bal = (t: string) => call(t, "0x70a08231" + word(addr));
-    const [eth, usdc, block, tb, td, ts] = await Promise.all([
+    const [eth, usdc, block, tb, td, ts, tn] = await Promise.all([
       rpc<string>("eth_getBalance", [addr, "latest"]), bal(USDC_BASE), rpc<string>("eth_blockNumber", []),
       token ? bal(token) : Promise.resolve(null), token ? call(token, "0x313ce567").catch(() => null) : Promise.resolve(null),
-      token ? call(token, "0x95d89b41").catch(() => null) : Promise.resolve(null)]);
+      token ? call(token, "0x95d89b41").catch(() => null) : Promise.resolve(null), token ? call(token, "0x06fdde03").catch(() => null) : Promise.resolve(null)]);
     const dec = td ? Number(BigInt(td)) : 18;
     const fmt = (v: string | null, d: number) => v == null || v === "0x" ? null : Number(BigInt(v)) / 10 ** d;
     return { chain: "base", chain_id: 8453, address: addr, block: Number(BigInt(block)),
       eth: fmt(eth, 18), usdc: fmt(usdc, 6),
-      token: token ? { address: token, symbol: abiString(ts), decimals: dec, balance: fmt(tb, dec) } : null,
+      token: token ? { address: token, symbol: abiString(ts), name: abiString(tn), decimals: dec, balance: fmt(tb, dec), balance_raw: tb && tb !== "0x" ? BigInt(tb).toString() : null } : null,
       as_of: new Date().toISOString(), source: "Base public RPC (eth_getBalance, balanceOf)", disclaimer: REP_DISCLAIMER };
   });
 }

@@ -11,7 +11,7 @@ Read-only REST calls to `https://intel.degenscan.io`. Every call is one HTTPS GE
 
 | Question | Call | Price |
 |---|---|---|
-| Funding, premium and predicted funding for one Hyperliquid perp | `GET /v1/hl/basis/{coin}` (e.g. BTC, ETH, HYPE) | $0.001 |
+| Funding, premium and predicted funding for one Hyperliquid perp | `GET /v1/hl/basis/{coin}` (e.g. BTC, ETH, HYPE); add `?hours=48` for hourly funding history with min/max/mean | $0.001 |
 | Perps with extreme funding right now | `GET /v1/funding/alerts` | $0.001 |
 | Deribit perps (Coinbase Advanced international venue) with the gap vs Hyperliquid | `GET /v1/deribit/perps?symbols=BTC,SOL&sort=gap` (one symbol adds 7 days of hourly funding) | $0.002 |
 | Funding for any Hyperliquid perp, including HIP-3 dexes (xyz:NVDA) | `GET /v1/carry/now/{coin}` | $0.001 |

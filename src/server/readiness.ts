@@ -98,7 +98,32 @@ export function scoreSurfaces(origin: string, s: { openapi: any; openapiAt?: str
   return { origin, score, grade: score >= 85 ? "A" : score >= 70 ? "B" : score >= 50 ? "C" : score >= 30 ? "D" : "F", checks, fixes: checks.filter(c => c.fix).sort((a, b) => b.max - a.max).map(c => c.fix!) };
 }
 
+/** Pure: two audits → per-check gaps, where the target is behind/ahead and what to fix first. Exported for tests. */
+export function compareAudits(a: { origin: string; score: number; grade: string; checks: Check[] }, b: { origin: string; score: number; grade: string; checks: Check[] }) {
+  const byId = new Map(b.checks.map(c => [c.id, c]));
+  const rows = a.checks.map(c => { const p = byId.get(c.id); return { id: c.id, max: c.max, target_points: c.points, peer_points: p?.points ?? 0, gap: (p?.points ?? 0) - c.points, target_found: c.found ?? null, peer_found: p?.found ?? null, fix: c.fix ?? null }; });
+  const behind = rows.filter(r => r.gap > 0).sort((x, y) => y.gap - x.gap);
+  return { target: { origin: a.origin, score: a.score, grade: a.grade }, peer: { origin: b.origin, score: b.score, grade: b.grade },
+    score_gap: b.score - a.score, verdict: a.score > b.score ? "target ahead" : a.score < b.score ? "target behind" : "tie",
+    behind_on: behind.map(r => r.id), ahead_on: rows.filter(r => r.gap < 0).map(r => r.id), checks: rows,
+    fix_first: behind.map(r => r.fix).filter(Boolean) as string[] };
+}
+
+async function auditOne(origin: string) {
+  const [oa, ob, llms, x402, a2a, a2aOld, mcp, robots] = await Promise.all(["/openapi.json", "/swagger.json", "/llms.txt", "/.well-known/x402", "/.well-known/agent-card.json", "/.well-known/agent.json", "/.well-known/mcp.json", "/robots.txt"].map(p => safeGet(origin + p)));
+  const openapi = json(oa) ?? json(ob);
+  return scoreSurfaces(origin, { openapi, openapiAt: json(oa) ? "/openapi.json" : "/swagger.json", llms, x402: json(x402), a2a: json(a2a) ?? json(a2aOld), mcp: json(mcp), robots });
+}
+
 export async function agentReadiness(q: any = {}) {
+  const peerRaw = String(q.peer ?? q.compare ?? "").trim();
+  if (peerRaw) {
+    const origin = originOf(String(q.url ?? q.domain ?? "").trim() || "intel.degenscan.io"), peer = originOf(peerRaw);
+    if (origin === peer) throw Object.assign(new Error("peer must be a different origin than url"), { status: 400 });
+    const [a, b] = await Promise.all([auditOne(origin), auditOne(peer)]);
+    return { ...a, comparison: compareAudits(a, b), method: "Same public-metadata audit run on both origins (HTTPS only), compared check by check. Nothing is stored.", as_of: new Date().toISOString(),
+      disclaimer: "Technical audit of public metadata only; not a security review." };
+  }
   const origin = originOf(String(q.url ?? q.domain ?? "").trim() || "intel.degenscan.io");
   const [oa, ob, llms, x402, a2a, a2aOld, mcp, robots] = await Promise.all(["/openapi.json", "/swagger.json", "/llms.txt", "/.well-known/x402", "/.well-known/agent-card.json", "/.well-known/agent.json", "/.well-known/mcp.json", "/robots.txt"].map(p => safeGet(origin + p)));
   const openapi = json(oa) ?? json(ob);

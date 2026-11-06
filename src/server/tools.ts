@@ -244,10 +244,13 @@ const MACRO_2026Q4: { date: string; time_et: string; name: string; type: "fomc" 
 ];
 const etToIso = (date: string, hhmm: string) => { const [h, m] = hhmm.split(":").map(Number); const d = new Date(`${date}T12:00:00Z`); const etOffset = /^(2026-1[01]|2026-10)/.test(date) && new Date(`${date}T00:00:00Z`) < new Date("2026-11-01T06:00:00Z") ? 4 : 5; return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), h + etOffset, m)).toISOString(); };
 
+/** Typical market impact of each US release (FOMC decisions, CPI, payrolls and PCE move rates/USD/BTC the most). */
+const IMPACT: Record<string, "high" | "medium" | "low"> = { fomc: "high", cpi: "high", jobs: "high", pce: "high", ppi: "medium", gdp: "medium", retail: "medium", jolts: "medium", minutes: "medium" };
 export const CalendarArgs = z.object({
   days: z.number().int().min(1).max(60).default(7).describe("Look-ahead window in days (default 7)."),
   types: z.array(z.string()).optional().describe("Filter: macro (CPI/PPI/jobs/PCE/GDP/retail/JOLTS), fomc (decisions+minutes), earnings, auctions. Default all."),
   universe: z.array(z.string()).optional().describe("For earnings: restrict to these asset ids."),
+  min_impact: z.enum(["low", "medium", "high"]).optional().describe("Only events with at least this market impact (high = FOMC, CPI, payrolls, PCE)."),
 });
 /** Upcoming scheduled catalysts: US macro prints, FOMC, Treasury auctions and earnings dates from the feed. */
 export function calendar(a: z.infer<typeof CalendarArgs>) {
@@ -257,14 +260,19 @@ export function calendar(a: z.infer<typeof CalendarArgs>) {
   if (want.has("macro") || want.has("fomc")) for (const m of MACRO_2026Q4) {
     const isFomc = m.type === "fomc" || m.type === "minutes"; if ((isFomc && !want.has("fomc")) || (!isFomc && !want.has("macro"))) continue;
     const at = etToIso(m.date, m.time_et); const t = new Date(at).getTime(); if (t < now - 3_600_000 || t > until) continue;
-    out.push({ at, type: isFomc ? "fomc" : "macro", subtype: m.type, name: m.name, source: m.source, affects: isFomc || ["cpi", "pce", "jobs"].includes(m.type) ? ["US10Y", "US2Y", "DXY", "SPX", "NDX", "GC", "BTC"] : ["SPX", "US10Y"] });
+    out.push({ at, type: isFomc ? "fomc" : "macro", subtype: m.type, impact: IMPACT[m.type] ?? "medium", name: m.name, source: m.source, affects: isFomc || ["cpi", "pce", "jobs"].includes(m.type) ? ["US10Y", "US2Y", "DXY", "SPX", "NDX", "GC", "BTC"] : ["SPX", "US10Y"] });
   }
   if (want.has("earnings") || want.has("auctions")) {
     const evs = queryEvents({ since: new Date(now - 7 * 86_400_000).toISOString(), kinds: [...(want.has("earnings") ? ["corp.earnings"] : []), ...(want.has("auctions") ? ["macro.auction"] : [])], assets: a.universe, limit: 500 });
     for (const e of evs) { const sched = (e.meta as any)?.scheduled_at ?? (e.meta as any)?.date ?? null; const at = sched ? new Date(sched).toISOString() : e.ts_event; const t = new Date(at).getTime(); if (t < now - 3_600_000 || t > until) continue; out.push({ at, type: e.kind === "corp.earnings" ? "earnings" : "auction", name: e.title, assets: e.impacts.slice(0, 5).map(i => i.asset_id), source: e.source.id, url: e.raw_ref }); }
   }
+  for (const o of out) if (!o.impact) o.impact = o.type === "auction" || o.type === "macro.auction" ? "medium" : "low";
   out.sort((x, y) => x.at.localeCompare(y.at));
-  return { from: new Date(now).toISOString(), days: a.days, count: out.length, items: out, note: "Times converted from ET. Schedules compiled from BLS/BEA/Federal Reserve published calendars; verify with the issuer before trading around a print." };
+  const minImp = String((a as any).min_impact ?? "").toLowerCase(); const rank: Record<string, number> = { low: 0, medium: 1, high: 2 };
+  const items = minImp in rank ? out.filter(o => (rank[o.impact] ?? 0) >= rank[minImp]) : out;
+  const nh = MACRO_2026Q4.map(m => ({ m, at: etToIso(m.date, m.time_et) })).filter(x => IMPACT[x.m.type] === "high" && new Date(x.at).getTime() > now).sort((x, y) => x.at.localeCompare(y.at))[0];
+  return { from: new Date(now).toISOString(), days: a.days, count: items.length, items,
+    next_high_impact: nh ? { at: nh.at, name: nh.m.name, subtype: nh.m.type, source: nh.m.source, in_hours: Math.round((new Date(nh.at).getTime() - now) / 36e5 * 10) / 10 } : null, note: "Times converted from ET. Schedules compiled from BLS/BEA/Federal Reserve published calendars; verify with the issuer before trading around a print." };
 }
 
 export const BriefArgs = z.object({

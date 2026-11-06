@@ -12,6 +12,7 @@ One read-only REST call to `https://intel.degenscan.io`. The audit fetches only 
 | Question | Call | Price |
 |---|---|---|
 | Score and fixes for one API | `GET /v1/agent/readiness?url=https://api.example.com` | $0.005 |
+| Compare an API with a competitor, check by check | `GET /v1/agent/readiness?url=https://api.example.com&peer=https://competitor.example` | $0.005 |
 
 ## Example
 
@@ -20,6 +21,8 @@ curl -H "X-Free-Trial: 1" "https://intel.degenscan.io/v1/agent/readiness?url=htt
 ```
 
 Read `score` (0–100), `grade`, `checks[]` (what was found, with points) and `fixes[]` (ordered by points gained). Weights: OpenAPI 25, x402 20, llms.txt 15, visible prices 15, A2A card 10, route descriptions 5, MCP 5, robots 5.
+
+With `peer=`, `comparison.behind_on[]` lists the checks where the competitor scores higher and `comparison.fix_first[]` the fixes that close that gap, largest first.
 
 When helping the user fix their API, work through `fixes[]` in order and re-run the audit after each change.
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { gasFromHistory, basisFrom } from "../src/server/scoutrep.js";
+import { gasFromHistory, basisFrom, fundingHistoryFrom } from "../src/server/scoutrep.js";
 
 describe("scout replicas", () => {
   it("gas from feeHistory", () => {
@@ -42,3 +42,15 @@ import { abiString } from "../src/server/scoutrep.js";
 describe("abiString", () => { it("decodes dynamic and bytes32", () => {
   expect(abiString("0x" + "20".padStart(64, "0") + "4".padStart(64, "0") + Buffer.from("USDC").toString("hex").padEnd(64, "0"))).toBe("USDC");
   expect(abiString("0x" + Buffer.from("MKR").toString("hex").padEnd(64, "0"))).toBe("MKR"); }); });
+
+describe("parity fixes vs competitors (06/11)", () => {
+  it("gas_base also returns wei strings ready for a transaction", () => {
+    const o: any = gasFromHistory({ baseFeePerGas: ["0x3b9aca00", "0x3b9aca00", "0x3b9aca00"], reward: [["0x1", "0x2", "0x3"], ["0x1", "0x2", "0x3"]], oldestBlock: "0x10", gasUsedRatio: [0.5, 0.5] }, 3000);
+    expect(o.next_base_fee_wei).toBe("1000000000"); expect(o.suggested.medium.max_fee_wei).toBe("2000000002"); expect(o.gas_price_wei).toBe("1000000002");
+  });
+  it("hl_basis funding history: stats and hourly rows", () => {
+    const h: any = fundingHistoryFrom([{ ts: 1e12, funding: 0.00001 }, { ts: 1e12 + 36e5, funding: -0.00001 }, { ts: 1e12 + 72e5, funding: 0.00003 }]);
+    expect(h.hours).toBe(3); expect(h.stats.max_hourly).toBe(0.00003); expect(h.stats.min_hourly).toBe(-0.00001); expect(h.stats.positive_share_pct).toBeCloseTo(66.7, 1); expect(h.hourly.length).toBe(3);
+    expect(fundingHistoryFrom([])).toBeNull();
+  });
+});

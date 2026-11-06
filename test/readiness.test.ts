@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { blockedIp, originOf, scoreSurfaces } from "../src/server/readiness.js";
+import { blockedIp, originOf, scoreSurfaces, compareAudits, agentReadiness } from "../src/server/readiness.js";
 import { hfItems, HF_TASKS } from "../src/server/hfmodels.js";
 import { rewriteAlias } from "../src/server/aliases.js";
 
@@ -18,6 +18,21 @@ describe("agent_readiness (03/11)", () => {
     expect(full.score).toBe(100); expect(full.grade).toBe("A"); expect(full.fixes).toEqual([]);
     const blocked = scoreSurfaces("https://x", { openapi: null, llms: null, x402: null, a2a: null, mcp: null, robots: { status: 200, type: "", body: "User-agent: *\nDisallow: /\n", url: "" } });
     expect(blocked.checks.find(c => c.id === "robots_allows")!.ok).toBe(false);
+  });
+});
+
+describe("agent_readiness peer comparison (06/11)", () => {
+  it("lists where the target is behind and what to fix first, largest gap first", () => {
+    const a = scoreSurfaces("https://a.example", { openapi: { paths: { "/x": { get: { summary: "x" } } } }, llms: null, x402: null, a2a: null, mcp: null, robots: null });
+    const b = scoreSurfaces("https://b.example", { openapi: { paths: { "/x": { get: { summary: "x", "x-price-usd": 0.001 } } } }, llms: { status: 200, body: "# b API\n\nRoutes, prices and how to pay with x402 for agents." } as any, x402: { resources: ["https://b.example/x"] }, a2a: null, mcp: null, robots: null });
+    const c = compareAudits(a, b);
+    expect(c.verdict).toBe("target behind"); expect(c.score_gap).toBeGreaterThan(0);
+    expect(c.behind_on[0]).toBe("x402_discovery"); expect(c.behind_on).toContain("llms_txt");
+    expect(c.fix_first.length).toBe(c.behind_on.filter(id => a.checks.find(k => k.id === id)?.fix).length);
+    expect(compareAudits(a, a).verdict).toBe("tie");
+  });
+  it("rejects the same origin as peer", async () => {
+    await expect(agentReadiness({ url: "https://a.example", peer: "a.example" })).rejects.toThrow(/different origin/);
   });
 });
 
