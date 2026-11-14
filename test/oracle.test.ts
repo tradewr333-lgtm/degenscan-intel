@@ -144,7 +144,7 @@ describe("oracle HTTP (async jobs, board, resolve, discovery)", () => {
     const s: any = buildMcpServer();
     const names = Object.keys(s._registeredTools ?? {});
     expect(names).toEqual(expect.arrayContaining(["oracle_forecast", "oracle_get", "oracle_board", "oracle_track_record"]));
-    expect(names.length).toBe(73);   // + keys_trial + 4 public-apis tools + 4 liquidation/options tools
+    expect(names.length).toBe(77);   // + keys_trial + 4 public-apis tools + 4 liquidation/options tools
   });
 });
 
@@ -341,6 +341,8 @@ describe("token_verdict (GoPlus + DexScreener, mocked)", () => {
   it("honeypot → DANGER; clean liquid token → LOW_RISK; bad input → 400", async () => {
     const tools = await import("../src/server/tools.js");
     const tv = await import("../src/server/token-verdict.js");
+    const bc = await import("../src/server/bytecode.js"); const realRpc = bc._rpc.call;
+    bc._rpc.call = (async () => "0x6080604052") as any;
     tools._ext.reset(); tv._tv.reset();
     const bad = "0x1111111111111111111111111111111111111111", good = "0x2222222222222222222222222222222222222222";
     tools._ext.get = (async (url: string) => {
@@ -354,7 +356,8 @@ describe("token_verdict (GoPlus + DexScreener, mocked)", () => {
     const g = await tv.tokenVerdict({ address: good, chain: "base" });
     expect(g.verdict).toBe("LOW_RISK"); expect(g.score).toBeGreaterThanOrEqual(80); expect(g.market?.liquidity_usd).toBe(2_000_000);
     await expect(tv.tokenVerdict({ address: "nope" })).rejects.toThrow(/invalid address/);
-    tools._ext.reset(); tv._tv.reset();
+    expect(b.onchain_code?.code_bytes).toBeGreaterThan(0);
+    bc._rpc.call = realRpc; tools._ext.reset(); tv._tv.reset();
   });
 });
 

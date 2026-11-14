@@ -12,6 +12,7 @@ const SAMPLE: Record<string, any> = {
   treasury_auctions: { results: [{ auction_date: "2026-10-06", security_term: "3-Year", high_yield_pct: 4.932, bid_to_cover: 2.62, indirect_pct: 55.3 }] },
   options_summary: { index_price: 81256.9, dvol: { now: 37.43, change_24h: -1.2 }, term_structure: [{ expiry: "24OCT26", days: 6.6, atm_iv: 36.9, rr25: -2.4, max_pain: 80000 }], put_call: { oi_ratio: 0.71 } },
   br_ptax: { ptax_usd_brl: 4.9698, ptax_date: "06/10/2026", usdt_brl: 5.0038, usdt_premium_vs_ptax_pct: 0.684, btc_premium_vs_ptax_pct: 0.695 },
+  airfare_benchmark: { latest: { period: "2026Q1", avg_fare_each_way: 182.4, largest_carrier: { code: "AA", name: "American", market_share_pct: 61.2 } }, nearby_airports: { options: [{ airports: "FLL–LGA", avg_fare: 131.9, passengers_per_day: 1200 }], cheapest_alternative: { airports: "FLL–LGA", avg_fare: 131.9, vs_requested_pct: -27.7 } }, seasonality: { cheapest_quarter: { months: "Jul–Sep" } } },
   polymarket_leaderboard: { items: [{ rank: 1, wallet: "0xf0…", name: "BreakTheBank", pnl_usd: 3786070.64, volume_usd: 42300738.22 }] },
 };
 

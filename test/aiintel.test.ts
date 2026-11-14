@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { normModels, filterModels, weekly, aiRegulation } from "../src/server/aiintel.js";
+import { describe, it, expect, vi } from "vitest";
+import { normModels, filterModels, weekly, aiRegulation, aiModels, _ai } from "../src/server/aiintel.js";
 const rows = [
   { id: "a/cheap", name: "Cheap", created: 1790000000, context_length: 128000, pricing: { prompt: "0.0000001", completion: "0.0000004" }, architecture: { input_modalities: ["text", "image"], output_modalities: ["text"] }, supported_parameters: ["tools"], top_provider: { max_completion_tokens: 8000 } },
   { id: "b/pricey", name: "Pricey", created: 1791000000, context_length: 200000, pricing: { prompt: "0.000003", completion: "0.000015" }, architecture: { input_modalities: ["text"] }, supported_parameters: ["tools", "reasoning"] },
@@ -32,4 +32,9 @@ import { countRecent } from "../src/server/aiintel.js";
 describe("arxiv count", () => { it("counts recent published", () => {
   const now = Date.parse("2026-10-29T00:00:00Z"); const x = ["2026-10-28", "2026-10-25", "2026-10-10", "2026-09-01"].map(d => `<published>${d}T10:00:00Z</published>`).join("");
   expect(countRecent(x, now, 1000)).toEqual({ d7: 2, d30: 3, capped_30d: false });
-  expect(countRecent(x.split("<published>2026-09-01")[0], now, 3).capped_30d).toBe(true); }); });
+  expect(countRecent(x.split("<published>2026-09-01")[0], now, 3).capped_30d).toBe(true); });   it("q= searches model names (07/11)", async () => {
+    _ai.reset(); vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ data: rows }), { status: 200 }));
+    try { const r = await aiModels({ q: "pricey" }); expect(r.n_matched).toBe(1); expect(r.items[0].id).toBe("b/pricey"); expect(r.query).toBe("pricey"); }
+    finally { vi.unstubAllGlobals(); _ai.reset(); }
+  });
+});

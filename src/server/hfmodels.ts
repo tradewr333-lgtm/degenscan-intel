@@ -15,6 +15,23 @@ export const HF_TASKS: Record<string, string> = {
   "text-classification": "text-classification", sentiment: "text-classification", "zero-shot-classification": "zero-shot-classification", ner: "token-classification", "token-classification": "token-classification",
   "depth-estimation": "depth-estimation", "text-generation": "text-generation", "audio-classification": "audio-classification",
 };
+/**
+ * License classes (07/11, open-source AI post): agents embedding an open model first ask "can I ship this commercially?".
+ * permissive = MIT/Apache/BSD-style; copyleft = GPL family (commercial ok, share-alike); open_rail = OpenRAIL/RAIL (commercial
+ * ok with use restrictions); restricted = non-commercial / research-only; custom = model-specific licences (Llama, Gemma, Qwen,
+ * other) that need a read. commercial_ok is a first-pass label from the license tag, not legal advice.
+ */
+const PERMISSIVE = /^(mit|apache-2\.0|apache|bsd(-[23]-clause)?|bsd-3-clause-clear|isc|unlicense|cc0-1\.0|cc-by-4\.0|cc-by-3\.0|cc-by-2\.0|zlib|wtfpl|artistic-2\.0|ecl-2\.0|afl-3\.0|bsl-1\.0|pddl|odc-by|mpl-2\.0|postgresql|ms-pl)$/;
+export function licenseClass(lic: string | null): { license_class: string; commercial_ok: boolean | null } {
+  const l = (lic ?? "").toLowerCase().trim();
+  if (!l || l === "unknown") return { license_class: "unknown", commercial_ok: null };
+  if (/(^|-)nc(-|$)|non-?commercial|research|academic|cc-by-nc|deepfloyd|afl-research/.test(l)) return { license_class: "restricted", commercial_ok: false };
+  if (PERMISSIVE.test(l)) return { license_class: "permissive", commercial_ok: true };
+  if (/^(a?gpl|lgpl|cc-by-sa|epl|eupl|osl|cc-by-nd)/.test(l)) return { license_class: "copyleft", commercial_ok: true };
+  if (/rail/.test(l)) return { license_class: "open_rail", commercial_ok: true };
+  return { license_class: "custom", commercial_ok: null };
+}
+const LICENSE_FILTERS = ["permissive", "commercial", "copyleft", "open_rail", "restricted", "custom"];
 const memo = new Map<string, { at: number; v: any }>();
 export const _hf = { reset() { memo.clear(); } };
 
@@ -24,7 +41,7 @@ export function hfItems(rows: any[]) {
     const tags: string[] = Array.isArray(m.tags) ? m.tags : [];
     return { id: m.id, url: `https://huggingface.co/${m.id}`, author: String(m.id).split("/")[0], downloads_30d: Number(m.downloads ?? 0), likes: Number(m.likes ?? 0),
       trending_score: m.trendingScore ?? null, license: tags.find(t => t.startsWith("license:"))?.slice(8) ?? null, library: m.library_name ?? null,
-      created_at: m.createdAt ?? null, gated: m.gated ? true : false, servable_via: tags.includes("endpoints_compatible") ? "endpoints_compatible" : null };
+      ...licenseClass(tags.find(t => t.startsWith("license:"))?.slice(8) ?? null), created_at: m.createdAt ?? null, gated: m.gated ? true : false, servable_via: tags.includes("endpoints_compatible") ? "endpoints_compatible" : null };
   });
 }
 
@@ -46,8 +63,13 @@ export async function aiModelsByTask(q: any = {}) {
     } catch (e) { if (c) rows = c.v; else throw e; }
   }
   let items = hfItems(rows);
-  if (q.license) items = items.filter(i => i.license && i.license.toLowerCase().includes(String(q.license).toLowerCase()));
-  return { task, asked: key, sort, n: Math.min(items.length, limit), items: items.slice(0, limit),
-    note: "downloads_30d = Hugging Face Hub downloads in the last 30 days. Check each model's license before commercial use.",
+  const lf = q.license ? String(q.license).toLowerCase().trim() : "";
+  if (lf === "commercial") items = items.filter(i => i.commercial_ok === true);
+  else if (LICENSE_FILTERS.includes(lf)) items = items.filter(i => i.license_class === lf);
+  else if (lf) items = items.filter(i => i.license && i.license.toLowerCase().includes(lf));
+  const all = hfItems(rows); const licence_mix: Record<string, number> = {};
+  for (const i of all) licence_mix[i.license_class] = (licence_mix[i.license_class] ?? 0) + 1;
+  return { task, asked: key, sort, license_filter: lf || null, n: Math.min(items.length, limit), items: items.slice(0, limit), licence_mix_top50: licence_mix,
+    note: "downloads_30d = Hugging Face Hub downloads in the last 30 days. license_class/commercial_ok are a first-pass reading of the license tag (permissive = MIT/Apache/BSD; custom = model-specific terms, read them). license= accepts permissive, commercial, copyleft, open_rail, restricted, custom or any license id (e.g. mit).",
     sources: ["Hugging Face Hub public API (/api/models)"], as_of: new Date().toISOString(), disclaimer: "Information and analytics only — not investment or legal advice." };
 }

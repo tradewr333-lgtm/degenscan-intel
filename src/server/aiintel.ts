@@ -53,11 +53,14 @@ export function filterModels(all: Model[], q: { provider?: unknown; needs?: unkn
     && (!needs.has("vision") || m.modalities_in.includes("image")) && (!needs.has("audio") || m.modalities_in.includes("audio")) && (!needs.has("pdf") || m.modalities_in.includes("file")));
 }
 export async function aiModels(q: any = {}) {
-  const all = await models(); const list = filterModels(all, { ...q, include_free: q.include_free ?? "1" });
+  const all = await models(); let list = filterModels(all, { ...q, include_free: q.include_free ?? "1" });
+  // q= name search (07/11: an agent asking for "mimo" got the whole catalogue back)
+  const term = String(q.q ?? q.search ?? "").toLowerCase().trim();
+  if (term) list = list.filter(m => `${m.id} ${m.name ?? ""}`.toLowerCase().includes(term));
   const sort = String(q.sort ?? "newest"); const limit = Math.min(Math.max(Number(q.limit) || 25, 1), 100);
   const sorted = [...list].sort(sort === "price" ? (a, b) => blended(a) - blended(b) : sort === "context" ? (a, b) => (b.context ?? 0) - (a.context ?? 0) : (a, b) => String(b.created).localeCompare(String(a.created)));
   const byProv = new Map<string, number>(); for (const m of all) byProv.set(m.provider, (byProv.get(m.provider) ?? 0) + 1);
-  return { n_total: all.length, n_matched: list.length, sort, items: sorted.slice(0, limit),
+  return { n_total: all.length, n_matched: list.length, query: term || null, sort, items: sorted.slice(0, limit),
     providers_top: [...byProv.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15).map(([provider, models]) => ({ provider, models })),
     fields: { input_per_1m: "USD per 1M input tokens", output_per_1m: "USD per 1M output tokens", needs: "filter: tools, json, reasoning, vision, audio, pdf" },
     source: "OpenRouter public models API (provider list prices)", as_of: new Date().toISOString(), disclaimer: AI_DISCLAIMER };

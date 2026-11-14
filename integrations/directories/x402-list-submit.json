@@ -1,0 +1,26 @@
+{
+  "url": "https://intel.degenscan.io",
+  "email": "contact@degenscan.io",
+  "service_name": "Degenscan Intel",
+  "website_url": "https://intel.degenscan.io",
+  "category": "Data",
+  "description": "Market data for trading and research agents, paid per call in USDC (x402, Base or Solana) or with a prepaid key: perp funding, basis and predicted funding on Hyperliquid and Deribit (the venue for Coinbase Advanced international perps), liquidation maps, BTC/ETH options, Polymarket markets and events, US macro calendar with impact levels, Treasury auctions, stablecoin yields with lending data, Base gas and balances, AI model prices, plus open-licence image search and topic timelines for content agents. OpenAPI, llms.txt, MCP (x402 MCP transport) and /.well-known/x402. Market data and analytics only, not investment advice.",
+  "endpoints": [
+    "GET /v1/pulse",
+    "GET /v1/hl/basis/BTC",
+    "GET /v1/funding/alerts",
+    "GET /v1/deribit/perps",
+    "GET /v1/hl/liquidations",
+    "GET /v1/options/BTC",
+    "GET /v1/polymarket/markets",
+    "GET /v1/polymarket/events",
+    "GET /v1/calendar",
+    "GET /v1/treasury/auctions",
+    "GET /v1/defi/yields/best",
+    "GET /v1/gas/base",
+    "GET /v1/ai/cheapest",
+    "GET /v1/media/images",
+    "GET /v1/topics/timeline"
+  ],
+  "notes": "Operator: Marbella Collins LLC. Free trial: header X-Free-Trial: 1 (100 calls/day/IP). Public usage metrics with operator wallets excluded: https://intel.degenscan.io/v1/metrics"
+}

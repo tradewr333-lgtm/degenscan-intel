@@ -85,6 +85,8 @@ Focused skills (each installs on its own; listed on [skills.sh](https://skills.s
 | [`polymarket-odds`](skills/polymarket-odds/SKILL.md) | Polymarket market and event search, odds, spreads, top traders | `npx skills add tradewr333-lgtm/degenscan-intel --skill polymarket-odds` |
 | [`product-research`](skills/product-research/SKILL.md) | CPSC recalls, U.S. Census imports by HS code, topic demand | `npx skills add tradewr333-lgtm/degenscan-intel --skill product-research` |
 | [`youtube-outliers`](skills/youtube-outliers/SKILL.md) | YouTube outlier videos and channel growth | `npx skills add tradewr333-lgtm/degenscan-intel --skill youtube-outliers` |
+| [`company-growth-teardown`](skills/company-growth-teardown/SKILL.md) | How a company grew: attention jumps (Wikipedia, Hacker News) with the launches and news around them | `npx skills add tradewr333-lgtm/degenscan-intel --skill company-growth-teardown` |
+| [`flight-fare-research`](skills/flight-fare-research/SKILL.md) | US airfare benchmark (DOT): average fare paid, cheaper nearby airports, cheapest quarter | `npx skills add tradewr333-lgtm/degenscan-intel --skill flight-fare-research` |
 | [`api-agent-readiness`](skills/api-agent-readiness/SKILL.md) | Agent-readiness audit of any public API | `npx skills add tradewr333-lgtm/degenscan-intel --skill api-agent-readiness` |
 
 **Public usage metrics:** [`/v1/metrics`](https://intel.degenscan.io/v1/metrics) (JSON) · [`/v1/metrics.csv`](https://intel.degenscan.io/v1/metrics.csv) — one row per week since 2026-09-27: free/API-key/paid calls, unique paying wallets, USDC revenue with on-chain tx hashes, active Stripe subscriptions. Owner and test wallets are listed explicitly and excluded from customers and revenue.

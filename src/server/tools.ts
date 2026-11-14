@@ -218,7 +218,7 @@ export function filingsFor(a: z.infer<typeof FilingsArgs>) {
     filings: evs.map(e => { const imp = e.impacts.find(i => i.asset_id === id); return { id: e.id, ts: e.ts_event, kind: e.kind, title: e.title, summary: e.summary.slice(0, 300), direction: imp?.direction ?? 0, confidence: imp?.confidence ?? 0, url: e.raw_ref, source: e.source.id }; }), universe_version: loadUniverse().version };
 }
 
-/** US macro calendar Q4-2026 (published schedules of BLS, BEA and the Federal Reserve; times ET). Verify against the issuer before trading around a print. */
+/** US macro calendar Q4-2026 + 2027 (published schedules of BLS, BEA, Census and the Federal Reserve; times ET). Verify against the issuer before trading around a print. */
 const MACRO_2026Q4: { date: string; time_et: string; name: string; type: "fomc" | "cpi" | "jobs" | "pce" | "gdp" | "ppi" | "retail" | "jolts" | "minutes"; source: string }[] = [
   { date: "2026-10-02", time_et: "08:30", name: "Employment Situation (Nonfarm Payrolls)", type: "jobs", source: "bls.gov" },
   { date: "2026-10-07", time_et: "14:00", name: "FOMC Minutes", type: "minutes", source: "federalreserve.gov" },
@@ -241,8 +241,102 @@ const MACRO_2026Q4: { date: string; time_et: string; name: string; type: "fomc" 
   { date: "2026-12-09", time_et: "14:00", name: "FOMC Rate Decision + Statement + SEP", type: "fomc", source: "federalreserve.gov" },
   { date: "2026-12-10", time_et: "08:30", name: "Consumer Price Index (CPI)", type: "cpi", source: "bls.gov" },
   { date: "2026-12-15", time_et: "08:30", name: "Producer Price Index (PPI)", type: "ppi", source: "bls.gov" },
+  // 2027: official schedules (federalreserve.gov FOMC calendar, BLS release calendar 2027, BEA 2027 schedule, Census retail release dates), loaded 07/11/2026. JOLTS 2027 not yet published by BLS.
+  { date: "2027-01-08", time_et: "08:30", name: "Employment Situation (Nonfarm Payrolls)", type: "jobs", source: "bls.gov" },
+  { date: "2027-01-13", time_et: "08:30", name: "Consumer Price Index (CPI)", type: "cpi", source: "bls.gov" },
+  { date: "2027-01-14", time_et: "08:30", name: "Producer Price Index (PPI)", type: "ppi", source: "bls.gov" },
+  { date: "2027-01-15", time_et: "08:30", name: "Advance Monthly Retail Sales", type: "retail", source: "census.gov" },
+  { date: "2027-01-27", time_et: "14:00", name: "FOMC Rate Decision + Statement", type: "fomc", source: "federalreserve.gov" },
+  { date: "2027-01-28", time_et: "08:30", name: "GDP Q4 2026 (Advance Estimate)", type: "gdp", source: "bea.gov" },
+  { date: "2027-01-28", time_et: "08:30", name: "Personal Income & Outlays (PCE inflation)", type: "pce", source: "bea.gov" },
+  { date: "2027-02-05", time_et: "08:30", name: "Employment Situation (Nonfarm Payrolls)", type: "jobs", source: "bls.gov" },
+  { date: "2027-02-11", time_et: "08:30", name: "Consumer Price Index (CPI)", type: "cpi", source: "bls.gov" },
+  { date: "2027-02-12", time_et: "08:30", name: "Producer Price Index (PPI)", type: "ppi", source: "bls.gov" },
+  { date: "2027-02-17", time_et: "08:30", name: "Advance Monthly Retail Sales", type: "retail", source: "census.gov" },
+  { date: "2027-02-17", time_et: "14:00", name: "FOMC Minutes", type: "minutes", source: "federalreserve.gov" },
+  { date: "2027-02-25", time_et: "08:30", name: "GDP Q4 2026 (Second Estimate)", type: "gdp", source: "bea.gov" },
+  { date: "2027-02-25", time_et: "08:30", name: "Personal Income & Outlays (PCE inflation)", type: "pce", source: "bea.gov" },
+  { date: "2027-03-05", time_et: "08:30", name: "Employment Situation (Nonfarm Payrolls)", type: "jobs", source: "bls.gov" },
+  { date: "2027-03-10", time_et: "08:30", name: "Consumer Price Index (CPI)", type: "cpi", source: "bls.gov" },
+  { date: "2027-03-12", time_et: "08:30", name: "Producer Price Index (PPI)", type: "ppi", source: "bls.gov" },
+  { date: "2027-03-16", time_et: "08:30", name: "Advance Monthly Retail Sales", type: "retail", source: "census.gov" },
+  { date: "2027-03-17", time_et: "14:00", name: "FOMC Rate Decision + Statement + SEP", type: "fomc", source: "federalreserve.gov" },
+  { date: "2027-03-31", time_et: "08:30", name: "GDP Q4 2026 (Third Estimate)", type: "gdp", source: "bea.gov" },
+  { date: "2027-03-31", time_et: "08:30", name: "Personal Income & Outlays (PCE inflation)", type: "pce", source: "bea.gov" },
+  { date: "2027-04-02", time_et: "08:30", name: "Employment Situation (Nonfarm Payrolls)", type: "jobs", source: "bls.gov" },
+  { date: "2027-04-07", time_et: "14:00", name: "FOMC Minutes", type: "minutes", source: "federalreserve.gov" },
+  { date: "2027-04-13", time_et: "08:30", name: "Consumer Price Index (CPI)", type: "cpi", source: "bls.gov" },
+  { date: "2027-04-14", time_et: "08:30", name: "Producer Price Index (PPI)", type: "ppi", source: "bls.gov" },
+  { date: "2027-04-16", time_et: "08:30", name: "Advance Monthly Retail Sales", type: "retail", source: "census.gov" },
+  { date: "2027-04-28", time_et: "14:00", name: "FOMC Rate Decision + Statement", type: "fomc", source: "federalreserve.gov" },
+  { date: "2027-04-29", time_et: "08:30", name: "GDP Q1 2027 (Advance Estimate)", type: "gdp", source: "bea.gov" },
+  { date: "2027-04-29", time_et: "08:30", name: "Personal Income & Outlays (PCE inflation)", type: "pce", source: "bea.gov" },
+  { date: "2027-05-07", time_et: "08:30", name: "Employment Situation (Nonfarm Payrolls)", type: "jobs", source: "bls.gov" },
+  { date: "2027-05-12", time_et: "08:30", name: "Consumer Price Index (CPI)", type: "cpi", source: "bls.gov" },
+  { date: "2027-05-13", time_et: "08:30", name: "Producer Price Index (PPI)", type: "ppi", source: "bls.gov" },
+  { date: "2027-05-14", time_et: "08:30", name: "Advance Monthly Retail Sales", type: "retail", source: "census.gov" },
+  { date: "2027-05-19", time_et: "14:00", name: "FOMC Minutes", type: "minutes", source: "federalreserve.gov" },
+  { date: "2027-05-27", time_et: "08:30", name: "GDP Q1 2027 (Second Estimate)", type: "gdp", source: "bea.gov" },
+  { date: "2027-05-27", time_et: "08:30", name: "Personal Income & Outlays (PCE inflation)", type: "pce", source: "bea.gov" },
+  { date: "2027-06-04", time_et: "08:30", name: "Employment Situation (Nonfarm Payrolls)", type: "jobs", source: "bls.gov" },
+  { date: "2027-06-09", time_et: "14:00", name: "FOMC Rate Decision + Statement + SEP", type: "fomc", source: "federalreserve.gov" },
+  { date: "2027-06-10", time_et: "08:30", name: "Consumer Price Index (CPI)", type: "cpi", source: "bls.gov" },
+  { date: "2027-06-11", time_et: "08:30", name: "Producer Price Index (PPI)", type: "ppi", source: "bls.gov" },
+  { date: "2027-06-16", time_et: "08:30", name: "Advance Monthly Retail Sales", type: "retail", source: "census.gov" },
+  { date: "2027-06-25", time_et: "08:30", name: "Personal Income & Outlays (PCE inflation)", type: "pce", source: "bea.gov" },
+  { date: "2027-06-30", time_et: "14:00", name: "FOMC Minutes", type: "minutes", source: "federalreserve.gov" },
+  { date: "2027-07-02", time_et: "08:30", name: "Employment Situation (Nonfarm Payrolls)", type: "jobs", source: "bls.gov" },
+  { date: "2027-07-14", time_et: "08:30", name: "Consumer Price Index (CPI)", type: "cpi", source: "bls.gov" },
+  { date: "2027-07-15", time_et: "08:30", name: "Producer Price Index (PPI)", type: "ppi", source: "bls.gov" },
+  { date: "2027-07-16", time_et: "08:30", name: "Advance Monthly Retail Sales", type: "retail", source: "census.gov" },
+  { date: "2027-07-28", time_et: "14:00", name: "FOMC Rate Decision + Statement", type: "fomc", source: "federalreserve.gov" },
+  { date: "2027-07-29", time_et: "08:30", name: "GDP Q2 2027 (Advance Estimate)", type: "gdp", source: "bea.gov" },
+  { date: "2027-07-29", time_et: "08:30", name: "Personal Income & Outlays (PCE inflation)", type: "pce", source: "bea.gov" },
+  { date: "2027-08-06", time_et: "08:30", name: "Employment Situation (Nonfarm Payrolls)", type: "jobs", source: "bls.gov" },
+  { date: "2027-08-10", time_et: "08:30", name: "Producer Price Index (PPI)", type: "ppi", source: "bls.gov" },
+  { date: "2027-08-11", time_et: "08:30", name: "Consumer Price Index (CPI)", type: "cpi", source: "bls.gov" },
+  { date: "2027-08-16", time_et: "08:30", name: "Advance Monthly Retail Sales", type: "retail", source: "census.gov" },
+  { date: "2027-08-18", time_et: "14:00", name: "FOMC Minutes", type: "minutes", source: "federalreserve.gov" },
+  { date: "2027-08-25", time_et: "08:30", name: "GDP Q2 2027 (Second Estimate)", type: "gdp", source: "bea.gov" },
+  { date: "2027-08-25", time_et: "08:30", name: "Personal Income & Outlays (PCE inflation)", type: "pce", source: "bea.gov" },
+  { date: "2027-09-03", time_et: "08:30", name: "Employment Situation (Nonfarm Payrolls)", type: "jobs", source: "bls.gov" },
+  { date: "2027-09-10", time_et: "08:30", name: "Producer Price Index (PPI)", type: "ppi", source: "bls.gov" },
+  { date: "2027-09-14", time_et: "08:30", name: "Consumer Price Index (CPI)", type: "cpi", source: "bls.gov" },
+  { date: "2027-09-15", time_et: "14:00", name: "FOMC Rate Decision + Statement + SEP", type: "fomc", source: "federalreserve.gov" },
+  { date: "2027-09-16", time_et: "08:30", name: "Advance Monthly Retail Sales", type: "retail", source: "census.gov" },
+  { date: "2027-09-30", time_et: "08:30", name: "Personal Income & Outlays (PCE inflation)", type: "pce", source: "bea.gov" },
+  { date: "2027-10-06", time_et: "14:00", name: "FOMC Minutes", type: "minutes", source: "federalreserve.gov" },
+  { date: "2027-10-08", time_et: "08:30", name: "Employment Situation (Nonfarm Payrolls)", type: "jobs", source: "bls.gov" },
+  { date: "2027-10-14", time_et: "08:30", name: "Consumer Price Index (CPI)", type: "cpi", source: "bls.gov" },
+  { date: "2027-10-15", time_et: "08:30", name: "Advance Monthly Retail Sales", type: "retail", source: "census.gov" },
+  { date: "2027-10-15", time_et: "08:30", name: "Producer Price Index (PPI)", type: "ppi", source: "bls.gov" },
+  { date: "2027-10-27", time_et: "14:00", name: "FOMC Rate Decision + Statement", type: "fomc", source: "federalreserve.gov" },
+  { date: "2027-10-28", time_et: "08:30", name: "GDP Q3 2027 (Advance Estimate)", type: "gdp", source: "bea.gov" },
+  { date: "2027-10-28", time_et: "08:30", name: "Personal Income & Outlays (PCE inflation)", type: "pce", source: "bea.gov" },
+  { date: "2027-11-05", time_et: "08:30", name: "Employment Situation (Nonfarm Payrolls)", type: "jobs", source: "bls.gov" },
+  { date: "2027-11-10", time_et: "08:30", name: "Consumer Price Index (CPI)", type: "cpi", source: "bls.gov" },
+  { date: "2027-11-12", time_et: "08:30", name: "Producer Price Index (PPI)", type: "ppi", source: "bls.gov" },
+  { date: "2027-11-16", time_et: "08:30", name: "Advance Monthly Retail Sales", type: "retail", source: "census.gov" },
+  { date: "2027-11-17", time_et: "14:00", name: "FOMC Minutes", type: "minutes", source: "federalreserve.gov" },
+  { date: "2027-11-24", time_et: "08:30", name: "GDP Q3 2027 (Second Estimate)", type: "gdp", source: "bea.gov" },
+  { date: "2027-11-24", time_et: "08:30", name: "Personal Income & Outlays (PCE inflation)", type: "pce", source: "bea.gov" },
+  { date: "2027-12-03", time_et: "08:30", name: "Employment Situation (Nonfarm Payrolls)", type: "jobs", source: "bls.gov" },
+  { date: "2027-12-08", time_et: "14:00", name: "FOMC Rate Decision + Statement + SEP", type: "fomc", source: "federalreserve.gov" },
+  { date: "2027-12-10", time_et: "08:30", name: "Consumer Price Index (CPI)", type: "cpi", source: "bls.gov" },
+  { date: "2027-12-15", time_et: "08:30", name: "Advance Monthly Retail Sales", type: "retail", source: "census.gov" },
+  { date: "2027-12-15", time_et: "08:30", name: "Producer Price Index (PPI)", type: "ppi", source: "bls.gov" },
+  { date: "2027-12-22", time_et: "08:30", name: "GDP Q3 2027 (Third Estimate)", type: "gdp", source: "bea.gov" },
+  { date: "2027-12-22", time_et: "08:30", name: "Personal Income & Outlays (PCE inflation)", type: "pce", source: "bea.gov" },
+  { date: "2027-12-29", time_et: "14:00", name: "FOMC Minutes", type: "minutes", source: "federalreserve.gov" },
 ];
-const etToIso = (date: string, hhmm: string) => { const [h, m] = hhmm.split(":").map(Number); const d = new Date(`${date}T12:00:00Z`); const etOffset = /^(2026-1[01]|2026-10)/.test(date) && new Date(`${date}T00:00:00Z`) < new Date("2026-11-01T06:00:00Z") ? 4 : 5; return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), h + etOffset, m)).toISOString(); };
+/** US Eastern offset (hours behind UTC): DST from the 2nd Sunday of March 02:00 to the 1st Sunday of November 02:00. */
+export function etOffsetHours(date: string, hhmm = "12:00"): number {
+  const y = Number(date.slice(0, 4)); const sun = (month: number, nth: number) => { const d = new Date(Date.UTC(y, month, 1)); const first = (7 - d.getUTCDay()) % 7 + 1; return first + 7 * (nth - 1); };
+  const start = Date.UTC(y, 2, sun(2, 2), 2 + 5), end = Date.UTC(y, 10, sun(10, 1), 2 + 4);
+  const [h, m] = hhmm.split(":").map(Number); const t = Date.UTC(y, Number(date.slice(5, 7)) - 1, Number(date.slice(8, 10)), h + 5, m);
+  return t >= start && t < end ? 4 : 5;
+}
+const etToIso = (date: string, hhmm: string) => { const [h, m] = hhmm.split(":").map(Number); const off = etOffsetHours(date, hhmm); return new Date(Date.UTC(Number(date.slice(0, 4)), Number(date.slice(5, 7)) - 1, Number(date.slice(8, 10)), h + off, m)).toISOString(); };
 
 /** Typical market impact of each US release (FOMC decisions, CPI, payrolls and PCE move rates/USD/BTC the most). */
 const IMPACT: Record<string, "high" | "medium" | "low"> = { fomc: "high", cpi: "high", jobs: "high", pce: "high", ppi: "medium", gdp: "medium", retail: "medium", jolts: "medium", minutes: "medium" };
@@ -272,6 +366,7 @@ export function calendar(a: z.infer<typeof CalendarArgs>) {
   const items = minImp in rank ? out.filter(o => (rank[o.impact] ?? 0) >= rank[minImp]) : out;
   const nh = MACRO_2026Q4.map(m => ({ m, at: etToIso(m.date, m.time_et) })).filter(x => IMPACT[x.m.type] === "high" && new Date(x.at).getTime() > now).sort((x, y) => x.at.localeCompare(y.at))[0];
   return { from: new Date(now).toISOString(), days: a.days, count: items.length, items,
+    schedule_through: MACRO_2026Q4.map(m => m.date).sort().slice(-1)[0],
     next_high_impact: nh ? { at: nh.at, name: nh.m.name, subtype: nh.m.type, source: nh.m.source, in_hours: Math.round((new Date(nh.at).getTime() - now) / 36e5 * 10) / 10 } : null, note: "Times converted from ET. Schedules compiled from BLS/BEA/Federal Reserve published calendars; verify with the issuer before trading around a print." };
 }
 

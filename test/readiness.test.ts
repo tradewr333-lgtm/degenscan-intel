@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { blockedIp, originOf, scoreSurfaces, compareAudits, agentReadiness } from "../src/server/readiness.js";
-import { hfItems, HF_TASKS } from "../src/server/hfmodels.js";
+import { hfItems, HF_TASKS, licenseClass } from "../src/server/hfmodels.js";
 import { rewriteAlias } from "../src/server/aliases.js";
 
 describe("agent_readiness (03/11)", () => {
@@ -41,6 +41,16 @@ describe("ai_models_by_task (03/11)", () => {
     const it0 = hfItems([{ id: "openai/whisper-large-v3", downloads: 4e6, likes: 5000, tags: ["license:mit", "endpoints_compatible"], library_name: "transformers" }, { id: "p/x", private: true }])[0];
     expect(it0).toMatchObject({ author: "openai", downloads_30d: 4e6, license: "mit", servable_via: "endpoints_compatible", url: "https://huggingface.co/openai/whisper-large-v3" });
     expect(HF_TASKS["speech-to-text"]).toBe("automatic-speech-recognition"); expect(HF_TASKS.ocr).toBe("image-to-text"); expect(HF_TASKS.embeddings).toBe("feature-extraction");
+  });
+  it("classifies licenses for commercial use (07/11)", () => {
+    expect(licenseClass("mit")).toEqual({ license_class: "permissive", commercial_ok: true });
+    expect(licenseClass("apache-2.0").commercial_ok).toBe(true);
+    expect(licenseClass("cc-by-nc-4.0")).toEqual({ license_class: "restricted", commercial_ok: false });
+    expect(licenseClass("gpl-3.0").license_class).toBe("copyleft");
+    expect(licenseClass("openrail++").license_class).toBe("open_rail");
+    expect(licenseClass("llama3.1")).toEqual({ license_class: "custom", commercial_ok: null });
+    expect(licenseClass(null).license_class).toBe("unknown");
+    expect(hfItems([{ id: "a/b", tags: ["license:apache-2.0"] }])[0]).toMatchObject({ license_class: "permissive", commercial_ok: true });
   });
   it("alias with fixed query default lets the caller's params win", () => {
     expect(rewriteAlias("/speech-to-text-models")).toBe("/v1/ai/models/by-task?task=speech-to-text");

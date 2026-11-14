@@ -6,6 +6,7 @@
  */
 import { z } from "zod";
 import { _ext } from "./tools.js";
+import { bytecodeScan, codeFlags } from "./bytecode.js";
 
 export const TokenVerdictArgs = z.object({
   address: z.string().min(20).max(64).describe("Token contract address (0x… for EVM, base58 mint for Solana)"),
@@ -43,15 +44,17 @@ export async function tokenVerdict(a: z.infer<typeof TokenVerdictArgs>) {
   const gpUrl = isSol
     ? `https://api.gopluslabs.io/api/v1/solana/token_security?contract_addresses=${address}`
     : `https://api.gopluslabs.io/api/v1/token_security/${EVM_CHAINS[chain].goplus}?contract_addresses=${address.toLowerCase()}`;
-  const [gp, ds] = await Promise.all([
+  const [gp, ds, code] = await Promise.all([
     _ext.get<any>(gpUrl, { timeoutMs: 8000 }).catch(e => { unavailable.push(`goplus: ${(e as Error).message.slice(0, 80)}`); return null; }),
     _ext.get<any>(`https://api.dexscreener.com/latest/dex/tokens/${address}`, { timeoutMs: 8000 }).catch(e => { unavailable.push(`dexscreener: ${(e as Error).message.slice(0, 80)}`); return null; }),
+    isEvm ? bytecodeScan(address, chain).catch(e => { unavailable.push(`onchain_code: ${(e as Error).message.slice(0, 80)}`); return null; }) : Promise.resolve(null),
   ]);
   const sec: any = gp?.result ? (gp.result[address.toLowerCase()] ?? gp.result[address] ?? Object.values(gp.result)[0] ?? null) : null;
   const dsChain = isSol ? "solana" : EVM_CHAINS[chain].dexscreener;
   const pairs: any[] = (ds?.pairs ?? []).filter((p: any) => p.chainId === dsChain);
-  if (!sec && !pairs.length) {
-    if (unavailable.length === 2) throw new Error("sources unavailable: " + unavailable.join("; "));
+  if (code && !code.has_code && !sec && !pairs.length) throw new Error(`no contract code at ${address} on ${chain} (not a token contract, or wrong chain)`);
+  if (!sec && !pairs.length && !code?.has_code) {
+    if (unavailable.length >= 2) throw new Error("sources unavailable: " + unavailable.join("; "));
     throw new Error(`token not found on ${chain} (no security record and no DEX pair)`);
   }
 
@@ -111,7 +114,9 @@ export async function tokenVerdict(a: z.infer<typeof TokenVerdictArgs>) {
   const liq = pairs.reduce((s, p) => s + (numOr(p.liquidity?.usd, 0) ?? 0), 0);
   const vol24 = pairs.reduce((s, p) => s + (numOr(p.volume?.h24, 0) ?? 0), 0);
   const ageH = best?.pairCreatedAt ? (Date.now() - Number(best.pairCreatedAt)) / 3_600_000 : null;
-  add(pairs.length === 0, "no_dex_pair", "high", "no DEX pair found on this chain");
+  // independent on-chain source: only scored when GoPlus is missing, so the same power is not penalised twice
+  if (!sec && code?.has_code) for (const f of codeFlags(code)) flags.push(f);
+  add(pairs.length === 0 && ds != null, "no_dex_pair", "high", "no DEX pair found on this chain");
   add(pairs.length > 0 && liq < 50_000, "thin_liquidity", "medium", `total DEX liquidity $${Math.round(liq).toLocaleString("en-US")}`);
   add(ageH != null && ageH < 24, "new_pair", "medium", `main pair is ${ageH!.toFixed(1)} h old`);
   add(sec != null && one(sec.is_in_cex?.listed ?? sec.is_in_cex), "listed_on_cex", "info", "listed on a centralized exchange");
@@ -132,8 +137,10 @@ export async function tokenVerdict(a: z.infer<typeof TokenVerdictArgs>) {
     } : sec && isSol ? { mint_authority_active: String(sec.mintable?.status ?? "") === "1", freeze_authority_active: String(sec.freezable?.status ?? "") === "1" } : null,
     holders: { count: holderCount, top10_non_contract_pct: holders.length ? r(top10, 4) : null, creator_pct: creatorPct, lp_locked_or_burned_pct: lp.length ? r(lpLocked, 4) : null },
     market: best ? { pairs: pairs.length, liquidity_usd: Math.round(liq), volume_24h_usd: Math.round(vol24), price_usd: numOr(best.priceUsd), fdv_usd: numOr(best.fdv), main_pair: { dex: best.dexId, address: best.pairAddress, url: best.url, age_hours: r(ageH, 1) } } : null,
-    method: "Deterministic rules over GoPlus token-security and DexScreener pair data; score = 100 − penalties (critical 60, high 20, medium 8). Any critical flag ⇒ DANGER. Absence of flags is not a guarantee.",
-    sources: { goplus: gp ? "https://gopluslabs.io (token security API)" : null, dexscreener: ds ? "https://dexscreener.com" : null },
+    method: "Deterministic rules over GoPlus token-security and DexScreener pair data, plus our own scan of the deployed bytecode (scored only when GoPlus is unavailable); score = 100 − penalties (critical 60, high 20, medium 8). Any critical flag ⇒ DANGER. Absence of flags is not a guarantee.",
+    sources: { goplus: gp ? "https://gopluslabs.io (token security API)" : null, dexscreener: ds ? "https://dexscreener.com" : null, onchain_code: code ? "eth_getCode via public RPC (primary)" : null },
+    onchain_code: code ? { proxy: code.proxy, implementation: code.implementation, admin_functions: code.functions, code_bytes: code.code_bytes,
+      note: "Function selectors found in the deployed bytecode (implementation if proxy), read from the chain. Present ≠ used." } : null,
     sources_unavailable: unavailable,
     related: { price: "/v1/price/{symbol}", whales: "/v1/whales", events: "/v1/events?since=4h" },
     disclaimer: "Information and analytics only — not investment advice. Automated checks can miss risks; LOW_RISK is not a guarantee.",
@@ -151,7 +158,8 @@ export function liteFrom(v: any) {
   return { address: v.address, chain: v.chain, symbol: v.symbol, as_of: v.as_of, verdict: v.verdict, score: v.score,
     honeypot: c.honeypot ?? null, buy_tax: c.buy_tax ?? null, sell_tax: c.sell_tax ?? null, mintable: c.mintable ?? c.mint_authority_active ?? null,
     critical: sev("critical"), high: sev("high"), top_issues: (v.flags ?? []).filter((f: any) => f.severity !== "info").slice(0, 3).map((f: any) => f.detail),
+    admin_functions: v.onchain_code ? Object.keys(v.onchain_code.admin_functions ?? {}).filter(k => k !== "ownership") : null,
     liquidity_usd: v.market?.liquidity_usd ?? null, full_report: `/v1/token/verdict/${v.address}?chain=${v.chain}`,
-    disclaimer: "Automated contract checks (GoPlus + DexScreener). Absence of flags is not a guarantee. Not investment advice." };
+    disclaimer: "Automated contract checks (GoPlus + DexScreener + on-chain bytecode). Absence of flags is not a guarantee. Not investment advice." };
 }
 export async function tokenRiskLite(a: z.infer<typeof TokenVerdictArgs>) { return liteFrom(await tokenVerdict(a)); }

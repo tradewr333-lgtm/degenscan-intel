@@ -72,6 +72,10 @@ export function toolForRequest(req: FastifyRequest): string | null {
   if (url === "/v1/polymarket/leaderboard") return "polymarket_leaderboard";
   if (url === "/v1/polymarket/markets") return "polymarket_markets";
   if (url === "/v1/deribit/perps") return "deribit_perps";
+  if (url === "/v1/company/growth") return "company_growth_signals";
+  if (url === "/v1/travel/airfare") return "airfare_benchmark";
+  if (url === "/v1/media/images") return "licensed_images";
+  if (url === "/v1/topics/timeline") return "topic_timeline";
   if (url === "/v1/polymarket/events") return "polymarket_events";   // before the /v1/polymarket/* catch-all (bug found 03/11)
   if (url.startsWith("/v1/polymarket/")) return "polymarket_context";
   if (url === "/v1/pulse") return "pulse";

@@ -60,3 +60,26 @@ describe("best stable yields", () => { it("groups single-asset pools", () => {
   const r = bestYields(it); const u = r.best_by_asset.find(x => x.asset === "USDC")!;
   expect(u.best.project).toBe("a"); expect(u.best_base_only.project).toBe("b"); expect(r.usdc_by_chain!.map(x => x.chain)).toEqual(["Base", "Ethereum"]);
   expect(bestYields(it, "usdt").best_by_asset.map(x => x.asset)).toEqual(["USDT"]); }); });
+
+describe("calendar 2027 + US DST (07/11)", async () => {
+  const { etOffsetHours, calendar } = await import("../src/server/tools.js");
+  it("uses EDT between 2nd Sunday of March and 1st Sunday of November", () => {
+    expect(etOffsetHours("2027-03-13", "08:30")).toBe(5); expect(etOffsetHours("2027-03-15", "08:30")).toBe(4);
+    expect(etOffsetHours("2027-06-09", "14:00")).toBe(4); expect(etOffsetHours("2027-11-05", "08:30")).toBe(4); expect(etOffsetHours("2027-11-08", "08:30")).toBe(5);
+    expect(etOffsetHours("2026-11-10", "08:30")).toBe(5); expect(etOffsetHours("2026-10-14", "08:30")).toBe(4);
+  });
+  it("schedule covers 2027", () => { const c: any = calendar({ days: 1 } as any); expect(c.schedule_through >= "2027-12-01").toBe(true); });
+});
+
+describe("stable_yield_best lending fields (07/11)", async () => {
+  const { lendingOf, bestYields } = await import("../src/server/macro.js");
+  it("derives borrow APY net of incentives and utilisation", () => {
+    const l: any = lendingOf({ apyBaseBorrow: 6, apyRewardBorrow: 1, totalSupplyUsd: 200, totalBorrowUsd: 150, ltv: 0.8, borrowable: true });
+    expect(l.borrow_apy_pct).toBe(5); expect(l.utilization_pct).toBe(75); expect(lendingOf(null)).toBeNull();
+  });
+  it("attaches lending to matching pools and lists lending markets", () => {
+    const items = [{ symbol: "USDC", project: "aave-v3", chain: "Base", apy_pct: 5, tvl_usd: 1e8, pool_id: "p1" }, { symbol: "USDC", project: "x", chain: "Eth", apy_pct: 6, tvl_usd: 1e7, pool_id: "p2" }];
+    const o: any = bestYields(items, "USDC", new Map([["p1", { apyBaseBorrow: 7, totalSupplyUsd: 100, totalBorrowUsd: 80 }]]));
+    expect(o.lending_markets.USDC.length).toBe(1); expect(o.lending_markets.USDC[0].lending.utilization_pct).toBe(80); expect(o.best_by_asset[0].best.lending).toBeUndefined();
+  });
+});

@@ -5,7 +5,7 @@
  * it. Server-rendered HTML + JSON-LD (FAQPage + Dataset), so search engines and AI answer engines can read and cite it.
  * Data comes from our own routes through an internal request (no payment, nothing billed). Market data only.
  */
-export interface AnswerDef { slug: string; q: string; path: string; tool: string; source: string; topic: "funding" | "onchain" | "ai" | "macro" | "options" | "prediction";
+export interface AnswerDef { slug: string; q: string; path: string; tool: string; source: string; topic: "funding" | "onchain" | "ai" | "macro" | "options" | "prediction" | "travel";
   render: (j: any) => { answer: string; rows: [string, string][] } }
 
 const n = (x: any, d = 2) => x == null || !Number.isFinite(Number(x)) ? "—" : Number(x).toLocaleString("en-US", { maximumFractionDigits: d, minimumFractionDigits: 0 });
@@ -57,6 +57,20 @@ export const ANSWERS: AnswerDef[] = [
     slug, q, path: `/v1/ai/models/by-task?task=${task}&limit=10`, tool: "ai_models_by_task", topic: "ai", source: "Hugging Face Hub public API (downloads in the last 30 days)",
     render: j => { const it = (j.items ?? []) as any[]; return { answer: it.length ? `The most downloaded open ${q.match(/open (.+?) models/)?.[1] ?? task} model on Hugging Face in the last 30 days is ${it[0].id}, with ${n(it[0].downloads_30d, 0)} downloads${it[0].license ? ` (license: ${it[0].license})` : ""}.` : "No models listed for this task right now.",
       rows: it.slice(0, 10).map(m => [m.id, `${n(m.downloads_30d, 0)} downloads · ${n(m.likes, 0)} likes · ${m.license ?? "license n/a"}`] as [string, string]) }; } })),
+  ...([["translation", "best-open-translation-models-commercial-use", "Which open translation models can be used commercially?"],
+        ["text-to-image", "best-open-image-generation-models-commercial-use", "Which open image generation models can be used commercially?"],
+        ["text-generation", "best-open-llm-models-commercial-use", "Which open LLMs (text generation) can be used commercially?"],
+        ["text-to-speech", "best-open-text-to-speech-models-commercial-use", "Which open text-to-speech models can be used commercially?"]] as const).map(([task, slug, q]): AnswerDef => ({
+    slug, q, path: `/v1/ai/models/by-task?task=${task}&license=commercial&limit=10`, tool: "ai_models_by_task", topic: "ai", source: "Hugging Face Hub public API (downloads in the last 30 days, license tag)",
+    render: j => { const it = (j.items ?? []) as any[]; return { answer: it.length ? `Among the 50 most downloaded open ${task} models on Hugging Face, the top one whose license tag allows commercial use is ${it[0].id} (${it[0].license}, ${n(it[0].downloads_30d, 0)} downloads in 30 days). License tags are a first-pass reading — check the model card before shipping.` : "No model with a commercial-use license tag in the top 50 right now.",
+      rows: it.slice(0, 10).map(m => [m.id, `${m.license} (${m.license_class}) · ${n(m.downloads_30d, 0)} downloads`] as [string, string]) }; } })),
+  ...([["MIA", "LGA", "miami-to-new-york", "Miami", "New York"], ["LAX", "SFO", "los-angeles-to-san-francisco", "Los Angeles", "San Francisco"],
+        ["ORD", "LGA", "chicago-to-new-york", "Chicago", "New York"], ["DCA", "BOS", "washington-to-boston", "Washington", "Boston"]] as const).map(([a, b, slug, ca, cb]): AnswerDef => ({
+    slug: `average-airfare-${slug}`, q: `How much does a flight from ${ca} to ${cb} cost on average, and which nearby airport is cheaper?`, path: `/v1/travel/airfare?from=${a}&to=${b}`, tool: "airfare_benchmark", topic: "travel",
+    source: "U.S. DOT Domestic Airline Consumer Airfare Report (average fare paid, quarterly)",
+    render: j => { const l = j.latest, alt = j.nearby_airports?.cheapest_alternative, se = j.seasonality; return {
+      answer: l ? `Passengers paid ${usd(l.avg_fare_each_way)} each way on average for ${a}–${b} in ${l.period} (U.S. DOT)${l.largest_carrier ? `; ${l.largest_carrier.name ?? l.largest_carrier.code} carries ${pct(l.largest_carrier.market_share_pct, 1)} of passengers` : ""}.${alt ? ` Flying ${alt.airports} averaged ${usd(alt.avg_fare)} (${pct(alt.vs_requested_pct, 1)}).` : ""}${se ? ` Cheapest quarter in the last 3 years: ${se.cheapest_quarter.months}.` : ""} Average fare paid, not a live quote.` : "No DOT fare data for this route right now.",
+      rows: ((j.nearby_airports?.options ?? []) as any[]).slice(0, 8).map(o => [o.airports, `${usd(o.avg_fare)} avg each way · ${n(o.passengers_per_day, 0)} passengers/day`] as [string, string]) }; } })),
   { slug: "best-usdc-yield-now", q: "What is the best USDC yield right now?", path: "/v1/defi/yields/best", tool: "stable_yield_best", topic: "onchain", source: "DefiLlama yields API (pool APY, base vs reward)",
     render: j => { const u = ((j.best_by_asset ?? []) as any[]).find(a => a.asset === "USDC")?.best; const ch = (j.usdc_by_chain ?? []) as any[]; return {
       answer: u ? `The best USDC supply yield right now is ${pct(u.apy_pct)} APY on ${u.project} (${u.chain}), ${u.apy_base_pct != null && Math.abs(u.apy_base_pct - u.apy_pct) < 0.01 ? "all of it base yield (no incentive tokens)" : `of which ${pct(u.apy_base_pct)} is base yield and the rest incentive tokens`}; TVL ${big(u.tvl_usd)}.` : "No USDC pool above the TVL floor right now.",
@@ -105,7 +119,7 @@ export function renderPage(a: AnswerDef, j: any, base: string, price: number | u
 }
 
 export function renderIndex(base: string) {
-  const groups: Record<string, string> = { funding: "Funding rates", onchain: "On-chain", ai: "AI models", macro: "Macro", options: "Options", prediction: "Prediction markets" };
+  const groups: Record<string, string> = { funding: "Funding rates", onchain: "On-chain", ai: "AI models", macro: "Macro", options: "Options", travel: "Travel", prediction: "Prediction markets" };
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Live market answers · Degenscan Intel</title>
 <meta name="description" content="Live answers with the number, the time and the primary source: Hyperliquid funding rates, Base gas, cheapest LLM APIs, USDC yields, Treasury auctions, BTC implied volatility."><link rel="canonical" href="${base}/answers"><style>${CSS}</style></head><body><main>
 <h1>Live answers</h1><p>Each page answers one question with the live number, the time and the primary source, plus the API call that returns it.</p>

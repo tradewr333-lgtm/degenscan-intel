@@ -101,10 +101,25 @@ describe("x402 v2 paid mode", () => {
     const freeTool = await app.inject({ method: "POST", url: "/mcp", headers: hdr, payload: { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "universe", arguments: {} } } });
     expect(freeTool.statusCode).toBe(200);
     // quota already consumed by the previous test (same IP) → priced tool must 402
-    const priced = await app.inject({ method: "POST", url: "/mcp", headers: hdr, payload: { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "regime_snapshot", arguments: {} } } });
+    // x402 MCP transport (default): HTTP 200 + tool result isError with PaymentRequired in structuredContent
+    const pricedMcp = await app.inject({ method: "POST", url: "/mcp", headers: hdr, payload: { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "regime_snapshot", arguments: {} } } });
+    expect(pricedMcp.statusCode).toBe(200);
+    const pr = pricedMcp.json().result;
+    expect(pr.isError).toBe(true); expect(pr.structuredContent.x402Version).toBe(2); expect(pr.structuredContent.accepts[0].amount).toBe("10000");
+    expect(JSON.parse(pr.content[0].text).accepts.length).toBe(pr.structuredContent.accepts.length);
+    // legacy HTTP transport still available
+    const priced = await app.inject({ method: "POST", url: "/mcp?x402=http", headers: hdr, payload: { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "regime_snapshot", arguments: {} } } });
     expect(priced.statusCode).toBe(402);
     const req = JSON.parse(Buffer.from(priced.headers["payment-required"] as string, "base64").toString("utf8"));
     expect(req.accepts[0].amount).toBe("10000");
+    // paid through _meta["x402/payment"]: settles before answering and returns the receipt in _meta
+    const beforeMeta = settled.length;
+    const metaPaid = await app.inject({ method: "POST", url: "/mcp", headers: hdr, payload: { jsonrpc: "2.0", id: 5, method: "tools/call", params: { name: "regime_snapshot", arguments: {}, _meta: { "x402/payment": JSON.parse(Buffer.from(fakePayment(req), "base64").toString("utf8")) } } } });
+    expect(metaPaid.statusCode).toBe(200);
+    const mr = metaPaid.json().result;
+    expect(mr.isError).toBeFalsy(); expect(JSON.stringify(mr.content)).toContain("venues_open");
+    expect(mr._meta["x402/payment-response"].success).toBe(true);
+    expect(settled.length).toBe(beforeMeta + 1);
     const before = settled.length;
     const paid = await app.inject({ method: "POST", url: "/mcp", headers: { ...hdr, "payment-signature": fakePayment(req) }, payload: { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "regime_snapshot", arguments: {} } } });
     expect(paid.statusCode).toBe(200);
