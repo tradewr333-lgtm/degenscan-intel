@@ -40,4 +40,26 @@ describe("company_growth_signals (08/11)", () => {
     expect(r.attention_jumps[0].events_that_month_or_before.some(e => e.channel === "launch_hn")).toBe(true);
     expect(r.timeline[0].channel).toBe("github");
   });
+  it("domain picks the right Wikipedia article and drops adjective noise on HN (14/11)", async () => {
+    _growth.fetch = async (u: string) => {
+      const d = decodeURIComponent(u);
+      if (d.includes("wikidata.org/w/api.php") && d.includes("P856=https://lovable.dev")) return new Response(JSON.stringify({ query: { search: [{ title: "Q123" }] } }));
+      if (d.includes("wikidata.org/w/api.php")) return new Response(JSON.stringify({ query: { search: [] } }));
+      if (d.includes("Special:EntityData/Q123")) return new Response(JSON.stringify({ entities: { Q123: { sitelinks: { enwiki: { title: "Lovable (company)" } } } } }));
+      if (d.includes("rest.php/v1/search")) return new Response(JSON.stringify({ pages: [{ key: "Loveable", title: "Loveable" }] }));
+      if (d.includes("pageviews")) return new Response(JSON.stringify({ items: [] }));
+      if (d.includes("restrictSearchableAttributes=url")) return new Response(JSON.stringify({ hits: [{ objectID: "1", title: "Lovable raises $400M", url: "https://lovable.dev/blog/series-c", points: 167, created_at: "2026-08-12" }, { objectID: "5", title: "Show HN: Lovable 2", url: "https://lovable.dev/x", points: 90, created_at: "2025-01-10" }] }));
+      if (d.includes("hn.algolia.com/api/v1/search?")) return new Response(JSON.stringify({ hits: [
+        { objectID: "2", title: "How to Build a Minimum Lovable Product", points: 144, created_at: "2022-03-25" },
+        { objectID: "3", title: "Tänzer: The lovable web server framework", points: 66, created_at: "2025-03-16" },
+        { objectID: "4", title: "Is Lovable getting monetization wrong?", points: 140, created_at: "2025-06-25" }] }));
+      if (d.includes("search_by_date")) return new Response(JSON.stringify({ nbHits: 1 }));
+      return new Response("{}");
+    };
+    const r: any = await companyGrowthSignals({ company: "Lovable", domain: "lovable.dev" });
+    expect(r.wikipedia.article).toBe("Lovable (company)"); expect(r.wikipedia.matched_by).toBe("official_website");
+    const titles = r.hacker_news.top_stories.map((x: any) => x.title);
+    expect(titles).toEqual(["Lovable raises $400M", "Is Lovable getting monetization wrong?", "Show HN: Lovable 2"]);
+    expect(r.hacker_news.top_stories[0].links_to_site).toBe(true);
+  });
 });

@@ -59,17 +59,52 @@ export function aroundInflections(infl: { month: string }[], events: { date: str
 }
 
 const clean = (s: unknown) => String(s ?? "").trim();
-async function wiki(name: string, override: string, months: number) {
-  const s = await getJson(`https://en.wikipedia.org/w/rest.php/v1/search/title?q=${encodeURIComponent(override || name)}&limit=1`);
-  const page = s?.pages?.[0]; if (!page?.key) return { found: false };
+/** Wikidata: the enwiki article of the entity whose official website (P856) is the domain. Avoids "Lovable" → "Loveable" (14/11). */
+async function wikiByDomain(domain: string): Promise<string | null> {
+  const root = domain.split(".").slice(-2).join(".");
+  const hosts = [...new Set([domain, root, `www.${root}`])];
+  for (const h of hosts) for (const u of [`https://${h}`, `https://${h}/`, `http://${h}`, `http://${h}/`]) {
+    const r = await getJson(`https://www.wikidata.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(`haswbstatement:P856=${u}`)}&srlimit=1&format=json`, 7 * 86_400_000).catch(() => null);
+    const qid = r?.query?.search?.[0]?.title; if (!qid) continue;
+    const e = await getJson(`https://www.wikidata.org/wiki/Special:EntityData/${qid}.json`, 7 * 86_400_000).catch(() => null);
+    const t = e?.entities?.[qid]?.sitelinks?.enwiki?.title; if (t) return t;
+  }
+  return null;
+}
+async function wiki(name: string, override: string, months: number, domain = "") {
+  let key: string | null = null, title: string | null = null, matched_by = "name_search";
+  if (override) matched_by = "wikipedia_param";
+  else if (domain) { const t = await wikiByDomain(domain); if (t) { title = t; key = t.replace(/ /g, "_"); matched_by = "official_website"; } }
+  if (!key) {
+    const s = await getJson(`https://en.wikipedia.org/w/rest.php/v1/search/title?q=${encodeURIComponent(override || name)}&limit=1`);
+    const p = s?.pages?.[0]; if (!p?.key) return { found: false };
+    key = p.key; title = p.title;
+  }
+  const page = { key: key!, title: title! };
   const end = new Date(); end.setUTCDate(1); const start = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth() - months, 1));
   const pv = await getJson(`https://wikimedia.org/api/rest_v1/metrics/pageviews/per-article/en.wikipedia.org/all-access/user/${encodeURIComponent(page.key)}/monthly/${ymd(start)}00/${ymd(end)}00`);
   const series = ((pv?.items ?? []) as any[]).map(i => ({ month: `${String(i.timestamp).slice(0, 4)}-${String(i.timestamp).slice(4, 6)}`, value: Number(i.views) || 0 }));
-  return { found: true, article: page.title, url: `https://en.wikipedia.org/wiki/${encodeURIComponent(page.key)}`, monthly_views: series, attention_jumps: inflections(series, 300) };
+  return { found: true, article: page.title, matched_by,
+    ...(matched_by === "name_search" ? { warning: "matched by name only; check the article is the company (pass wikipedia= or domain=)" } : {}), url: `https://en.wikipedia.org/wiki/${encodeURIComponent(page.key)}`, monthly_views: series, attention_jumps: inflections(series, 300) };
 }
-async function hn(name: string, months: number) {
+async function hn(name: string, months: number, domain = "") {
   const top = await getJson(`https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(name)}&tags=story&hitsPerPage=100`);
-  const stories = hnStories(top?.hits ?? [], name);
+  let stories = hnStories(top?.hits ?? [], name);
+  if (domain) {
+    // stories that link to the company's own site are certain; name-only stories must use the proper noun
+    // (capitalised) and fall on/after the first site-linked story minus a year — drops "minimum lovable product" (14/11)
+    const root = domain.split(".").slice(-2).join(".");
+    const own = await getJson(`https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(root)}&restrictSearchableAttributes=url&tags=story&hitsPerPage=100`).catch(() => null);
+    const ownStories = ((own?.hits ?? []) as any[]).filter(h => h?.title && String(h.url ?? "").toLowerCase().includes(root)).map(h => ({
+      date: String(h.created_at ?? "").slice(0, 10), title: String(h.title), points: Number(h.points ?? 0), comments: Number(h.num_comments ?? 0),
+      kind: /^launch hn/i.test(h.title) ? "launch_hn" : /^show hn/i.test(h.title) ? "show_hn" : "story", url: h.url ?? null, hn_url: `https://news.ycombinator.com/item?id=${h.objectID}`, links_to_site: true }));
+    const first = ownStories.map(x => x.date).filter(Boolean).sort()[0] ?? null;
+    const floor = first ? new Date(Date.parse(first) - 365 * 86_400_000).toISOString().slice(0, 10) : null;
+    const proper = new RegExp(`(^|[^A-Za-z0-9])${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^A-Za-z0-9]|$)`);
+    const seen = new Set(ownStories.map(x => x.hn_url));
+    stories = [...ownStories, ...stories.filter(x => !seen.has(x.hn_url) && proper.test(x.title) && (!floor || x.date >= floor)).map(x => ({ ...x, links_to_site: false }))]
+      .sort((a, b) => b.points - a.points);
+  }
   const now = new Date(); const counts: { month: string; value: number }[] = [];
   await Promise.all(Array.from({ length: months }, async (_, k) => {
     const a = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - k, 1)), b = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - k + 1, 1));
@@ -105,7 +140,7 @@ export async function companyGrowthSignals(q: any = {}) {
   const status: Record<string, string> = {};
   const safe = async <T>(k: string, f: () => Promise<T>): Promise<T | null> => { try { const v = await f(); status[k] = "ok"; return v; } catch (e) { status[k] = `error: ${(e as Error).message}`; return null; } };
   const [w, h, g, n, wb] = await Promise.all([
-    safe("wikipedia", () => wiki(name, clean(q.wikipedia), months)), safe("hacker_news", () => hn(name, months)),
+    safe("wikipedia", () => wiki(name, clean(q.wikipedia), months, domain)), safe("hacker_news", () => hn(name, months, domain)),
     safe("github", () => github(gh)), safe("news_gdelt", () => news(name)), domain ? safe("wayback", () => wayback(domain)) : Promise.resolve(null),
   ]);
   const events: { date: string; channel: string; title: string; url?: string | null; metric?: string }[] = [];
